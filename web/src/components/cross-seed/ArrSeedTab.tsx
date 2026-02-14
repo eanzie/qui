@@ -24,7 +24,6 @@ import {
   XCircle,
 } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -155,15 +154,6 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
           </div>
         </CardHeader>
       </Card>
-
-      {/* Warning */}
-      <Alert className="border-destructive/20 bg-destructive/10 text-destructive">
-        <AlertTriangle className="h-4 w-4 !text-destructive" />
-        <AlertTitle>Run sparingly</AlertTitle>
-        <AlertDescription>
-          Each run scans your full Sonarr/Radarr library and queries indexers for every item. Use reasonable max items per run and search delay values to stay within indexer rate limits.
-        </AlertDescription>
-      </Alert>
 
       {/* Instance Configs */}
       <Card>
