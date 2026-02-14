@@ -8,8 +8,6 @@ import (
 )
 
 func TestIsSizeWithinTolerance(t *testing.T) {
-	s := &Service{}
-
 	tests := []struct {
 		name             string
 		sourceSize       int64
@@ -105,7 +103,7 @@ func TestIsSizeWithinTolerance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := s.isSizeWithinTolerance(tt.sourceSize, tt.candidateSize, tt.tolerancePercent)
+			result := isSizeWithinTolerance(tt.sourceSize, tt.candidateSize, tt.tolerancePercent)
 			if result != tt.expectedResult {
 				t.Errorf("isSizeWithinTolerance(%d, %d, %.1f) = %v, want %v",
 					tt.sourceSize, tt.candidateSize, tt.tolerancePercent, result, tt.expectedResult)

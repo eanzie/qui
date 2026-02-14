@@ -2652,6 +2652,9 @@ func (f *fakeSyncManager) CreateCategory(_ context.Context, _ int, _, _ string) 
 	return nil
 }
 
+func (f *fakeSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}
+
 // TestWebhookCheckRequest_Validation tests request validation
 func TestWebhookCheckRequest_Validation(t *testing.T) {
 	tests := []struct {
@@ -3202,6 +3205,9 @@ func (m *mockRecoverSyncManager) CreateCategory(_ context.Context, _ int, _, _ s
 	return nil
 }
 
+func (m *mockRecoverSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}
+
 func TestRecoverErroredTorrents_NoErroredTorrents(t *testing.T) {
 	// Test with no errored torrents
 	normalTorrent := qbt.Torrent{
@@ -3596,6 +3602,9 @@ func (f *infohashTestSyncManager) GetCategories(context.Context, int) (map[strin
 
 func (f *infohashTestSyncManager) CreateCategory(context.Context, int, string, string) error {
 	return nil
+}
+
+func (f *infohashTestSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
 }
 
 type infohashTestInstanceStore struct {
@@ -5129,6 +5138,9 @@ func (m *rssFilterTestSyncManager) GetCategories(context.Context, int) (map[stri
 
 func (m *rssFilterTestSyncManager) CreateCategory(context.Context, int, string, string) error {
 	return nil
+}
+
+func (m *rssFilterTestSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
 }
 
 // TestExecuteCrossSeedSearchAttempt_RespectsCompletionFilters verifies that completion source

@@ -59,7 +59,7 @@ type CrossSeedAutomationSettings struct {
 	SeededSearchTags     []string `json:"seededSearchTags"`     // Tags for seeded torrent search results
 	CompletionSearchTags []string `json:"completionSearchTags"` // Tags for completion-triggered search results
 	WebhookTags          []string `json:"webhookTags"`          // Tags for /apply webhook results
-	ArrSeedTags          []string `json:"arrSeedTags"`          // Tags for ARR seed results
+	ArrSeedTags          []string `json:"arrSeedTags"`          // Tags for Arr Seed results
 	InheritSourceTags    bool     `json:"inheritSourceTags"`    // Also copy tags from the matched source torrent
 
 	// Category affix: add prefix or suffix to the original category name

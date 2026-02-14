@@ -79,6 +79,7 @@ type Server struct {
 	orphanScanStore                  *models.OrphanScanStore
 	orphanScanService                *orphanscan.Service
 	dirScanService                   *dirscan.Service
+	arrSeedStore                     *models.ArrSeedStore
 	arrInstanceStore                 *models.ArrInstanceStore
 	arrService                       *arr.Service
 }
@@ -116,6 +117,7 @@ type Dependencies struct {
 	OrphanScanStore                  *models.OrphanScanStore
 	OrphanScanService                *orphanscan.Service
 	DirScanService                   *dirscan.Service
+	ArrSeedStore                     *models.ArrSeedStore
 	ArrInstanceStore                 *models.ArrInstanceStore
 	ArrService                       *arr.Service
 }
@@ -160,6 +162,7 @@ func NewServer(deps *Dependencies) *Server {
 		orphanScanStore:                  deps.OrphanScanStore,
 		orphanScanService:                deps.OrphanScanService,
 		dirScanService:                   deps.DirScanService,
+		arrSeedStore:                     deps.ArrSeedStore,
 		arrInstanceStore:                 deps.ArrInstanceStore,
 		arrService:                       deps.ArrService,
 	}
@@ -303,6 +306,10 @@ func (s *Server) Handler() (*chi.Mux, error) {
 	var dirScanHandler *handlers.DirScanHandler
 	if s.dirScanService != nil {
 		dirScanHandler = handlers.NewDirScanHandler(s.dirScanService, s.instanceStore)
+	}
+	var arrSeedHandler *handlers.ArrSeedHandler
+	if s.crossSeedService != nil && s.arrSeedStore != nil {
+		arrSeedHandler = handlers.NewArrSeedHandler(s.crossSeedService, s.arrSeedStore)
 	}
 	trackerCustomizationHandler := handlers.NewTrackerCustomizationHandler(s.trackerCustomizationStore, s.syncManager.InvalidateTrackerDisplayNameCache)
 	rssHandler := handlers.NewRSSHandler(s.syncManager)
@@ -576,6 +583,29 @@ func (s *Server) Handler() (*chi.Mux, error) {
 							r.Get("/runs", dirScanHandler.ListRuns)
 							r.Get("/runs/{runID}/injections", dirScanHandler.ListRunInjections)
 							r.Get("/files", dirScanHandler.ListFiles)
+						})
+					})
+				})
+			}
+
+			// Arr Seed (cross-seed from Sonarr/Radarr libraries)
+			if arrSeedHandler != nil {
+				r.Route("/arr-seed", func(r chi.Router) {
+					r.Get("/settings", arrSeedHandler.GetSettings)
+					r.Patch("/settings", arrSeedHandler.UpdateSettings)
+					r.Route("/configs", func(r chi.Router) {
+						r.Get("/", arrSeedHandler.ListConfigs)
+						r.Post("/", arrSeedHandler.CreateConfig)
+						r.Route("/{configID}", func(r chi.Router) {
+							r.Get("/", arrSeedHandler.GetConfig)
+							r.Patch("/", arrSeedHandler.UpdateConfig)
+							r.Delete("/", arrSeedHandler.DeleteConfig)
+							r.Post("/scan", arrSeedHandler.TriggerScan)
+							r.Delete("/scan", arrSeedHandler.CancelScan)
+							r.Get("/status", arrSeedHandler.GetScanStatus)
+							r.Get("/runs", arrSeedHandler.ListRuns)
+							r.Get("/items", arrSeedHandler.ListItems)
+							r.Post("/items/reset", arrSeedHandler.ResetItems)
 						})
 					})
 				})

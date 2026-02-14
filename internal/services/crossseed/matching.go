@@ -709,7 +709,7 @@ func (s *Service) getMatchTypeWithReason(sourceRelease, candidateRelease *rls.Re
 
 	// Size match with tolerance
 	if totalSourceSize > 0 && len(filteredSourceFiles) > 0 {
-		if s.isSizeWithinTolerance(totalSourceSize, totalCandidateSize, tolerancePercent) {
+		if isSizeWithinTolerance(totalSourceSize, totalCandidateSize, tolerancePercent) {
 			if s.metrics != nil {
 				s.metrics.GetMatchTypeSizeMatch.Inc()
 			}

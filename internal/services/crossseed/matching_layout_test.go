@@ -236,6 +236,9 @@ func (c *candidateSelectionSyncManager) CreateCategory(_ context.Context, _ int,
 	return nil
 }
 
+func (c *candidateSelectionSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}
+
 func TestGetMatchTypeFromTitle_FallbackWhenReleaseKeysMissing(t *testing.T) {
 	t.Parallel()
 

@@ -108,6 +108,9 @@ func (*reflinkFallbackSafetySyncManager) CreateCategory(context.Context, int, st
 	return nil
 }
 
+func (*reflinkFallbackSafetySyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}
+
 type reflinkFallbackSafetyInstanceStore struct {
 	instances map[int]*models.Instance
 }

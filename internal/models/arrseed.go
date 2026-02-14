@@ -13,7 +13,7 @@ import (
 	"github.com/autobrr/qui/internal/dbinterface"
 )
 
-// ArrSeedItemStatus defines the status of an ARR seed item.
+// ArrSeedItemStatus defines the status of an Arr Seed item.
 type ArrSeedItemStatus string
 
 const (
@@ -25,7 +25,7 @@ const (
 	ArrSeedItemStatusError    ArrSeedItemStatus = "error"    //nolint:goconst
 )
 
-// ArrSeedRunStatus defines the status of an ARR seed run.
+// ArrSeedRunStatus defines the status of an Arr Seed run.
 type ArrSeedRunStatus string
 
 const (
@@ -35,7 +35,7 @@ const (
 	ArrSeedRunStatusCancelled ArrSeedRunStatus = "cancelled" //nolint:goconst
 )
 
-// ArrSeedSettings represents global ARR seed settings.
+// ArrSeedSettings represents global Arr Seed settings.
 // Shared settings (startPaused, sizeTolerance, tags) are read from CrossSeedAutomationSettings.
 type ArrSeedSettings struct {
 	ID                        int       `json:"id"`
@@ -105,7 +105,7 @@ type ArrSeedItem struct {
 	UpdatedAt      time.Time         `json:"updatedAt"`
 }
 
-// ArrSeedStore handles database operations for ARR seed.
+// ArrSeedStore handles database operations for Arr Seed.
 type ArrSeedStore struct {
 	db dbinterface.Querier
 }
@@ -117,7 +117,7 @@ func NewArrSeedStore(db dbinterface.Querier) *ArrSeedStore {
 
 // --- Settings Operations ---
 
-// GetSettings retrieves the global ARR seed settings.
+// GetSettings retrieves the global Arr Seed settings.
 func (s *ArrSeedStore) GetSettings(ctx context.Context) (*ArrSeedSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, enabled, search_delay_seconds, max_items_per_run,
@@ -151,7 +151,7 @@ func (s *ArrSeedStore) GetSettings(ctx context.Context) (*ArrSeedSettings, error
 	return &settings, nil
 }
 
-// UpdateSettings updates the global ARR seed settings (upsert).
+// UpdateSettings updates the global Arr Seed settings (upsert).
 func (s *ArrSeedStore) UpdateSettings(ctx context.Context, settings *ArrSeedSettings) (*ArrSeedSettings, error) {
 	if settings == nil {
 		return nil, errors.New("settings is nil")
@@ -192,7 +192,7 @@ func (s *ArrSeedStore) UpdateSettings(ctx context.Context, settings *ArrSeedSett
 
 var ErrArrSeedConfigNotFound = errors.New("arr seed config not found")
 
-// CreateConfig creates a new ARR seed instance config.
+// CreateConfig creates a new Arr Seed instance config.
 func (s *ArrSeedStore) CreateConfig(ctx context.Context, cfg *ArrSeedInstanceConfig) (*ArrSeedInstanceConfig, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
@@ -278,7 +278,7 @@ func (s *ArrSeedStore) scanConfig(scanner configScanner) (*ArrSeedInstanceConfig
 	return &cfg, nil
 }
 
-// ListConfigs retrieves all ARR seed instance configs.
+// ListConfigs retrieves all Arr Seed instance configs.
 func (s *ArrSeedStore) ListConfigs(ctx context.Context) ([]*ArrSeedInstanceConfig, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.id, c.arr_instance_id, c.enabled, c.target_qbit_instance_id, c.category,
@@ -358,7 +358,7 @@ type ArrSeedConfigUpdateParams struct {
 	TagAfterSeed         *string
 }
 
-// UpdateConfig updates an ARR seed instance config.
+// UpdateConfig updates an Arr Seed instance config.
 func (s *ArrSeedStore) UpdateConfig(ctx context.Context, id int, params *ArrSeedConfigUpdateParams) (*ArrSeedInstanceConfig, error) {
 	if params == nil {
 		return s.GetConfig(ctx, id)
@@ -413,7 +413,7 @@ func (s *ArrSeedStore) UpdateConfig(ctx context.Context, id int, params *ArrSeed
 	return s.GetConfig(ctx, id)
 }
 
-// DeleteConfig deletes an ARR seed instance config.
+// DeleteConfig deletes an Arr Seed instance config.
 func (s *ArrSeedStore) DeleteConfig(ctx context.Context, id int) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM arr_seed_instance_configs WHERE id = ?`, id)
 	if err != nil {
@@ -604,7 +604,7 @@ func (s *ArrSeedStore) MarkActiveRunsFailed(ctx context.Context, errorMessage st
 
 // --- Item Operations ---
 
-// UpsertItem inserts or updates an ARR seed item.
+// UpsertItem inserts or updates an Arr Seed item.
 func (s *ArrSeedStore) UpsertItem(ctx context.Context, item *ArrSeedItem) error {
 	if item == nil {
 		return errors.New("item is nil")

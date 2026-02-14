@@ -290,3 +290,6 @@ func (f *episodeSyncManager) GetCategories(_ context.Context, _ int) (map[string
 func (f *episodeSyncManager) CreateCategory(_ context.Context, _ int, _, _ string) error {
 	return nil
 }
+
+func (f *episodeSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}

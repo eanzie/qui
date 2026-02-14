@@ -605,6 +605,9 @@ func (app *Application) runServer() {
 	dirScanStore := models.NewDirScanStore(db)
 	dirScanService := dirscan.NewService(dirscan.DefaultConfig(), dirScanStore, instanceStore, syncManager, jackettService, arrService, trackerCustomizationStore)
 
+	arrSeedStore := models.NewArrSeedStore(db)
+	crossSeedService.InitArrSeed(arrSeedStore, arrInstanceStore)
+
 	syncManager.SetTorrentCompletionHandler(crossSeedService.HandleTorrentCompletion)
 
 	automationCtx, automationCancel := context.WithCancel(context.Background())
@@ -629,6 +632,12 @@ func (app *Application) runServer() {
 	defer dirScanCancel()
 	if err := dirScanService.Start(dirScanCtx); err != nil {
 		log.Error().Err(err).Msg("failed to start dirscan service")
+	}
+
+	arrSeedCtx, arrSeedCancel := context.WithCancel(context.Background())
+	defer arrSeedCancel()
+	if err := crossSeedService.StartArrSeed(arrSeedCtx); err != nil {
+		log.Error().Err(err).Msg("failed to start arrseed service")
 	}
 
 	backupStore := models.NewBackupStore(db)
@@ -725,6 +734,7 @@ func (app *Application) runServer() {
 		OrphanScanStore:                  orphanScanStore,
 		OrphanScanService:                orphanScanService,
 		DirScanService:                   dirScanService,
+		ArrSeedStore:                     arrSeedStore,
 		ArrInstanceStore:                 arrInstanceStore,
 		ArrService:                       arrService,
 	})

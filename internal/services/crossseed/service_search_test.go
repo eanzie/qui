@@ -288,3 +288,6 @@ func (*queueTestSyncManager) GetCategories(_ context.Context, _ int) (map[string
 func (*queueTestSyncManager) CreateCategory(_ context.Context, _ int, _, _ string) error {
 	return nil
 }
+
+func (*queueTestSyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}

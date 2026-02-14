@@ -85,6 +85,7 @@ type qbittorrentSync interface {
 	SetTags(ctx context.Context, instanceID int, hashes []string, tags string) error
 	GetCategories(ctx context.Context, instanceID int) (map[string]qbt.Category, error)
 	CreateCategory(ctx context.Context, instanceID int, name string, path string) error
+	ResumeWhenComplete(instanceID int, hashes []string, opts qbittorrent.ResumeWhenCompleteOptions)
 }
 
 // dedupCacheEntry stores cached deduplication results to avoid recomputation.
@@ -311,6 +312,9 @@ type Service struct {
 
 	// Metrics for monitoring service health and performance
 	metrics *ServiceMetrics
+
+	// ArrSeed runner — ARR library scanning and cross-seeding feature
+	arrSeedRunner *ArrSeedRunner
 
 	// test hooks
 	crossSeedInvoker    func(ctx context.Context, req *CrossSeedRequest) (*CrossSeedResponse, error)
@@ -5460,7 +5464,7 @@ func (s *Service) SearchTorrentMatches(ctx context.Context, instanceID int, hash
 		ignoreSizeCheck := opts.FindIndividualEpisodes && isTVSeasonPack(searchRelease) && isTVEpisode(candidateRelease)
 
 		// Size validation: check if candidate size is within tolerance of source size
-		if !ignoreSizeCheck && !s.isSizeWithinTolerance(sourceTorrent.Size, res.Size, settings.SizeMismatchTolerancePercent) {
+		if !ignoreSizeCheck && !isSizeWithinTolerance(sourceTorrent.Size, res.Size, settings.SizeMismatchTolerancePercent) {
 			sizeFilteredCount++
 			log.Debug().
 				Str("sourceTitle", sourceTorrent.Name).
@@ -7811,7 +7815,7 @@ func evaluateReleaseMatch(source, candidate *rls.Release) (float64, string) {
 
 // isSizeWithinTolerance checks if two torrent sizes are within the specified tolerance percentage.
 // A tolerance of 5.0 means the candidate size can be ±5% of the source size.
-func (s *Service) isSizeWithinTolerance(sourceSize, candidateSize int64, tolerancePercent float64) bool {
+func isSizeWithinTolerance(sourceSize, candidateSize int64, tolerancePercent float64) bool {
 	if sourceSize == 0 || candidateSize == 0 {
 		return sourceSize == candidateSize // Both must be zero to match
 	}
@@ -8375,7 +8379,7 @@ func (s *Service) CheckWebhook(ctx context.Context, req *WebhookCheckRequest) (*
 				}
 
 				// Check if size is within tolerance
-				if s.isSizeWithinTolerance(int64(req.Size), torrent.Size, settings.SizeMismatchTolerancePercent) {
+				if isSizeWithinTolerance(int64(req.Size), torrent.Size, settings.SizeMismatchTolerancePercent) {
 					if sizeDiff < 0.1 {
 						matchType = "exact"
 					} else {

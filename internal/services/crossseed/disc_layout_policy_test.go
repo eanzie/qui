@@ -123,6 +123,9 @@ func (*discPolicySyncManager) CreateCategory(context.Context, int, string, strin
 	return nil
 }
 
+func (*discPolicySyncManager) ResumeWhenComplete(_ int, _ []string, _ internalqb.ResumeWhenCompleteOptions) {
+}
+
 type discPolicyInstanceStore struct {
 	instances map[int]*models.Instance
 }

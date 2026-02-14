@@ -165,6 +165,9 @@ func (m *localMatchSyncManager) CreateCategory(_ context.Context, _ int, _, _ st
 	return nil
 }
 
+func (m *localMatchSyncManager) ResumeWhenComplete(_ int, _ []string, _ qbittorrent.ResumeWhenCompleteOptions) {
+}
+
 func TestDetermineLocalMatchType_AmbiguousDir_DifferentFiles_NoMatch(t *testing.T) {
 	// When content_path == save_path (ambiguous directory) and the file lists
 	// don't overlap, determineLocalMatchType should NOT return content_path.
