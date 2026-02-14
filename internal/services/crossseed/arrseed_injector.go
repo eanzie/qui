@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -399,8 +400,24 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		return nil, unmatchedCount, fmt.Errorf("no matching files for partial upgrade (0/%d)", len(contentCandidates))
 	}
 
-	plan, err := hardlinktree.BuildPlan(matchedCandidates, matchedExisting, hardlinktree.LayoutOriginal, parsed.Name, savePath)
-	return plan, unmatchedCount, err
+	// Build the plan directly from already-paired files instead of calling
+	// BuildPlan (which re-matches from scratch and can fail when filenames
+	// differ, e.g. Sonarr-renamed files vs scene-named torrent files).
+	plan := &hardlinktree.TreePlan{
+		RootDir: savePath,
+		Files:   make([]hardlinktree.FilePlan, 0, len(matchedCandidates)),
+	}
+	for i, cf := range matchedCandidates {
+		targetPath := filepath.Join(savePath, filepath.FromSlash(cf.Path))
+		plan.Files = append(plan.Files, hardlinktree.FilePlan{
+			SourcePath: matchedExisting[i].AbsPath,
+			TargetPath: targetPath,
+		})
+	}
+	sort.Slice(plan.Files, func(i, j int) bool {
+		return plan.Files[i].TargetPath < plan.Files[j].TargetPath
+	})
+	return plan, unmatchedCount, nil
 }
 
 func arrSeedParseTorrentBytes(data []byte) (*arrSeedParsedTorrent, error) {
