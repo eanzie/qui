@@ -1485,7 +1485,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
           <TabsTrigger className="shrink-0" value="auto">Auto</TabsTrigger>
           <TabsTrigger className="shrink-0" value="scan">Scan</TabsTrigger>
           <TabsTrigger className="shrink-0" value="dir-scan">Dir Scan</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="arr-seed">ARR Seed</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="arr-seed">Arr Scan</TabsTrigger>
           <TabsTrigger className="shrink-0" value="rules">Rules</TabsTrigger>
           <TabsTrigger className="shrink-0" value="blocklist">Blocklist</TabsTrigger>
         </TabsList>
@@ -2517,7 +2517,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
                     <p className="text-xs text-muted-foreground">Tags applied to torrents added via /apply webhook (e.g., autobrr).</p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">ARR Seed</Label>
+                    <Label className="text-sm font-medium">Arr Scan</Label>
                     <MultiSelect
                       options={[
                         { label: "cross-seed", value: "cross-seed" },

@@ -17,12 +17,14 @@ import {
   Pencil,
   Play,
   Plus,
+  Radar,
   RotateCcw,
   Settings2,
   Trash2,
   XCircle,
 } from "lucide-react"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -98,14 +100,14 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
     staleTime: 30_000,
   })
 
-  const [showSettings, setShowSettings] = useState(false)
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false)
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [expandedConfig, setExpandedConfig] = useState<number | null>(null)
 
   const handleToggleEnabled = useCallback(
     (enabled: boolean) => {
       updateSettings.mutate({ enabled }, {
-        onSuccess: () => toast.success(enabled ? "ARR Seed enabled" : "ARR Seed disabled"),
+        onSuccess: () => toast.success(enabled ? "Arr Scan enabled" : "Arr Scan disabled"),
         onError: () => toast.error("Failed to update settings"),
       })
     },
@@ -122,35 +124,46 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Global Settings */}
+      {/* Header */}
       <Card>
-        <CardHeader className="cursor-pointer" onClick={() => setShowSettings(!showSettings)}>
+        <CardHeader>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Settings2 className="h-5 w-5" />
-              <CardTitle className="text-base">Global Settings</CardTitle>
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Radar className="size-5" />
+                Arr Scan
+              </CardTitle>
+              <CardDescription>
+                Scan your Sonarr and Radarr libraries to find cross-seed matches on your indexers.
+              </CardDescription>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                <Label htmlFor="arrseed-enabled" className="text-sm text-muted-foreground">
-                  Enabled
-                </Label>
+              <Button variant="outline" size="sm" onClick={() => setShowSettingsDialog(true)}>
+                <Settings2 className="size-4 mr-2" />
+                Settings
+              </Button>
+              <Label htmlFor="arrseed-enabled" className="flex items-center gap-2">
                 <Switch
                   id="arrseed-enabled"
                   checked={settings?.enabled ?? false}
                   onCheckedChange={handleToggleEnabled}
+                  disabled={updateSettings.isPending}
                 />
-              </div>
-              {showSettings ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {settings?.enabled ? "Enabled" : "Disabled"}
+              </Label>
             </div>
           </div>
         </CardHeader>
-        {showSettings && (
-          <CardContent>
-            <SettingsForm settings={settings} />
-          </CardContent>
-        )}
       </Card>
+
+      {/* Warning */}
+      <Alert className="border-destructive/20 bg-destructive/10 text-destructive">
+        <AlertTriangle className="h-4 w-4 !text-destructive" />
+        <AlertTitle>Run sparingly</AlertTitle>
+        <AlertDescription>
+          Each run scans your full Sonarr/Radarr library and queries indexers for every item. Use reasonable max items per run and search delay values to stay within indexer rate limits.
+        </AlertDescription>
+      </Alert>
 
       {/* Instance Configs */}
       <Card>
@@ -185,7 +198,7 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Info className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>No configurations yet. Add one to start cross-seeding from your ARR libraries.</p>
+              <p>No configurations yet. Add one to start cross-seeding from your Arr libraries.</p>
             </div>
           )}
         </CardContent>
@@ -198,13 +211,28 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
         arrInstances={arrInstances ?? []}
         instances={instances}
       />
+
+      {/* Settings Dialog */}
+      <SettingsDialog
+        open={showSettingsDialog}
+        onOpenChange={setShowSettingsDialog}
+        settings={settings}
+      />
     </div>
   )
 }
 
-// --- Settings Form ---
+// --- Settings Dialog ---
 
-function SettingsForm({ settings }: { settings: ReturnType<typeof useArrSeedSettings>["data"] }) {
+function SettingsDialog({
+  open,
+  onOpenChange,
+  settings,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  settings: ReturnType<typeof useArrSeedSettings>["data"]
+}) {
   const updateSettings = useUpdateArrSeedSettings()
   const [searchDelay, setSearchDelay] = useState(String(settings?.searchDelaySeconds ?? 5))
   const [maxItems, setMaxItems] = useState(String(settings?.maxItemsPerRun ?? 0))
@@ -216,99 +244,117 @@ function SettingsForm({ settings }: { settings: ReturnType<typeof useArrSeedSett
         maxItemsPerRun: parseInt(maxItems) || 0,
       },
       {
-        onSuccess: () => toast.success("Settings saved"),
+        onSuccess: () => {
+          toast.success("Settings saved")
+          onOpenChange(false)
+        },
         onError: () => toast.error("Failed to save settings"),
       }
     )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Search Delay (seconds)</Label>
-          <Input
-            type="number"
-            value={searchDelay}
-            onChange={(e) => setSearchDelay(e.target.value)}
-            min={0}
-          />
-          <p className="text-xs text-muted-foreground">Delay between indexer searches to avoid rate limiting</p>
-        </div>
-        <div className="space-y-2">
-          <Label>Max Items Per Run</Label>
-          <Input
-            type="number"
-            value={maxItems}
-            onChange={(e) => setMaxItems(e.target.value)}
-            min={0}
-          />
-          <p className="text-xs text-muted-foreground">0 = unlimited</p>
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.
-      </p>
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">Priority Tiers</Label>
-        <p className="text-xs text-muted-foreground">Enable/disable which content types to cross-seed. Higher tiers are processed first.</p>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={settings?.enableSeasonPackHighScore ?? true}
-              onCheckedChange={(checked) =>
-                updateSettings.mutate({ enableSeasonPackHighScore: checked })
-              }
-            />
-            <Label className="text-sm">Season Pack (High Score)</Label>
-            <span className="text-xs text-muted-foreground">Season packs with custom format score above upgrade-until</span>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Arr Scan Settings</DialogTitle>
+          <DialogDescription>
+            Configure global settings for Arr Scan.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Search Delay (seconds)</Label>
+              <Input
+                type="number"
+                value={searchDelay}
+                onChange={(e) => setSearchDelay(e.target.value)}
+                min={0}
+              />
+              <p className="text-xs text-muted-foreground">Delay between indexer searches to avoid rate limiting</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Max Items Per Run</Label>
+              <Input
+                type="number"
+                value={maxItems}
+                onChange={(e) => setMaxItems(e.target.value)}
+                min={0}
+              />
+              <p className="text-xs text-muted-foreground">0 = unlimited</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={settings?.enableSeasonPack ?? true}
-              onCheckedChange={(checked) =>
-                updateSettings.mutate({ enableSeasonPack: checked })
-              }
-            />
-            <Label className="text-sm">Season Pack</Label>
-            <span className="text-xs text-muted-foreground">Full season downloads (S01 without episode number)</span>
+          <p className="text-xs text-muted-foreground">
+            Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.
+          </p>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Priority Tiers</Label>
+            <p className="text-xs text-muted-foreground">Enable/disable which content types to cross-seed. Higher tiers are processed first.</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={settings?.enableSeasonPackHighScore ?? true}
+                  onCheckedChange={(checked) =>
+                    updateSettings.mutate({ enableSeasonPackHighScore: checked })
+                  }
+                />
+                <Label className="text-sm">Season Pack (High Score)</Label>
+                <span className="text-xs text-muted-foreground">Season packs with custom format score above upgrade-until</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={settings?.enableSeasonPack ?? true}
+                  onCheckedChange={(checked) =>
+                    updateSettings.mutate({ enableSeasonPack: checked })
+                  }
+                />
+                <Label className="text-sm">Season Pack</Label>
+                <span className="text-xs text-muted-foreground">Full season downloads (S01 without episode number)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={settings?.enableEpisode ?? true}
+                  onCheckedChange={(checked) =>
+                    updateSettings.mutate({ enableEpisode: checked })
+                  }
+                />
+                <Label className="text-sm">Episode</Label>
+                <span className="text-xs text-muted-foreground">Individual episode files</span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={settings?.enableEpisode ?? true}
-              onCheckedChange={(checked) =>
-                updateSettings.mutate({ enableEpisode: checked })
-              }
-            />
-            <Label className="text-sm">Episode</Label>
-            <span className="text-xs text-muted-foreground">Individual episode files</span>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Season Pack Upgrade</Label>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={settings?.enableSeasonPackUpgrade ?? false}
+                onCheckedChange={(checked) =>
+                  updateSettings.mutate({ enableSeasonPackUpgrade: checked })
+                }
+              />
+              <Label className="text-sm">Enable Season Pack Upgrade</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  When enabled, partial season packs will be injected and qBittorrent will download missing episodes as upgrades. After download completes, Sonarr will import the new files.
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </div>
-      </div>
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">Season Pack Upgrade</Label>
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={settings?.enableSeasonPackUpgrade ?? false}
-            onCheckedChange={(checked) =>
-              updateSettings.mutate({ enableSeasonPackUpgrade: checked })
-            }
-          />
-          <Label className="text-sm">Enable Season Pack Upgrade</Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="h-3.5 w-3.5 text-muted-foreground" />
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">
-              When enabled, partial season packs will be injected and qBittorrent will download missing episodes as upgrades. After download completes, Sonarr will import the new files.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-      <Button size="sm" onClick={handleSave} disabled={updateSettings.isPending}>
-        Save Settings
-      </Button>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={updateSettings.isPending}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -374,7 +420,7 @@ function ConfigCard({
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{config.arrInstanceName || `ARR #${config.arrInstanceId}`}</span>
+                  <span className="font-medium">{config.arrInstanceName || `Arr #${config.arrInstanceId}`}</span>
                   <Badge variant="outline" className="text-xs">
                     {config.arrInstanceType || "unknown"}
                   </Badge>
@@ -494,7 +540,7 @@ function ConfigDetails({ config }: { config: ArrSeedInstanceConfig }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
       <div>
-        <span className="text-muted-foreground">ARR Docker Path:</span>{" "}
+        <span className="text-muted-foreground">Arr Docker Path:</span>{" "}
         <code className="text-xs bg-muted px-1 rounded">{config.arrDockerPath || "(not set)"}</code>
       </div>
       <div>
@@ -631,7 +677,7 @@ function AddConfigDialog({
 
   const handleCreate = () => {
     if (!form.arrInstanceId || !form.targetQbitInstanceId) {
-      toast.error("Please select both an ARR instance and a target qBittorrent instance")
+      toast.error("Please select both an Arr instance and a target qBittorrent instance")
       return
     }
 
@@ -665,20 +711,20 @@ function AddConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add ARR Seed Configuration</DialogTitle>
+          <DialogTitle>Add Arr Scan Configuration</DialogTitle>
           <DialogDescription>
             Configure cross-seeding for a Sonarr or Radarr instance
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>ARR Instance</Label>
+            <Label>Arr Instance</Label>
             <Select
               value={form.arrInstanceId ? String(form.arrInstanceId) : ""}
               onValueChange={(v) => setForm({ ...form, arrInstanceId: parseInt(v) })}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select an ARR instance" />
+                <SelectValue placeholder="Select an Arr instance" />
               </SelectTrigger>
               <SelectContent>
                 {enabledArrInstances.map((inst) => (
@@ -720,13 +766,13 @@ function AddConfigDialog({
 
           <div className="space-y-2">
             <Label>
-              ARR Docker Path
+              Arr Docker Path
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The path prefix as seen inside the ARR container (e.g., /mnt/media/tv)
+                  The path prefix as seen inside the Arr container (e.g., /mnt/media/tv)
                 </TooltipContent>
               </Tooltip>
             </Label>
@@ -907,7 +953,7 @@ function EditConfigDialog({
         <DialogHeader>
           <DialogTitle>Edit Configuration</DialogTitle>
           <DialogDescription>
-            Update settings for {config.arrInstanceName || `ARR #${config.arrInstanceId}`}
+            Update settings for {config.arrInstanceName || `Arr #${config.arrInstanceId}`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -941,13 +987,13 @@ function EditConfigDialog({
 
           <div className="space-y-2">
             <Label>
-              ARR Docker Path
+              Arr Docker Path
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The path prefix as seen inside the ARR container (e.g., /mnt/media/tv)
+                  The path prefix as seen inside the Arr container (e.g., /mnt/media/tv)
                 </TooltipContent>
               </Tooltip>
             </Label>
