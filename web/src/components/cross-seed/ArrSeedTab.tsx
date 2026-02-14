@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   AlertTriangle,
@@ -81,7 +81,7 @@ import { api } from "@/lib/api"
 import type { ArrInstance } from "@/types/arr"
 import type { ArrSeedConfigCreate, ArrSeedInstanceConfig, ArrSeedProgress } from "@/types/arrseed"
 import type { Instance } from "@/types"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 
 interface ArrSeedTabProps {
   instances: Instance[]
@@ -363,6 +363,7 @@ function ConfigCard({
   formatDate: (d: Date) => string
   instances: Instance[]
 }) {
+  const queryClient = useQueryClient()
   const triggerScan = useTriggerArrSeedScan()
   const cancelScan = useCancelArrSeedScan()
   const deleteConfig = useDeleteArrSeedConfig()
@@ -372,6 +373,26 @@ function ConfigCard({
   const [showEdit, setShowEdit] = useState(false)
 
   const isRunning = scanStatus?.status === "running"
+
+  // Detect scan completion and invalidate related queries
+  const prevStatusRef = useRef<string | undefined>()
+  useEffect(() => {
+    const currentStatus = scanStatus?.status
+    const prevStatus = prevStatusRef.current
+    prevStatusRef.current = currentStatus
+
+    if (prevStatus === "running" && currentStatus && currentStatus !== "running") {
+      queryClient.invalidateQueries({ queryKey: ["arr-seed", "runs", config.id] })
+      queryClient.invalidateQueries({ queryKey: ["arr-seed", "configs"] })
+      queryClient.invalidateQueries({ queryKey: ["arr-seed", "items", config.id] })
+
+      if (currentStatus === "completed") {
+        toast.success(`Scan completed: ${scanStatus!.torrentsAdded} added`)
+      } else if (currentStatus === "failed") {
+        toast.error("Scan failed")
+      }
+    }
+  }, [scanStatus?.status, scanStatus?.torrentsAdded, config.id, queryClient])
 
   const handleTriggerScan = () => {
     triggerScan.mutate(config.id, {
@@ -425,7 +446,7 @@ function ConfigCard({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {isRunning && <ScanProgressBadge progress={scanStatus!} />}
+              {scanStatus?.status && <ScanProgressBadge progress={scanStatus} />}
               <Switch
                 checked={config.enabled}
                 onCheckedChange={handleToggleEnabled}
@@ -517,6 +538,30 @@ function ConfigCard({
 }
 
 function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
+  if (progress.status === "completed") {
+    return (
+      <Badge variant="outline" className="text-xs gap-1 text-green-500">
+        <CheckCircle2 className="h-3 w-3" />
+        {progress.itemsProcessed} scanned, {progress.torrentsAdded} added
+      </Badge>
+    )
+  }
+  if (progress.status === "failed") {
+    return (
+      <Badge variant="outline" className="text-xs gap-1 text-destructive">
+        <XCircle className="h-3 w-3" />
+        Failed
+      </Badge>
+    )
+  }
+  if (progress.status === "cancelled") {
+    return (
+      <Badge variant="outline" className="text-xs gap-1 text-yellow-500">
+        <AlertTriangle className="h-3 w-3" />
+        Cancelled
+      </Badge>
+    )
+  }
   return (
     <Badge variant="outline" className="text-xs gap-1">
       <Loader2 className="h-3 w-3 animate-spin" />
