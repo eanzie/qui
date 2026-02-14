@@ -379,7 +379,7 @@ function ConfigCard({
   const isActive = isRunning || isStopping
 
   // Detect scan completion and invalidate related queries
-  const prevStatusRef = useRef<string | undefined>()
+  const prevStatusRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     const currentStatus = scanStatus?.status
     const prevStatus = prevStatusRef.current
