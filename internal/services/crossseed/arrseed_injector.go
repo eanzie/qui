@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,9 @@ import (
 	"github.com/autobrr/qui/internal/services/jackett"
 	"github.com/autobrr/qui/pkg/hardlinktree"
 )
+
+// arrSeedEpisodeIDPattern extracts episode identifiers like S01E02, E05, etc.
+var arrSeedEpisodeIDPattern = regexp.MustCompile(`(?i)S\d+E(\d+)|(?:^|[.\-_ ])E(\d+)(?:[.\-_ ]|$)`)
 
 const (
 	arrSeedQbitBoolTrue  = "true"
@@ -338,7 +342,7 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		return plan, 0, err
 	}
 
-	// Partial mode: filter out metadata files, then match by size with tolerance.
+	// Partial mode: filter out metadata files, then match by episode number + size.
 	var contentCandidates []hardlinktree.TorrentFile
 	for _, cf := range allCandidates {
 		if !arrSeedShouldIgnoreFile(cf.Path) {
@@ -374,19 +378,60 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		}
 	}
 
-	// Second pass: remaining unmatched candidates, try size-only with tolerance.
+	// Second pass: match by episode number + exact size.
+	// This handles Sonarr-renamed files where filenames differ but episode
+	// numbers and sizes identify the same file (e.g. "S01E02.Guts...mkv"
+	// matches "S01E02 - Guts WEBDL-1080p.mkv").
+	epToExisting := make(map[string][]int)
+	for i, ef := range existingFiles {
+		if consumed[i] {
+			continue
+		}
+		ep := arrSeedExtractEpisodeID(filepath.Base(ef.AbsPath))
+		if ep != "" {
+			epToExisting[ep] = append(epToExisting[ep], i)
+		}
+	}
 	for ci, cf := range contentCandidates {
 		if matchedTorrentIdx[ci] {
 			continue
 		}
-		for i, ef := range existingFiles {
-			if consumed[i] {
+		ep := arrSeedExtractEpisodeID(filepath.Base(cf.Path))
+		if ep == "" {
+			continue
+		}
+		for _, idx := range epToExisting[ep] {
+			if consumed[idx] {
 				continue
 			}
-			if isSizeWithinTolerance(ef.Size, cf.Size, sizeTolerance) {
+			if existingFiles[idx].Size == cf.Size {
 				matchedCandidates = append(matchedCandidates, cf)
-				matchedExisting = append(matchedExisting, ef)
-				consumed[i] = true
+				matchedExisting = append(matchedExisting, existingFiles[idx])
+				consumed[idx] = true
+				matchedTorrentIdx[ci] = true
+				break
+			}
+		}
+	}
+
+	// Third pass: remaining unmatched candidates, try episode number + size tolerance.
+	for ci, cf := range contentCandidates {
+		if matchedTorrentIdx[ci] {
+			continue
+		}
+		ep := arrSeedExtractEpisodeID(filepath.Base(cf.Path))
+		if ep == "" {
+			continue
+		}
+		for _, idx := range epToExisting[ep] {
+			if consumed[idx] {
+				continue
+			}
+			if isSizeWithinTolerance(existingFiles[idx].Size, cf.Size, sizeTolerance) {
+				matchedCandidates = append(matchedCandidates, cf)
+				matchedExisting = append(matchedExisting, existingFiles[idx])
+				consumed[idx] = true
+				matchedTorrentIdx[ci] = true
 				break
 			}
 		}
@@ -478,4 +523,19 @@ func arrSeedBuildAddOptions(category string, injOpts *arrSeedInjectionOptions, s
 	}
 
 	return options
+}
+
+// arrSeedExtractEpisodeID extracts a normalized episode identifier (e.g. "e02")
+// from a filename. Returns empty string if no episode number is found.
+func arrSeedExtractEpisodeID(filename string) string {
+	m := arrSeedEpisodeIDPattern.FindStringSubmatch(filename)
+	if m == nil {
+		return ""
+	}
+	// m[1] is from S01E02 pattern, m[2] is from standalone E02 pattern
+	ep := m[1]
+	if ep == "" {
+		ep = m[2]
+	}
+	return strings.ToLower("e" + ep)
 }
