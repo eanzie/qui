@@ -4,6 +4,7 @@
  */
 
 import { CompletionOverview } from "@/components/instances/preferences/CompletionOverview"
+import { ArrSeedTab } from "@/components/cross-seed/ArrSeedTab"
 import { BlocklistTab } from "@/components/cross-seed/BlocklistTab"
 import { DirScanTab } from "@/components/cross-seed/DirScanTab"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -96,6 +97,7 @@ interface GlobalCrossSeedSettings {
   seededSearchTags: string[]
   completionSearchTags: string[]
   webhookTags: string[]
+  arrSeedTags: string[]
   inheritSourceTags: boolean
   // Skip auto-resume settings per source mode
   skipAutoResumeRss: boolean
@@ -148,6 +150,7 @@ const DEFAULT_GLOBAL_SETTINGS: GlobalCrossSeedSettings = {
   seededSearchTags: ["cross-seed"],
   completionSearchTags: ["cross-seed"],
   webhookTags: ["cross-seed"],
+  arrSeedTags: ["cross-seed"],
   inheritSourceTags: false,
   // Skip auto-resume defaults (off = preserve existing behavior)
   skipAutoResumeRss: false,
@@ -216,8 +219,8 @@ function aggregateInstanceMetadata(
 }
 
 interface CrossSeedPageProps {
-  activeTab: "auto" | "scan" | "dir-scan" | "rules" | "blocklist"
-  onTabChange: (tab: "auto" | "scan" | "dir-scan" | "rules" | "blocklist") => void
+  activeTab: "auto" | "scan" | "dir-scan" | "arr-seed" | "rules" | "blocklist"
+  onTabChange: (tab: "auto" | "scan" | "dir-scan" | "arr-seed" | "rules" | "blocklist") => void
 }
 
 interface RSSRunItemProps {
@@ -829,6 +832,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
         seededSearchTags: settings.seededSearchTags ?? ["cross-seed"],
         completionSearchTags: settings.completionSearchTags ?? ["cross-seed"],
         webhookTags: settings.webhookTags ?? ["cross-seed"],
+        arrSeedTags: settings.arrSeedTags ?? ["cross-seed"],
         inheritSourceTags: settings.inheritSourceTags ?? false,
         // Skip auto-resume settings
         skipAutoResumeRss: settings.skipAutoResumeRss ?? false,
@@ -917,6 +921,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
         seededSearchTags: settings.seededSearchTags ?? ["cross-seed"],
         completionSearchTags: settings.completionSearchTags ?? ["cross-seed"],
         webhookTags: settings.webhookTags ?? ["cross-seed"],
+        arrSeedTags: settings.arrSeedTags ?? ["cross-seed"],
         inheritSourceTags: settings.inheritSourceTags ?? false,
         skipAutoResumeRss: settings.skipAutoResumeRss ?? false,
         skipAutoResumeSeededSearch: settings.skipAutoResumeSeededSearch ?? false,
@@ -946,6 +951,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
       seededSearchTags: globalSource.seededSearchTags,
       completionSearchTags: globalSource.completionSearchTags,
       webhookTags: globalSource.webhookTags,
+      arrSeedTags: globalSource.arrSeedTags,
       inheritSourceTags: globalSource.inheritSourceTags,
       // Skip auto-resume settings
       skipAutoResumeRss: globalSource.skipAutoResumeRss,
@@ -1479,6 +1485,7 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
           <TabsTrigger className="shrink-0" value="auto">Auto</TabsTrigger>
           <TabsTrigger className="shrink-0" value="scan">Scan</TabsTrigger>
           <TabsTrigger className="shrink-0" value="dir-scan">Dir Scan</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="arr-seed">ARR Seed</TabsTrigger>
           <TabsTrigger className="shrink-0" value="rules">Rules</TabsTrigger>
           <TabsTrigger className="shrink-0" value="blocklist">Blocklist</TabsTrigger>
         </TabsList>
@@ -2509,6 +2516,21 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
                     />
                     <p className="text-xs text-muted-foreground">Tags applied to torrents added via /apply webhook (e.g., autobrr).</p>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">ARR Seed</Label>
+                    <MultiSelect
+                      options={[
+                        { label: "cross-seed", value: "cross-seed" },
+                        { label: "arr-seed", value: "arr-seed" },
+                      ]}
+                      selected={globalSettings.arrSeedTags}
+                      onChange={values => setGlobalSettings(prev => ({ ...prev, arrSeedTags: normalizeStringList(values) }))}
+                      placeholder="Select tags for ARR seed"
+                      creatable
+                      onCreateOption={value => setGlobalSettings(prev => ({ ...prev, arrSeedTags: normalizeStringList([...prev.arrSeedTags, value]) }))}
+                    />
+                    <p className="text-xs text-muted-foreground">Tags applied to torrents added via ARR seed (Sonarr/Radarr cross-seeding).</p>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-3 pt-2">
@@ -2652,6 +2674,9 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
 
         <TabsContent value="dir-scan" className="space-y-6">
           <DirScanTab instances={instances ?? []} />
+        </TabsContent>
+        <TabsContent value="arr-seed" className="space-y-6">
+          <ArrSeedTab instances={instances ?? []} />
         </TabsContent>
         <TabsContent value="blocklist" className="space-y-6">
           <BlocklistTab instances={instances ?? []} />

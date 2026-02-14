@@ -100,6 +100,100 @@ func (r *SonarrParseResponse) ExtractExternalIDs() *models.ExternalIDs {
 	return ids
 }
 
+// SonarrSeriesResponse represents a series from Sonarr's /api/v3/series endpoint.
+type SonarrSeriesResponse struct {
+	ID               int    `json:"id"`
+	Title            string `json:"title"`
+	Path             string `json:"path"`
+	TVDbID           int    `json:"tvdbId"`
+	IMDbID           string `json:"imdbId"`
+	QualityProfileID int    `json:"qualityProfileId"`
+}
+
+// SonarrEpisodeFileResponse represents an episode file from Sonarr's /api/v3/episodefile endpoint.
+type SonarrEpisodeFileResponse struct {
+	ID                int    `json:"id"`
+	SeriesID          int    `json:"seriesId"`
+	SeasonNumber      int    `json:"seasonNumber"`
+	RelativePath      string `json:"relativePath"`
+	Path              string `json:"path"`
+	Size              int64  `json:"size"`
+	SceneName         string `json:"sceneName"`
+	ReleaseGroup      string `json:"releaseGroup"`
+	CustomFormatScore int    `json:"customFormatScore"`
+}
+
+// SonarrEpisodeResponse represents an episode from Sonarr's /api/v3/episode endpoint.
+type SonarrEpisodeResponse struct {
+	ID            int  `json:"id"`
+	SeriesID      int  `json:"seriesId"`
+	EpisodeFileID int  `json:"episodeFileId"`
+	SeasonNumber  int  `json:"seasonNumber"`
+	EpisodeNumber int  `json:"episodeNumber"`
+	Monitored     bool `json:"monitored"`
+}
+
+// SonarrHistoryRecord represents a history entry from Sonarr's /api/v3/history/series endpoint.
+type SonarrHistoryRecord struct {
+	ID              int    `json:"id"`
+	EpisodeID       int    `json:"episodeId"`
+	SeriesID        int    `json:"seriesId"`
+	SourceTitle     string `json:"sourceTitle"`
+	EventType       string `json:"eventType"`
+	EpisodeFileID   int    `json:"episodeFileId,omitempty"`
+}
+
+// RadarrMovieResponse represents a movie from Radarr's /api/v3/movie endpoint.
+type RadarrMovieResponse struct {
+	ID        int                    `json:"id"`
+	Title     string                 `json:"title"`
+	Path      string                 `json:"path"`
+	TMDbID    int                    `json:"tmdbId"`
+	IMDbID    string                 `json:"imdbId"`
+	HasFile   bool                   `json:"hasFile"`
+	MovieFile *RadarrMovieFileInline `json:"movieFile,omitempty"`
+}
+
+// RadarrMovieFileInline represents the inline movie file in a Radarr movie response.
+type RadarrMovieFileInline struct {
+	ID           int    `json:"id"`
+	RelativePath string `json:"relativePath"`
+	Path         string `json:"path"`
+	Size         int64  `json:"size"`
+	SceneName    string `json:"sceneName"`
+	ReleaseGroup string `json:"releaseGroup"`
+}
+
+// RadarrHistoryRecord represents a history entry from Radarr's /api/v3/history/movie endpoint.
+type RadarrHistoryRecord struct {
+	ID          int    `json:"id"`
+	MovieID     int    `json:"movieId"`
+	SourceTitle string `json:"sourceTitle"`
+	EventType   string `json:"eventType"`
+}
+
+// QualityProfileResponse represents a quality profile from /api/v3/qualityprofile.
+type QualityProfileResponse struct {
+	ID                 int    `json:"id"`
+	Name               string `json:"name"`
+	MinFormatScore     int    `json:"minFormatScore"`
+	CutoffFormatScore  int    `json:"cutoffFormatScore"`
+	UpgradeAllowed     bool   `json:"upgradeAllowed"`
+}
+
+// TagResponse represents a tag from /api/v3/tag.
+type TagResponse struct {
+	ID    int    `json:"id"`
+	Label string `json:"label"`
+}
+
+// CommandResponse represents a Sonarr/Radarr command response.
+type CommandResponse struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"` // "queued", "started", "completed", "failed"
+}
+
 // ExtractExternalIDs extracts external IDs from a Radarr parse response
 func (r *RadarrParseResponse) ExtractExternalIDs() *models.ExternalIDs {
 	ids := &models.ExternalIDs{}

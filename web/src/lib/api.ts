@@ -46,6 +46,18 @@ import type {
   DirScanRunInjection,
   DirScanSettings,
   DirScanSettingsUpdate,
+} from "@/types"
+import type {
+  ArrSeedConfigCreate,
+  ArrSeedConfigUpdate,
+  ArrSeedInstanceConfig,
+  ArrSeedItem,
+  ArrSeedProgress,
+  ArrSeedRun,
+  ArrSeedSettings,
+  ArrSeedSettingsUpdate,
+} from "@/types/arrseed"
+import type {
   DiscoverJackettResponse,
   DuplicateTorrentMatch,
   ExternalProgram,
@@ -2298,6 +2310,85 @@ class ApiClient {
     }
     const suffix = params.toString() ? `?${params.toString()}` : ""
     return this.request<DirScanFile[]>(`/dir-scan/directories/${directoryId}/files${suffix}`)
+  }
+
+  // ARR Seed endpoints
+
+  async getArrSeedSettings(): Promise<ArrSeedSettings> {
+    return this.request<ArrSeedSettings>("/arr-seed/settings")
+  }
+
+  async updateArrSeedSettings(data: ArrSeedSettingsUpdate): Promise<ArrSeedSettings> {
+    return this.request<ArrSeedSettings>("/arr-seed/settings", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async listArrSeedConfigs(): Promise<ArrSeedInstanceConfig[]> {
+    return this.request<ArrSeedInstanceConfig[]>("/arr-seed/configs")
+  }
+
+  async createArrSeedConfig(data: ArrSeedConfigCreate): Promise<ArrSeedInstanceConfig> {
+    return this.request<ArrSeedInstanceConfig>("/arr-seed/configs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async getArrSeedConfig(id: number): Promise<ArrSeedInstanceConfig> {
+    return this.request<ArrSeedInstanceConfig>(`/arr-seed/configs/${id}`)
+  }
+
+  async updateArrSeedConfig(id: number, data: ArrSeedConfigUpdate): Promise<ArrSeedInstanceConfig> {
+    return this.request<ArrSeedInstanceConfig>(`/arr-seed/configs/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async deleteArrSeedConfig(id: number): Promise<void> {
+    return this.request(`/arr-seed/configs/${id}`, { method: "DELETE" })
+  }
+
+  async triggerArrSeedScan(configId: number): Promise<{ runId: number }> {
+    return this.request<{ runId: number }>(`/arr-seed/configs/${configId}/scan`, {
+      method: "POST",
+    })
+  }
+
+  async cancelArrSeedScan(configId: number): Promise<void> {
+    return this.request(`/arr-seed/configs/${configId}/scan`, { method: "DELETE" })
+  }
+
+  async getArrSeedScanStatus(configId: number): Promise<ArrSeedProgress | null> {
+    return this.request<ArrSeedProgress | null>(`/arr-seed/configs/${configId}/status`)
+  }
+
+  async listArrSeedRuns(configId: number): Promise<ArrSeedRun[]> {
+    return this.request<ArrSeedRun[]>(`/arr-seed/configs/${configId}/runs`)
+  }
+
+  async listArrSeedItems(
+    configId: number,
+    options?: { status?: string; limit?: number; offset?: number }
+  ): Promise<ArrSeedItem[]> {
+    const params = new URLSearchParams()
+    if (options?.status) {
+      params.set("status", options.status)
+    }
+    if (options?.limit) {
+      params.set("limit", String(options.limit))
+    }
+    if (options?.offset) {
+      params.set("offset", String(options.offset))
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return this.request<ArrSeedItem[]>(`/arr-seed/configs/${configId}/items${suffix}`)
+  }
+
+  async resetArrSeedItems(configId: number): Promise<void> {
+    return this.request(`/arr-seed/configs/${configId}/items/reset`, { method: "POST" })
   }
 
   // RSS Feed Management

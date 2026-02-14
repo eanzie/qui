@@ -59,6 +59,7 @@ type CrossSeedAutomationSettings struct {
 	SeededSearchTags     []string `json:"seededSearchTags"`     // Tags for seeded torrent search results
 	CompletionSearchTags []string `json:"completionSearchTags"` // Tags for completion-triggered search results
 	WebhookTags          []string `json:"webhookTags"`          // Tags for /apply webhook results
+	ArrSeedTags          []string `json:"arrSeedTags"`          // Tags for ARR seed results
 	InheritSourceTags    bool     `json:"inheritSourceTags"`    // Also copy tags from the matched source torrent
 
 	// Category affix: add prefix or suffix to the original category name
@@ -121,6 +122,7 @@ func DefaultCrossSeedAutomationSettings() *CrossSeedAutomationSettings {
 		SeededSearchTags:     []string{"cross-seed"},
 		CompletionSearchTags: []string{"cross-seed"},
 		WebhookTags:          []string{"cross-seed"},
+		ArrSeedTags:          []string{"cross-seed"},
 		InheritSourceTags:    false, // Don't copy source torrent tags by default
 		// Category isolation - default to true with suffix mode and ".cross" for backwards compatibility
 		UseCrossCategoryAffix: true,
@@ -312,7 +314,7 @@ func (s *CrossSeedStore) GetSettings(ctx context.Context) (*CrossSeedAutomationS
 		       find_individual_episodes, size_mismatch_tolerance_percent,
 		       use_category_from_indexer, run_external_program_id,
 		       rss_automation_tags, seeded_search_tags, completion_search_tags,
-		       webhook_tags, inherit_source_tags,
+		       webhook_tags, arr_seed_tags, inherit_source_tags,
 		       use_cross_category_affix, category_affix_mode, category_affix,
 		       use_custom_category, custom_category,
 		       skip_auto_resume_rss, skip_auto_resume_seeded_search,
@@ -330,7 +332,7 @@ func (s *CrossSeedStore) GetSettings(ctx context.Context) (*CrossSeedAutomationS
 	var instancesJSON, indexersJSON sql.NullString
 	var rssSourceCategories, rssSourceTags, rssSourceExcludeCategories, rssSourceExcludeTags sql.NullString
 	var webhookSourceCategories, webhookSourceTags, webhookSourceExcludeCategories, webhookSourceExcludeTags sql.NullString
-	var rssAutomationTags, seededSearchTags, completionSearchTags, webhookTags sql.NullString
+	var rssAutomationTags, seededSearchTags, completionSearchTags, webhookTags, arrSeedTags sql.NullString
 	var runExternalProgramID sql.NullInt64
 	var createdAt, updatedAt sql.NullTime
 
@@ -358,6 +360,7 @@ func (s *CrossSeedStore) GetSettings(ctx context.Context) (*CrossSeedAutomationS
 		&seededSearchTags,
 		&completionSearchTags,
 		&webhookTags,
+		&arrSeedTags,
 		&settings.InheritSourceTags,
 		&settings.UseCrossCategoryAffix,
 		&settings.CategoryAffixMode,
@@ -438,6 +441,9 @@ func (s *CrossSeedStore) GetSettings(ctx context.Context) (*CrossSeedAutomationS
 	if err := decodeStringSliceWithDefault(webhookTags, &settings.WebhookTags, defaults.WebhookTags); err != nil {
 		return nil, fmt.Errorf("decode webhook tags: %w", err)
 	}
+	if err := decodeStringSliceWithDefault(arrSeedTags, &settings.ArrSeedTags, defaults.ArrSeedTags); err != nil {
+		return nil, fmt.Errorf("decode arr seed tags: %w", err)
+	}
 
 	if createdAt.Valid {
 		settings.CreatedAt = createdAt.Time
@@ -517,6 +523,10 @@ func (s *CrossSeedStore) UpsertSettings(ctx context.Context, settings *CrossSeed
 	if err != nil {
 		return nil, fmt.Errorf("encode webhook tags: %w", err)
 	}
+	arrSeedTagsJSON, err := encodeStringSlice(settings.ArrSeedTags)
+	if err != nil {
+		return nil, fmt.Errorf("encode arr seed tags: %w", err)
+	}
 
 	query := `
 		INSERT INTO cross_seed_settings (
@@ -530,14 +540,14 @@ func (s *CrossSeedStore) UpsertSettings(ctx context.Context, settings *CrossSeed
 			find_individual_episodes, size_mismatch_tolerance_percent,
 			use_category_from_indexer, run_external_program_id,
 			rss_automation_tags, seeded_search_tags, completion_search_tags,
-			webhook_tags, inherit_source_tags,
+			webhook_tags, arr_seed_tags, inherit_source_tags,
 			use_cross_category_affix, category_affix_mode, category_affix,
 			use_custom_category, custom_category,
 			skip_auto_resume_rss, skip_auto_resume_seeded_search,
 			skip_auto_resume_completion, skip_auto_resume_webhook,
 			skip_recheck, skip_piece_boundary_safety_check
 		) VALUES (
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			enabled = excluded.enabled,
@@ -563,6 +573,7 @@ func (s *CrossSeedStore) UpsertSettings(ctx context.Context, settings *CrossSeed
 			seeded_search_tags = excluded.seeded_search_tags,
 			completion_search_tags = excluded.completion_search_tags,
 			webhook_tags = excluded.webhook_tags,
+			arr_seed_tags = excluded.arr_seed_tags,
 			inherit_source_tags = excluded.inherit_source_tags,
 			use_cross_category_affix = excluded.use_cross_category_affix,
 			category_affix_mode = excluded.category_affix_mode,
@@ -613,6 +624,7 @@ func (s *CrossSeedStore) UpsertSettings(ctx context.Context, settings *CrossSeed
 		seededSearchTags,
 		completionSearchTags,
 		webhookTags,
+		arrSeedTagsJSON,
 		settings.InheritSourceTags,
 		settings.UseCrossCategoryAffix,
 		settings.CategoryAffixMode,
