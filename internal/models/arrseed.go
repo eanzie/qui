@@ -619,7 +619,7 @@ func (s *ArrSeedStore) UpsertItem(ctx context.Context, item *ArrSeedItem) error 
 			file_path = excluded.file_path,
 			file_size = excluded.file_size,
 			priority = excluded.priority,
-			status = CASE WHEN arr_seed_items.status = 'no_match' THEN 'pending' ELSE arr_seed_items.status END,
+			status = arr_seed_items.status,
 			updated_at = CURRENT_TIMESTAMP
 	`, item.ConfigID, item.ItemType, item.ArrFileID, item.ReleaseName, item.FilePath, item.FileSize, item.Priority, item.Status)
 	if err != nil {
@@ -738,8 +738,8 @@ func (s *ArrSeedStore) GetPendingItems(ctx context.Context, configID int) ([]*Ar
 		       priority, status, torrent_hash, indexer_name, error_message, last_searched_at,
 		       created_at, updated_at
 		FROM arr_seed_items
-		WHERE config_id = ? AND status IN ('pending', 'error')
-		ORDER BY priority ASC, id ASC
+		WHERE config_id = ? AND status IN ('pending', 'no_match', 'error')
+		ORDER BY priority ASC, last_searched_at ASC NULLS FIRST, id ASC
 	`, configID)
 	if err != nil {
 		return nil, fmt.Errorf("query pending items: %w", err)
