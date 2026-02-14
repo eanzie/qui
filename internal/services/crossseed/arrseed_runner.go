@@ -298,7 +298,7 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 	}
 
 	// Load shared cross-seed settings (startPaused, sizeTolerance, tags)
-	csSettings, err := r.svc.automationSettingsLoader(ctx)
+	csSettings, err := r.svc.GetAutomationSettings(ctx)
 	if err != nil {
 		l.Error().Err(err).Msg("arrseed: failed to load cross-seed settings")
 		_ = r.store.UpdateRunFailed(context.Background(), runID, "failed to load cross-seed settings")
