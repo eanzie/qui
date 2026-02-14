@@ -13,13 +13,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/rs/zerolog"
 
 	"github.com/autobrr/qui/internal/models"
-	qbsync "github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/internal/services/jackett"
 	"github.com/autobrr/qui/pkg/hardlinktree"
 )
@@ -287,10 +285,10 @@ func (inj *arrSeedInjector) tryInject(
 		if err := inj.svc.syncManager.BulkAction(ctx, config.TargetQbitInstanceID, []string{parsed.InfoHash}, "recheck"); err != nil {
 			l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to trigger recheck")
 		} else {
-			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, setting up resume-when-complete")
-			inj.svc.syncManager.ResumeWhenComplete(config.TargetQbitInstanceID, []string{parsed.InfoHash}, qbsync.ResumeWhenCompleteOptions{
-				Timeout: 60 * time.Minute,
-			})
+			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume")
+			if qErr := inj.svc.queueRecheckResume(ctx, config.TargetQbitInstanceID, parsed.InfoHash); qErr != nil {
+				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume")
+			}
 		}
 	}
 
