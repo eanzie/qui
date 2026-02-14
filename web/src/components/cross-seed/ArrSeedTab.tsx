@@ -13,13 +13,13 @@ import {
   Clock,
   Info,
   Loader2,
-  Pause,
   Pencil,
   Play,
   Plus,
   Radar,
   RotateCcw,
   Settings2,
+  Square,
   Trash2,
   XCircle,
 } from "lucide-react"
@@ -73,6 +73,7 @@ import {
   useCreateArrSeedConfig,
   useDeleteArrSeedConfig,
   useResetArrSeedItems,
+  useStopArrSeedScan,
   useTriggerArrSeedScan,
   useUpdateArrSeedConfig,
   useUpdateArrSeedSettings,
@@ -365,6 +366,7 @@ function ConfigCard({
 }) {
   const queryClient = useQueryClient()
   const triggerScan = useTriggerArrSeedScan()
+  const stopScan = useStopArrSeedScan()
   const cancelScan = useCancelArrSeedScan()
   const deleteConfig = useDeleteArrSeedConfig()
   const updateConfig = useUpdateArrSeedConfig(config.id)
@@ -373,6 +375,8 @@ function ConfigCard({
   const [showEdit, setShowEdit] = useState(false)
 
   const isRunning = scanStatus?.status === "running"
+  const isStopping = scanStatus?.status === "stopping"
+  const isActive = isRunning || isStopping
 
   // Detect scan completion and invalidate related queries
   const prevStatusRef = useRef<string | undefined>()
@@ -381,7 +385,9 @@ function ConfigCard({
     const prevStatus = prevStatusRef.current
     prevStatusRef.current = currentStatus
 
-    if (prevStatus === "running" && currentStatus && currentStatus !== "running") {
+    const wasActive = prevStatus === "running" || prevStatus === "stopping"
+    const isNowDone = currentStatus && currentStatus !== "running" && currentStatus !== "stopping"
+    if (wasActive && isNowDone) {
       queryClient.invalidateQueries({ queryKey: ["arr-seed", "runs", config.id] })
       queryClient.invalidateQueries({ queryKey: ["arr-seed", "configs"] })
       queryClient.invalidateQueries({ queryKey: ["arr-seed", "items", config.id] })
@@ -401,10 +407,17 @@ function ConfigCard({
     })
   }
 
-  const handleCancelScan = () => {
+  const handleStopScan = () => {
+    stopScan.mutate(config.id, {
+      onSuccess: () => toast.success("Stopping after current item..."),
+      onError: () => toast.error("Failed to stop scan"),
+    })
+  }
+
+  const handleKillScan = () => {
     cancelScan.mutate(config.id, {
-      onSuccess: () => toast.success("Scan cancelled"),
-      onError: () => toast.error("Failed to cancel scan"),
+      onSuccess: () => toast.success("Scan killed"),
+      onError: () => toast.error("Failed to kill scan"),
     })
   }
 
@@ -451,15 +464,27 @@ function ConfigCard({
                 checked={config.enabled}
                 onCheckedChange={handleToggleEnabled}
               />
-              {isRunning ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="icon" variant="ghost" onClick={handleCancelScan}>
-                      <Pause className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Cancel Scan</TooltipContent>
-                </Tooltip>
+              {isActive ? (
+                <>
+                  {isRunning && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="icon" variant="ghost" onClick={handleStopScan} disabled={stopScan.isPending}>
+                          <Square className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Stop (finish current item)</TooltipContent>
+                    </Tooltip>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="icon" variant="ghost" onClick={handleKillScan} disabled={cancelScan.isPending}>
+                        <XCircle className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Kill (stop immediately)</TooltipContent>
+                  </Tooltip>
+                </>
               ) : (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -559,6 +584,14 @@ function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
       <Badge variant="outline" className="text-xs gap-1 text-yellow-500">
         <AlertTriangle className="h-3 w-3" />
         Cancelled
+      </Badge>
+    )
+  }
+  if (progress.status === "stopping") {
+    return (
+      <Badge variant="outline" className="text-xs gap-1 text-yellow-500">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Stopping... {progress.itemsProcessed}/{progress.itemsTotal}
       </Badge>
     )
   }

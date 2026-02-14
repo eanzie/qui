@@ -46,6 +46,9 @@ type ArrSeedRunner struct {
 	cancelFuncs map[int64]context.CancelFunc
 	cancelMu    sync.Mutex
 
+	// Graceful stop flags keyed by runID.
+	stopFlags map[int64]struct{}
+
 	// In-memory progress tracking.
 	progress *arrSeedProgressTracker
 
@@ -70,6 +73,7 @@ func (s *Service) InitArrSeed(
 		postSeedExecutor: &arrSeedPostSeedExecutor{},
 		configMu:         make(map[int]*sync.Mutex),
 		cancelFuncs:      make(map[int64]context.CancelFunc),
+		stopFlags:        make(map[int64]struct{}),
 		progress:         newArrSeedProgressTracker(),
 	}
 	s.arrSeedRunner = r
@@ -99,7 +103,15 @@ func (s *Service) ArrSeedStartManualScan(ctx context.Context, configID int) (int
 	return s.arrSeedRunner.startManualScan(ctx, configID)
 }
 
-// ArrSeedCancelScan cancels an active scan.
+// ArrSeedStopScan gracefully stops a scan (finishes current item, then stops).
+func (s *Service) ArrSeedStopScan(ctx context.Context, configID int) error {
+	if s.arrSeedRunner == nil {
+		return errors.New("arrseed not initialized")
+	}
+	return s.arrSeedRunner.stopScan(ctx, configID)
+}
+
+// ArrSeedCancelScan immediately kills a running scan.
 func (s *Service) ArrSeedCancelScan(ctx context.Context, configID int) error {
 	if s.arrSeedRunner == nil {
 		return errors.New("arrseed not initialized")
@@ -211,6 +223,7 @@ func (r *ArrSeedRunner) startRun(parent context.Context, configID int, runID int
 		defer func() {
 			r.cancelMu.Lock()
 			delete(r.cancelFuncs, runID)
+			delete(r.stopFlags, runID)
 			r.cancelMu.Unlock()
 		}()
 		r.executeScan(runCtx, configID, runID)
@@ -227,6 +240,28 @@ func (r *ArrSeedRunner) startManualScan(ctx context.Context, configID int) (int6
 	return runID, nil
 }
 
+func (r *ArrSeedRunner) stopScan(ctx context.Context, configID int) error {
+	run, err := r.store.GetActiveRun(ctx, configID)
+	if err != nil {
+		return fmt.Errorf("get active run: %w", err)
+	}
+	if run == nil {
+		return nil
+	}
+
+	r.cancelMu.Lock()
+	r.stopFlags[run.ID] = struct{}{}
+	r.cancelMu.Unlock()
+
+	// Update progress to show stopping state
+	if p := r.progress.get(run.ID); p != nil {
+		p.Status = "stopping"
+		r.progress.set(run.ID, p)
+	}
+
+	return nil
+}
+
 func (r *ArrSeedRunner) cancelScan(ctx context.Context, configID int) error {
 	run, err := r.store.GetActiveRun(ctx, configID)
 	if err != nil {
@@ -238,6 +273,7 @@ func (r *ArrSeedRunner) cancelScan(ctx context.Context, configID int) error {
 
 	r.cancelMu.Lock()
 	cancel, ok := r.cancelFuncs[run.ID]
+	delete(r.stopFlags, run.ID)
 	r.cancelMu.Unlock()
 
 	if ok {
@@ -247,6 +283,13 @@ func (r *ArrSeedRunner) cancelScan(ctx context.Context, configID int) error {
 	r.progress.clear(run.ID)
 
 	return r.store.UpdateRunCancelled(context.Background(), run.ID)
+}
+
+func (r *ArrSeedRunner) isStopped(runID int64) bool {
+	r.cancelMu.Lock()
+	_, stopped := r.stopFlags[runID]
+	r.cancelMu.Unlock()
+	return stopped
 }
 
 func (r *ArrSeedRunner) getConfigMutex(configID int) *sync.Mutex {
@@ -544,6 +587,11 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 			l.Info().Msg("arrseed: scan cancelled during search phase")
 			_ = r.store.UpdateRunCancelled(context.Background(), runID)
 			return
+		}
+
+		if r.isStopped(runID) {
+			l.Info().Int("processed", i).Int("total", len(pendingItems)).Msg("arrseed: scan stopped, finishing current item")
+			break
 		}
 
 		progress.ItemsProcessed = i + 1

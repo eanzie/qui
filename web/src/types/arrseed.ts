@@ -71,7 +71,7 @@ export interface ArrSeedConfigUpdate {
   tagAfterSeed?: string
 }
 
-export type ArrSeedRunStatus = "running" | "completed" | "failed" | "cancelled"
+export type ArrSeedRunStatus = "running" | "stopping" | "completed" | "failed" | "cancelled"
 
 export interface ArrSeedRun {
   id: number

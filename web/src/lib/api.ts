@@ -2357,6 +2357,10 @@ class ApiClient {
     })
   }
 
+  async stopArrSeedScan(configId: number): Promise<void> {
+    return this.request(`/arr-seed/configs/${configId}/scan/stop`, { method: "POST" })
+  }
+
   async cancelArrSeedScan(configId: number): Promise<void> {
     return this.request(`/arr-seed/configs/${configId}/scan`, { method: "DELETE" })
   }

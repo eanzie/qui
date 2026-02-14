@@ -313,7 +313,24 @@ func (h *ArrSeedHandler) TriggerScan(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, map[string]int64{"runId": runID})
 }
 
-// CancelScan cancels a running scan for a config.
+// StopScan gracefully stops a running scan (finishes current item, then stops).
+func (h *ArrSeedHandler) StopScan(w http.ResponseWriter, r *http.Request) {
+	id, err := parseConfigID(r)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid config ID")
+		return
+	}
+
+	if err := h.service.ArrSeedStopScan(r.Context(), id); err != nil {
+		log.Error().Err(err).Int("id", id).Msg("arrseed: failed to stop scan")
+		RespondError(w, http.StatusInternalServerError, "Failed to stop scan")
+		return
+	}
+
+	RespondJSON(w, http.StatusNoContent, nil)
+}
+
+// CancelScan immediately kills a running scan.
 func (h *ArrSeedHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseConfigID(r)
 	if err != nil {

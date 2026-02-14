@@ -99,6 +99,17 @@ export function useTriggerArrSeedScan() {
   })
 }
 
+export function useStopArrSeedScan() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (configId: number) => api.stopArrSeedScan(configId),
+    onSuccess: (_data, configId) => {
+      queryClient.invalidateQueries({ queryKey: ["arr-seed", "status", configId] })
+    },
+  })
+}
+
 export function useCancelArrSeedScan() {
   const queryClient = useQueryClient()
 
@@ -118,7 +129,7 @@ export function useArrSeedScanStatus(configId: number, options?: { enabled?: boo
     enabled: (options?.enabled ?? true) && configId > 0,
     refetchInterval: (query) => {
       const data = query.state.data as ArrSeedProgress | null | undefined
-      if (data && data.status === "running") {
+      if (data && (data.status === "running" || data.status === "stopping")) {
         return 2000
       }
       return false

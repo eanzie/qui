@@ -601,6 +601,7 @@ func (s *Server) Handler() (*chi.Mux, error) {
 							r.Patch("/", arrSeedHandler.UpdateConfig)
 							r.Delete("/", arrSeedHandler.DeleteConfig)
 							r.Post("/scan", arrSeedHandler.TriggerScan)
+							r.Post("/scan/stop", arrSeedHandler.StopScan)
 							r.Delete("/scan", arrSeedHandler.CancelScan)
 							r.Get("/status", arrSeedHandler.GetScanStatus)
 							r.Get("/runs", arrSeedHandler.ListRuns)
