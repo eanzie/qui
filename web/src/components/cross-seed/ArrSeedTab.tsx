@@ -376,7 +376,6 @@ function ConfigCard({
 
   const isRunning = scanStatus?.status === "running"
   const isStopping = scanStatus?.status === "stopping"
-  const isActive = isRunning || isStopping
 
   // Detect scan completion and invalidate related queries
   const prevStatusRef = useRef<string | undefined>(undefined)
@@ -464,27 +463,24 @@ function ConfigCard({
                 checked={config.enabled}
                 onCheckedChange={handleToggleEnabled}
               />
-              {isActive ? (
-                <>
-                  {isRunning && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button size="icon" variant="ghost" onClick={handleStopScan} disabled={stopScan.isPending}>
-                          <Square className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Stop (finish current item)</TooltipContent>
-                    </Tooltip>
-                  )}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="icon" variant="ghost" onClick={handleKillScan} disabled={cancelScan.isPending}>
-                        <XCircle className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Kill (stop immediately)</TooltipContent>
-                  </Tooltip>
-                </>
+              {isStopping ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="icon" variant="ghost" onClick={handleKillScan} disabled={cancelScan.isPending}>
+                      <XCircle className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Kill (stop immediately)</TooltipContent>
+                </Tooltip>
+              ) : isRunning ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="icon" variant="ghost" onClick={handleStopScan} disabled={stopScan.isPending}>
+                      <Square className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Stop (finish current item)</TooltipContent>
+                </Tooltip>
               ) : (
                 <Tooltip>
                   <TooltipTrigger asChild>
