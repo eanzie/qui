@@ -251,10 +251,12 @@ func (inj *arrSeedInjector) tryInject(
 	// Build qBit add options
 	options := arrSeedBuildAddOptions(config.Category, injOpts, savePath)
 
-	// For partial upgrades, override paused/stopped so qBit downloads missing files.
+	// For partial upgrades, add paused so qBit doesn't race with the recheck.
+	// After recheck verifies hardlinked files, the recheckResumeWorker will resume
+	// the torrent so qBit can download the missing files.
 	if isPartialUpgrade {
-		options["paused"] = arrSeedQbitBoolFalse
-		delete(options, "stopped")
+		options["paused"] = arrSeedQbitBoolTrue
+		options["stopped"] = arrSeedQbitBoolTrue
 	}
 
 	l.Info().
@@ -283,6 +285,14 @@ func (inj *arrSeedInjector) tryInject(
 			Msg("arrseed: partial season pack upgrade — triggering recheck, qBit will download remaining files")
 		if err := inj.svc.syncManager.BulkAction(ctx, config.TargetQbitInstanceID, []string{parsed.InfoHash}, "recheck"); err != nil {
 			l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to trigger recheck for partial upgrade")
+		} else {
+			// Use a low threshold (1%) so the torrent resumes as soon as recheck
+			// completes and verifies the hardlinked files, regardless of how many
+			// files are still missing.
+			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume after recheck completes")
+			if qErr := inj.svc.queueRecheckResumeWithThreshold(ctx, config.TargetQbitInstanceID, parsed.InfoHash, 0.01); qErr != nil {
+				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume for partial upgrade")
+			}
 		}
 	} else if injOpts.StartPaused {
 		l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: triggering recheck for paused torrent")

@@ -59,6 +59,12 @@ func (r *ArrSeedRunner) monitorPartialUpgrade(
 		switch torrent.State {
 		case qbt.TorrentStateCheckingDl, qbt.TorrentStateCheckingUp,
 			qbt.TorrentStateCheckingResumeData, qbt.TorrentStateAllocating:
+			l.Debug().Str("state", string(torrent.State)).Float64("progress", torrent.Progress).Msg("arrseed: partial upgrade still checking")
+			continue
+		case qbt.TorrentStatePausedDl, qbt.TorrentStateStoppedDl:
+			// Torrent is paused/stopped — waiting for recheckResumeWorker to
+			// resume it after recheck completes. Keep polling.
+			l.Debug().Str("state", string(torrent.State)).Float64("progress", torrent.Progress).Msg("arrseed: partial upgrade paused, waiting for recheck resume")
 			continue
 		}
 
