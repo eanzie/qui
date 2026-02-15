@@ -4,9 +4,9 @@ CREATE TABLE IF NOT EXISTS arr_seed_settings (
     enabled BOOLEAN NOT NULL DEFAULT 0,
     search_delay_seconds INTEGER NOT NULL DEFAULT 5,
     max_items_per_run INTEGER NOT NULL DEFAULT 0,
-    size_tolerance_percent REAL NOT NULL DEFAULT 0.0,
-    start_paused BOOLEAN NOT NULL DEFAULT 1,
-    tags TEXT NOT NULL DEFAULT '[]',
+    enable_high_score_only BOOLEAN NOT NULL DEFAULT 0,
+    enable_episode BOOLEAN NOT NULL DEFAULT 0,
+    enable_season_pack_upgrade INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS arr_seed_instance_configs (
     host_data_path TEXT NOT NULL DEFAULT '',
     torrent_save_path TEXT NOT NULL DEFAULT '',
     scan_interval_minutes INTEGER NOT NULL DEFAULT 1440,
+    unmonitor_after_seed BOOLEAN NOT NULL DEFAULT 0,
+    tag_after_seed TEXT NOT NULL DEFAULT '',
     last_scan_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS arr_seed_items (
     release_name TEXT NOT NULL,
     file_path TEXT NOT NULL,
     file_size INTEGER NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 3,
     status TEXT NOT NULL DEFAULT 'pending',
     torrent_hash TEXT,
     indexer_name TEXT,
@@ -66,3 +69,6 @@ CREATE INDEX IF NOT EXISTS idx_arr_seed_items_config_status
     ON arr_seed_items(config_id, status);
 CREATE INDEX IF NOT EXISTS idx_arr_seed_runs_config
     ON arr_seed_runs(config_id);
+
+-- Add ARR seed tags to cross-seed settings
+ALTER TABLE cross_seed_settings ADD COLUMN arr_seed_tags TEXT NOT NULL DEFAULT '["cross-seed"]';
