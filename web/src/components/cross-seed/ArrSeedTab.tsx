@@ -289,7 +289,14 @@ function SettingsDialog({
                 }
               />
               <Label className="text-sm">High Score Only</Label>
-              <span className="text-xs text-muted-foreground">Only process items with custom format score above the quality profile cutoff</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  Only process items with custom format score above the quality profile cutoff.
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
           <div className="space-y-2">
@@ -304,11 +311,16 @@ function SettingsDialog({
                   }
                 />
                 <Label className="text-sm">Individual Episodes</Label>
-                <span className="text-xs text-muted-foreground">
-                  {settings?.enableSeasonPackUpgrade
-                    ? "Disabled while Season Pack Upgrade is on"
-                    : "Process individual episode files from mixed release group seasons"}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    {settings?.enableSeasonPackUpgrade
+                      ? "Disabled while Season Pack Upgrade is on."
+                      : "Process individual episode files from mixed release group seasons."}
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           </div>
