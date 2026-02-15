@@ -45,7 +45,7 @@ func (sc *arrSeedScanner) scanSonarrInstance(
 			return items, ctx.Err()
 		}
 
-		if config.ArrDockerPath != "" && !strings.HasPrefix(s.Path, config.ArrDockerPath) {
+		if config.ArrDockerPath != "" && !arrSeedPathUnder(s.Path, config.ArrDockerPath) {
 			skippedPath++
 			l.Debug().Str("title", s.Title).Str("seriesPath", s.Path).Str("arrDockerPath", config.ArrDockerPath).Msg("arrseed: skipping series outside configured path")
 			continue
@@ -247,7 +247,7 @@ func (sc *arrSeedScanner) scanRadarrInstance(
 			continue
 		}
 
-		if config.ArrDockerPath != "" && !strings.HasPrefix(m.Path, config.ArrDockerPath) {
+		if config.ArrDockerPath != "" && !arrSeedPathUnder(m.Path, config.ArrDockerPath) {
 			skippedPath++
 			l.Debug().Str("title", m.Title).Str("moviePath", m.Path).Str("arrDockerPath", config.ArrDockerPath).Msg("arrseed: skipping movie outside configured path")
 			continue
@@ -372,6 +372,13 @@ func (sc *arrSeedScanner) buildSeasonPackItem(
 		QualityProfileID:  s.QualityProfileID,
 		CustomFormatScore: maxCFScore,
 	}
+}
+
+// arrSeedPathUnder reports whether path is under the directory root.
+// It ensures a directory boundary so "/mnt/media/tv" does not match "/mnt/media/tv2".
+func arrSeedPathUnder(path, root string) bool {
+	prefix := strings.TrimRight(root, "/") + "/"
+	return strings.HasPrefix(path, prefix) || path == strings.TrimRight(root, "/")
 }
 
 // arrSeedMapPath replaces the ARR docker path prefix with the host data path.
