@@ -238,6 +238,24 @@ func (c *Client) GetMovies(ctx context.Context) ([]RadarrMovieResponse, error) {
 	return result, nil
 }
 
+// GetMovieFiles fetches movie files for the given movie IDs via GET /api/v3/moviefile?movieId={ids}.
+// Unlike the inline movieFile in the /movie endpoint, this endpoint populates CustomFormatScore.
+func (c *Client) GetMovieFiles(ctx context.Context, movieIDs []int) ([]RadarrMovieFileResponse, error) {
+	if len(movieIDs) == 0 {
+		return nil, nil
+	}
+	params := make([]string, len(movieIDs))
+	for i, id := range movieIDs {
+		params[i] = fmt.Sprintf("movieId=%d", id)
+	}
+	endpoint := "/api/v3/moviefile?" + strings.Join(params, "&")
+	var result []RadarrMovieFileResponse
+	if err := c.getJSON(ctx, endpoint, &result); err != nil {
+		return nil, fmt.Errorf("get movie files: %w", err)
+	}
+	return result, nil
+}
+
 // GetMovieHistory fetches grabbed history for a movie via GET /api/v3/history/movie?movieId={id}&eventType=grabbed.
 func (c *Client) GetMovieHistory(ctx context.Context, movieID int) ([]RadarrHistoryRecord, error) {
 	var result []RadarrHistoryRecord

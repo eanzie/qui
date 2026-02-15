@@ -166,6 +166,14 @@ type RadarrMovieFileInline struct {
 	CustomFormatScore int    `json:"customFormatScore"`
 }
 
+// RadarrMovieFileResponse represents a movie file from Radarr's /api/v3/moviefile endpoint.
+// Unlike the inline movieFile in RadarrMovieResponse, this endpoint populates CustomFormatScore.
+type RadarrMovieFileResponse struct {
+	ID                int `json:"id"`
+	MovieID           int `json:"movieId"`
+	CustomFormatScore int `json:"customFormatScore"`
+}
+
 // RadarrHistoryRecord represents a history entry from Radarr's /api/v3/history/movie endpoint.
 type RadarrHistoryRecord struct {
 	ID          int    `json:"id"`

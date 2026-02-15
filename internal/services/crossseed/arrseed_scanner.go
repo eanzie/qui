@@ -232,6 +232,38 @@ func (sc *arrSeedScanner) scanRadarrInstance(
 
 	l.Debug().Int("movieCount", len(movies)).Msg("arrseed: fetched movies from Radarr")
 
+	// Collect movie IDs that have files for bulk custom format score fetch.
+	// Radarr's /api/v3/movie does NOT populate customFormatScore on the inline movieFile;
+	// only the dedicated /api/v3/moviefile endpoint runs the format calculator.
+	var movieIDs []int
+	for _, m := range movies {
+		if m.HasFile && m.MovieFile != nil {
+			movieIDs = append(movieIDs, m.ID)
+		}
+	}
+
+	cfScoreByFileID := map[int]int{}
+	if len(movieIDs) > 0 {
+		l.Debug().Int("movieIDs", len(movieIDs)).Msg("arrseed: fetching movie files for custom format scores")
+		// Batch in chunks of 200 to avoid URL length limits
+		const batchSize = 200
+		for i := 0; i < len(movieIDs); i += batchSize {
+			end := i + batchSize
+			if end > len(movieIDs) {
+				end = len(movieIDs)
+			}
+			movieFiles, mfErr := client.GetMovieFiles(ctx, movieIDs[i:end])
+			if mfErr != nil {
+				l.Warn().Err(mfErr).Int("batch", i/batchSize).Msg("arrseed: failed to fetch movie files batch, custom format scores will be 0 for this batch")
+				continue
+			}
+			for _, mf := range movieFiles {
+				cfScoreByFileID[mf.ID] = mf.CustomFormatScore
+			}
+		}
+		l.Debug().Int("movieFilesWithScores", len(cfScoreByFileID)).Msg("arrseed: movie file custom format scores loaded")
+	}
+
 	var items []*ArrSeedMediaItem
 
 	noFile := 0
@@ -305,7 +337,7 @@ func (sc *arrSeedScanner) scanRadarrInstance(
 			},
 			MovieID:           m.ID,
 			QualityProfileID:  m.QualityProfileID,
-			CustomFormatScore: m.MovieFile.CustomFormatScore,
+			CustomFormatScore: cfScoreByFileID[m.MovieFile.ID],
 		})
 	}
 
