@@ -520,6 +520,27 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 	}
 	l.Info().Int("pendingItems", len(pendingItems)).Msg("arrseed: pending items loaded from database")
 
+	// Prune items whose file path is outside the configured host data path.
+	// This cleans up stale items from prior scans with different path configs.
+	if config.HostDataPath != "" {
+		var validItems []*models.ArrSeedItem
+		var staleIDs []int64
+		for _, item := range pendingItems {
+			if arrSeedPathUnder(item.FilePath, config.HostDataPath) {
+				validItems = append(validItems, item)
+			} else {
+				staleIDs = append(staleIDs, item.ID)
+			}
+		}
+		if len(staleIDs) > 0 {
+			l.Info().Int("stale", len(staleIDs)).Str("hostDataPath", config.HostDataPath).Msg("arrseed: removing items outside configured path")
+			if delErr := r.store.DeleteItemsByIDs(ctx, staleIDs); delErr != nil {
+				l.Warn().Err(delErr).Msg("arrseed: failed to delete stale items")
+			}
+			pendingItems = validItems
+		}
+	}
+
 	// Filter by priority tiers
 	pendingPriorityCounts := map[int]int{}
 	for _, item := range pendingItems {

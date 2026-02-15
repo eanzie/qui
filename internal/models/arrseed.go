@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/autobrr/qui/internal/dbinterface"
@@ -760,5 +761,21 @@ func (s *ArrSeedStore) GetPendingItems(ctx context.Context, configID int) ([]*Ar
 // DeleteItemsForConfig deletes all items for a config (reset).
 func (s *ArrSeedStore) DeleteItemsForConfig(ctx context.Context, configID int) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM arr_seed_items WHERE config_id = ?`, configID)
+	return err
+}
+
+// DeleteItemsByIDs deletes items by their IDs.
+func (s *ArrSeedStore) DeleteItemsByIDs(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "DELETE FROM arr_seed_items WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
 }
