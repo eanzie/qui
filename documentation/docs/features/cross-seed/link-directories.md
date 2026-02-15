@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: Link Directories
 description: How qui lays out hardlink/reflink trees on disk.
 ---

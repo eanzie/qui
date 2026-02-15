@@ -57,6 +57,18 @@ Deep scan of torrents you already seed to find cross-seed opportunities on other
 Run sparingly. This deep scan touches every matching torrent and queries indexers for each one. Use RSS automation or autobrr for routine coverage; reserve library scan for occasional catch-up passes.
 :::
 
+### Arr Scan
+
+Scans your Sonarr and Radarr libraries via their APIs to find cross-seed opportunities. Unlike Library Scan (which works from qBittorrent's torrent list), Arr Scan uses the *arr API to discover content and resolve release names. Configure in the **Arr Scan** tab.
+
+- **Arr instance** - The Sonarr or Radarr instance to scan
+- **Target qBittorrent instance** - Where matched torrents are injected
+- **Path mapping** - Map between Arr container paths and host paths
+- **Quality gate** - Optionally restrict to items above the quality profile's custom format cutoff
+- **Content types** - Movies and season packs always process; individual episodes are opt-in
+
+See [Arr Scan](arr-scan) for full details.
+
 ### Auto-Search on Completion
 
 Triggers a cross-seed search when torrents finish downloading. Configure in the **Auto** tab under "Auto-search on completion".
