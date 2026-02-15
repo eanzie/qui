@@ -771,15 +771,7 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 			}
 		}
 
-		if (i+1)%10 == 0 {
-			l.Debug().
-				Int("scanned", stats.itemsScanned).
-				Int("searched", stats.itemsSearched).
-				Int("matches", stats.matchesFound).
-				Int("added", stats.torrentsAdded).
-				Msg("arrseed: persisting run stats")
-			_ = r.store.UpdateRunStats(ctx, runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded)
-		}
+		_ = r.store.UpdateRunStats(ctx, runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded)
 	}
 
 	_ = r.store.UpdateConfigLastScan(context.Background(), configID)
