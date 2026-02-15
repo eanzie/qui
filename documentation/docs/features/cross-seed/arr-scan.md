@@ -93,7 +93,7 @@ For Radarr, custom format scores are fetched from the dedicated `/api/v3/moviefi
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Individual Episodes | Process individual episode files from seasons with mixed release groups. | Off |
-| Season Pack Upgrade | Inject partial season packs so qBittorrent downloads missing episodes as upgrades. | Off |
+| Season Pack Upgrade | Inject season packs when your episodes come from mixed release groups. Sonarr imports the season pack and upgrades existing episodes to a single consistent group, filling any missing episodes along the way. | Off |
 
 **Content type behavior:**
 - **Movies** are always processed regardless of settings.
