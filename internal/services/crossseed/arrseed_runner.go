@@ -183,10 +183,14 @@ func (r *ArrSeedRunner) checkScheduledScans() {
 
 	log.Trace().Int("enabledConfigs", len(configs)).Msg("arrseed: scheduler tick")
 
+	// Run due configs sequentially to avoid overwhelming arr/indexer APIs.
 	for _, cfg := range configs {
+		if ctx.Err() != nil {
+			return
+		}
 		if r.isDueForScan(cfg) {
 			log.Info().Int("configID", cfg.ID).Str("arrInstance", cfg.ArrInstanceName).Msg("arrseed: config due for scan, triggering")
-			go r.triggerScheduledScan(cfg.ID)
+			r.triggerScheduledScan(cfg.ID)
 		}
 	}
 }
@@ -210,7 +214,20 @@ func (r *ArrSeedRunner) triggerScheduledScan(configID int) {
 		return
 	}
 
-	r.startRun(ctx, configID, runID)
+	// Run synchronously so scheduled scans execute one at a time.
+	runCtx, cancel := context.WithCancel(ctx)
+	r.cancelMu.Lock()
+	r.cancelFuncs[runID] = cancel
+	r.cancelMu.Unlock()
+
+	defer func() {
+		r.cancelMu.Lock()
+		delete(r.cancelFuncs, runID)
+		delete(r.stopFlags, runID)
+		r.cancelMu.Unlock()
+	}()
+
+	r.executeScan(runCtx, configID, runID)
 }
 
 func (r *ArrSeedRunner) startRun(parent context.Context, configID int, runID int64) {
