@@ -8,8 +8,7 @@ export interface ArrSeedSettings {
   enabled: boolean
   searchDelaySeconds: number
   maxItemsPerRun: number
-  enableSeasonPackHighScore: boolean
-  enableSeasonPack: boolean
+  enableHighScoreOnly: boolean
   enableEpisode: boolean
   enableSeasonPackUpgrade: boolean
   createdAt: string
@@ -20,8 +19,7 @@ export interface ArrSeedSettingsUpdate {
   enabled?: boolean
   searchDelaySeconds?: number
   maxItemsPerRun?: number
-  enableSeasonPackHighScore?: boolean
-  enableSeasonPack?: boolean
+  enableHighScoreOnly?: boolean
   enableEpisode?: boolean
   enableSeasonPackUpgrade?: boolean
 }

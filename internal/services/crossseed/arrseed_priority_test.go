@@ -74,34 +74,46 @@ func TestArrSeedClassifyPriority(t *testing.T) {
 		expected    int
 	}{
 		{
-			name:        "season pack with score >= threshold",
+			name:        "season pack with score >= cutoff is high score",
 			item:        &ArrSeedMediaItem{ItemType: "season_pack", CustomFormatScore: 100},
 			cutoffScore: 50,
-			expected:    ArrSeedPrioritySeasonPackHighScore,
+			expected:    ArrSeedPriorityHighScore,
 		},
 		{
-			name:        "season pack with score < threshold",
+			name:        "season pack with score < cutoff is normal",
 			item:        &ArrSeedMediaItem{ItemType: "season_pack", CustomFormatScore: 30},
 			cutoffScore: 50,
-			expected:    ArrSeedPrioritySeasonPack,
+			expected:    ArrSeedPriorityNormal,
 		},
 		{
-			name:        "season pack with cutoff 0 means no CF upgrade threshold set",
+			name:        "season pack with cutoff 0 is normal",
 			item:        &ArrSeedMediaItem{ItemType: "season_pack", CustomFormatScore: 100},
 			cutoffScore: 0,
-			expected:    ArrSeedPrioritySeasonPack,
+			expected:    ArrSeedPriorityNormal,
 		},
 		{
-			name:        "episode",
+			name:        "episode without high score",
 			item:        &ArrSeedMediaItem{ItemType: "episode"},
 			cutoffScore: 50,
 			expected:    ArrSeedPriorityEpisode,
 		},
 		{
-			name:        "movie uses default priority",
+			name:        "episode with high score",
+			item:        &ArrSeedMediaItem{ItemType: "episode", CustomFormatScore: 100},
+			cutoffScore: 50,
+			expected:    ArrSeedPriorityHighScore,
+		},
+		{
+			name:        "movie without cutoff is normal priority",
 			item:        &ArrSeedMediaItem{ItemType: "movie"},
 			cutoffScore: 0,
-			expected:    ArrSeedPriorityEpisode,
+			expected:    ArrSeedPriorityNormal,
+		},
+		{
+			name:        "movie with high score",
+			item:        &ArrSeedMediaItem{ItemType: "movie", CustomFormatScore: 100},
+			cutoffScore: 50,
+			expected:    ArrSeedPriorityHighScore,
 		},
 	}
 
@@ -116,21 +128,17 @@ func TestArrSeedClassifyPriority(t *testing.T) {
 }
 
 func TestArrSeedFilterAndSortByPriority(t *testing.T) {
-	makeItem := func(name string, priority int) *ArrSeedMediaItem {
-		return &ArrSeedMediaItem{ReleaseName: name, Priority: priority}
+	makeItem := func(name, itemType string, priority int) *ArrSeedMediaItem {
+		return &ArrSeedMediaItem{ReleaseName: name, ItemType: itemType, Priority: priority}
 	}
 
-	t.Run("all tiers enabled, sorted by priority", func(t *testing.T) {
+	t.Run("all types sorted by priority", func(t *testing.T) {
 		items := []*ArrSeedMediaItem{
-			makeItem("episode1", ArrSeedPriorityEpisode),
-			makeItem("season_high", ArrSeedPrioritySeasonPackHighScore),
-			makeItem("season_normal", ArrSeedPrioritySeasonPack),
+			makeItem("episode1", "episode", ArrSeedPriorityEpisode),
+			makeItem("season_high", "season_pack", ArrSeedPriorityHighScore),
+			makeItem("season_normal", "season_pack", ArrSeedPriorityNormal),
 		}
-		settings := &models.ArrSeedSettings{
-			EnableSeasonPackHighScore: true,
-			EnableSeasonPack:          true,
-			EnableEpisode:             true,
-		}
+		settings := &models.ArrSeedSettings{EnableEpisode: true}
 
 		result := arrSeedFilterAndSortByPriority(items, settings)
 
@@ -148,17 +156,13 @@ func TestArrSeedFilterAndSortByPriority(t *testing.T) {
 		}
 	})
 
-	t.Run("episode disabled, episodes filtered out", func(t *testing.T) {
+	t.Run("episode disabled, episodes filtered out but season packs remain", func(t *testing.T) {
 		items := []*ArrSeedMediaItem{
-			makeItem("episode1", ArrSeedPriorityEpisode),
-			makeItem("season_high", ArrSeedPrioritySeasonPackHighScore),
-			makeItem("season_normal", ArrSeedPrioritySeasonPack),
+			makeItem("episode1", "episode", ArrSeedPriorityEpisode),
+			makeItem("season_high", "season_pack", ArrSeedPriorityHighScore),
+			makeItem("season_normal", "season_pack", ArrSeedPriorityNormal),
 		}
-		settings := &models.ArrSeedSettings{
-			EnableSeasonPackHighScore: true,
-			EnableSeasonPack:          true,
-			EnableEpisode:             false,
-		}
+		settings := &models.ArrSeedSettings{EnableEpisode: false}
 
 		result := arrSeedFilterAndSortByPriority(items, settings)
 
@@ -167,17 +171,12 @@ func TestArrSeedFilterAndSortByPriority(t *testing.T) {
 		}
 	})
 
-	t.Run("movie items always pass through", func(t *testing.T) {
-		movieItem := &ArrSeedMediaItem{ReleaseName: "Movie.2024.1080p", Priority: 0}
+	t.Run("movies always pass through even with episodes disabled", func(t *testing.T) {
 		items := []*ArrSeedMediaItem{
-			makeItem("episode1", ArrSeedPriorityEpisode),
-			movieItem,
+			makeItem("episode1", "episode", ArrSeedPriorityEpisode),
+			makeItem("Movie.2024.1080p", "movie", ArrSeedPriorityNormal),
 		}
-		settings := &models.ArrSeedSettings{
-			EnableSeasonPackHighScore: false,
-			EnableSeasonPack:          false,
-			EnableEpisode:             false,
-		}
+		settings := &models.ArrSeedSettings{EnableEpisode: false}
 
 		result := arrSeedFilterAndSortByPriority(items, settings)
 
@@ -186,6 +185,31 @@ func TestArrSeedFilterAndSortByPriority(t *testing.T) {
 		}
 		if result[0].ReleaseName != "Movie.2024.1080p" {
 			t.Errorf("expected movie to pass through, got %q", result[0].ReleaseName)
+		}
+	})
+
+	t.Run("high score only gate keeps only priority 1", func(t *testing.T) {
+		items := []*ArrSeedMediaItem{
+			makeItem("movie_high", "movie", ArrSeedPriorityHighScore),
+			makeItem("movie_normal", "movie", ArrSeedPriorityNormal),
+			makeItem("season_high", "season_pack", ArrSeedPriorityHighScore),
+			makeItem("season_normal", "season_pack", ArrSeedPriorityNormal),
+			makeItem("episode_high", "episode", ArrSeedPriorityHighScore),
+		}
+		settings := &models.ArrSeedSettings{
+			EnableHighScoreOnly: true,
+			EnableEpisode:       true,
+		}
+
+		result := arrSeedFilterAndSortByPriority(items, settings)
+
+		if len(result) != 3 {
+			t.Fatalf("expected 3 high-score items, got %d", len(result))
+		}
+		for _, item := range result {
+			if item.Priority != ArrSeedPriorityHighScore {
+				t.Errorf("expected all items to be high score, got priority %d for %q", item.Priority, item.ReleaseName)
+			}
 		}
 	})
 }

@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	ArrSeedPrioritySeasonPackHighScore = 1
-	ArrSeedPrioritySeasonPack          = 2
-	ArrSeedPriorityEpisode             = 3
+	ArrSeedPriorityHighScore = 1 // Any item type with score >= cutoff
+	ArrSeedPriorityNormal    = 2 // movie or season_pack without high score
+	ArrSeedPriorityEpisode   = 3 // episode without high score
 )
 
 var (
@@ -123,30 +123,31 @@ func arrSeedSynthesizeWithRegex(episodeName string) string {
 }
 
 // ArrSeedClassifyPriority assigns a priority tier to a media item.
+// Any item type with score >= cutoff gets priority 1 (high score).
+// Movies and season packs without high score get priority 2.
+// Episodes without high score get priority 3.
 func ArrSeedClassifyPriority(item *ArrSeedMediaItem, cutoffFormatScore int) int {
-	if item.ItemType == "season_pack" {
-		if cutoffFormatScore > 0 && item.CustomFormatScore >= cutoffFormatScore {
-			return ArrSeedPrioritySeasonPackHighScore
-		}
-		return ArrSeedPrioritySeasonPack
+	if cutoffFormatScore > 0 && item.CustomFormatScore >= cutoffFormatScore {
+		return ArrSeedPriorityHighScore
+	}
+	if item.ItemType == "movie" || item.ItemType == "season_pack" {
+		return ArrSeedPriorityNormal
 	}
 	return ArrSeedPriorityEpisode
 }
 
-// arrSeedFilterAndSortByPriority removes items from disabled tiers and sorts by priority (ascending).
+// arrSeedFilterAndSortByPriority applies type-based and quality-gate filters,
+// then sorts by priority (ascending).
+// Type filter: movies always pass, season packs always pass, episodes only if EnableEpisode.
+// Quality gate: if EnableHighScoreOnly, only priority 1 items pass a second filter.
 func arrSeedFilterAndSortByPriority(items []*ArrSeedMediaItem, settings *models.ArrSeedSettings) []*ArrSeedMediaItem {
+	// Pass 1: type filter
 	var filtered []*ArrSeedMediaItem
 	for _, item := range items {
-		switch item.Priority {
-		case ArrSeedPrioritySeasonPackHighScore:
-			if settings.EnableSeasonPackHighScore {
-				filtered = append(filtered, item)
-			}
-		case ArrSeedPrioritySeasonPack:
-			if settings.EnableSeasonPack {
-				filtered = append(filtered, item)
-			}
-		case ArrSeedPriorityEpisode:
+		switch item.ItemType {
+		case "movie", "season_pack":
+			filtered = append(filtered, item)
+		case "episode":
 			if settings.EnableEpisode {
 				filtered = append(filtered, item)
 			}
@@ -154,8 +155,51 @@ func arrSeedFilterAndSortByPriority(items []*ArrSeedMediaItem, settings *models.
 			filtered = append(filtered, item)
 		}
 	}
+
+	// Pass 2: quality gate
+	if settings.EnableHighScoreOnly {
+		var gated []*ArrSeedMediaItem
+		for _, item := range filtered {
+			if item.Priority == ArrSeedPriorityHighScore {
+				gated = append(gated, item)
+			}
+		}
+		filtered = gated
+	}
+
 	sort.SliceStable(filtered, func(i, j int) bool {
 		return filtered[i].Priority < filtered[j].Priority
 	})
+	return filtered
+}
+
+// arrSeedFilterPendingItems applies the same type + quality-gate logic to DB-loaded items.
+func arrSeedFilterPendingItems(items []*models.ArrSeedItem, settings *models.ArrSeedSettings) []*models.ArrSeedItem {
+	// Pass 1: type filter
+	var filtered []*models.ArrSeedItem
+	for _, item := range items {
+		switch item.ItemType {
+		case "movie", "season_pack":
+			filtered = append(filtered, item)
+		case "episode":
+			if settings.EnableEpisode {
+				filtered = append(filtered, item)
+			}
+		default:
+			filtered = append(filtered, item)
+		}
+	}
+
+	// Pass 2: quality gate
+	if settings.EnableHighScoreOnly {
+		var gated []*models.ArrSeedItem
+		for _, item := range filtered {
+			if item.Priority == ArrSeedPriorityHighScore {
+				gated = append(gated, item)
+			}
+		}
+		filtered = gated
+	}
+
 	return filtered
 }

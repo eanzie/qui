@@ -303,7 +303,9 @@ func (sc *arrSeedScanner) scanRadarrInstance(
 				IMDbID: m.IMDbID,
 				TMDbID: m.TMDbID,
 			},
-			MovieID: m.ID,
+			MovieID:           m.ID,
+			QualityProfileID:  m.QualityProfileID,
+			CustomFormatScore: m.MovieFile.CustomFormatScore,
 		})
 	}
 

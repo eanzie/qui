@@ -280,38 +280,35 @@ function SettingsDialog({
             Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.
           </p>
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Priority Tiers</Label>
-            <p className="text-xs text-muted-foreground">Enable/disable which content types to cross-seed. Higher tiers are processed first.</p>
+            <Label className="text-sm font-medium">Quality Gate</Label>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={settings?.enableHighScoreOnly ?? false}
+                onCheckedChange={(checked) =>
+                  updateSettings.mutate({ enableHighScoreOnly: checked })
+                }
+              />
+              <Label className="text-sm">High Score Only</Label>
+              <span className="text-xs text-muted-foreground">Only process items with custom format score above the quality profile cutoff</span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Content Types</Label>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Switch
-                  checked={settings?.enableSeasonPackHighScore ?? true}
-                  onCheckedChange={(checked) =>
-                    updateSettings.mutate({ enableSeasonPackHighScore: checked })
-                  }
-                />
-                <Label className="text-sm">Season Pack (High Score)</Label>
-                <span className="text-xs text-muted-foreground">Season packs with custom format score above upgrade-until</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={settings?.enableSeasonPack ?? true}
-                  onCheckedChange={(checked) =>
-                    updateSettings.mutate({ enableSeasonPack: checked })
-                  }
-                />
-                <Label className="text-sm">Season Pack</Label>
-                <span className="text-xs text-muted-foreground">Full season downloads (S01 without episode number)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={settings?.enableEpisode ?? true}
+                  checked={settings?.enableEpisode ?? false}
+                  disabled={settings?.enableSeasonPackUpgrade ?? false}
                   onCheckedChange={(checked) =>
                     updateSettings.mutate({ enableEpisode: checked })
                   }
                 />
-                <Label className="text-sm">Episode</Label>
-                <span className="text-xs text-muted-foreground">Individual episode files</span>
+                <Label className="text-sm">Individual Episodes</Label>
+                <span className="text-xs text-muted-foreground">
+                  {settings?.enableSeasonPackUpgrade
+                    ? "Disabled while Season Pack Upgrade is on"
+                    : "Process individual episode files from mixed release group seasons"}
+                </span>
               </div>
             </div>
           </div>

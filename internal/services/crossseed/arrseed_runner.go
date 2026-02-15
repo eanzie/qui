@@ -398,29 +398,27 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 	arrClient := arr.NewClient(arrInstance.BaseURL, apiKey, arrInstance.BasicUsername, basicPass, arrInstance.Type, arrInstance.TimeoutSeconds)
 	l.Info().Str("type", string(arrInstance.Type)).Str("baseURL", arrInstance.BaseURL).Msg("arrseed: ARR API client created, starting library scan")
 
-	// Fetch quality profiles for priority classification (Sonarr only)
+	// Fetch quality profiles for priority classification
 	var profileCutoffScores map[int]int
 	var profileMinScores map[int]int
-	if arrInstance.Type == models.ArrInstanceTypeSonarr {
-		profiles, profErr := arrClient.GetQualityProfiles(ctx)
-		if profErr != nil {
-			l.Warn().Err(profErr).Msg("arrseed: failed to fetch quality profiles, priority scoring will be limited")
-		} else {
-			profileCutoffScores = make(map[int]int, len(profiles))
-			profileMinScores = make(map[int]int, len(profiles))
-			for _, p := range profiles {
-				profileCutoffScores[p.ID] = p.CutoffFormatScore
-				profileMinScores[p.ID] = p.MinFormatScore
-				l.Info().
-					Int("profileID", p.ID).
-					Str("name", p.Name).
-					Int("cutoffFormatScore", p.CutoffFormatScore).
-					Int("minFormatScore", p.MinFormatScore).
-					Bool("upgradeAllowed", p.UpgradeAllowed).
-					Msg("arrseed: quality profile loaded")
-			}
-			l.Info().Int("profiles", len(profileCutoffScores)).Msg("arrseed: quality profiles loaded")
+	profiles, profErr := arrClient.GetQualityProfiles(ctx)
+	if profErr != nil {
+		l.Warn().Err(profErr).Msg("arrseed: failed to fetch quality profiles, priority scoring will be limited")
+	} else {
+		profileCutoffScores = make(map[int]int, len(profiles))
+		profileMinScores = make(map[int]int, len(profiles))
+		for _, p := range profiles {
+			profileCutoffScores[p.ID] = p.CutoffFormatScore
+			profileMinScores[p.ID] = p.MinFormatScore
+			l.Info().
+				Int("profileID", p.ID).
+				Str("name", p.Name).
+				Int("cutoffFormatScore", p.CutoffFormatScore).
+				Int("minFormatScore", p.MinFormatScore).
+				Bool("upgradeAllowed", p.UpgradeAllowed).
+				Msg("arrseed: quality profile loaded")
 		}
+		l.Info().Int("profiles", len(profileCutoffScores)).Msg("arrseed: quality profiles loaded")
 	}
 
 	progress := &ArrSeedScanProgress{
@@ -483,8 +481,8 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 		}
 	}
 	l.Info().
-		Int("priority1_seasonPackHighScore", priorityCounts[ArrSeedPrioritySeasonPackHighScore]).
-		Int("priority2_seasonPack", priorityCounts[ArrSeedPrioritySeasonPack]).
+		Int("priority1_highScore", priorityCounts[ArrSeedPriorityHighScore]).
+		Int("priority2_normal", priorityCounts[ArrSeedPriorityNormal]).
 		Int("priority3_episode", priorityCounts[ArrSeedPriorityEpisode]).
 		Msg("arrseed: priority classification complete")
 
@@ -541,40 +539,20 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 		}
 	}
 
-	// Filter by priority tiers
+	// Filter by type and quality gate
 	pendingPriorityCounts := map[int]int{}
 	for _, item := range pendingItems {
 		pendingPriorityCounts[item.Priority]++
 	}
 	l.Info().
-		Int("priority1", pendingPriorityCounts[ArrSeedPrioritySeasonPackHighScore]).
-		Int("priority2", pendingPriorityCounts[ArrSeedPrioritySeasonPack]).
-		Int("priority3", pendingPriorityCounts[ArrSeedPriorityEpisode]).
-		Bool("enableHighScore", settings.EnableSeasonPackHighScore).
-		Bool("enableSeasonPack", settings.EnableSeasonPack).
+		Int("priority1_highScore", pendingPriorityCounts[ArrSeedPriorityHighScore]).
+		Int("priority2_normal", pendingPriorityCounts[ArrSeedPriorityNormal]).
+		Int("priority3_episode", pendingPriorityCounts[ArrSeedPriorityEpisode]).
+		Bool("enableHighScoreOnly", settings.EnableHighScoreOnly).
 		Bool("enableEpisode", settings.EnableEpisode).
 		Msg("arrseed: pending items priority distribution before filter")
 
-	var filteredPending []*models.ArrSeedItem
-	for _, item := range pendingItems {
-		switch item.Priority {
-		case ArrSeedPrioritySeasonPackHighScore:
-			if settings.EnableSeasonPackHighScore {
-				filteredPending = append(filteredPending, item)
-			}
-		case ArrSeedPrioritySeasonPack:
-			if settings.EnableSeasonPack {
-				filteredPending = append(filteredPending, item)
-			}
-		case ArrSeedPriorityEpisode:
-			if settings.EnableEpisode {
-				filteredPending = append(filteredPending, item)
-			}
-		default:
-			filteredPending = append(filteredPending, item)
-		}
-	}
-	pendingItems = filteredPending
+	pendingItems = arrSeedFilterPendingItems(pendingItems, settings)
 	l.Info().Int("afterFilter", len(pendingItems)).Msg("arrseed: items after priority filtering")
 
 	if settings.MaxItemsPerRun > 0 && len(pendingItems) > settings.MaxItemsPerRun {

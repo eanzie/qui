@@ -145,23 +145,25 @@ type SonarrHistoryRecord struct {
 
 // RadarrMovieResponse represents a movie from Radarr's /api/v3/movie endpoint.
 type RadarrMovieResponse struct {
-	ID        int                    `json:"id"`
-	Title     string                 `json:"title"`
-	Path      string                 `json:"path"`
-	TMDbID    int                    `json:"tmdbId"`
-	IMDbID    string                 `json:"imdbId"`
-	HasFile   bool                   `json:"hasFile"`
-	MovieFile *RadarrMovieFileInline `json:"movieFile,omitempty"`
+	ID               int                    `json:"id"`
+	Title            string                 `json:"title"`
+	Path             string                 `json:"path"`
+	TMDbID           int                    `json:"tmdbId"`
+	IMDbID           string                 `json:"imdbId"`
+	HasFile          bool                   `json:"hasFile"`
+	QualityProfileID int                    `json:"qualityProfileId"`
+	MovieFile        *RadarrMovieFileInline `json:"movieFile,omitempty"`
 }
 
 // RadarrMovieFileInline represents the inline movie file in a Radarr movie response.
 type RadarrMovieFileInline struct {
-	ID           int    `json:"id"`
-	RelativePath string `json:"relativePath"`
-	Path         string `json:"path"`
-	Size         int64  `json:"size"`
-	SceneName    string `json:"sceneName"`
-	ReleaseGroup string `json:"releaseGroup"`
+	ID                int    `json:"id"`
+	RelativePath      string `json:"relativePath"`
+	Path              string `json:"path"`
+	Size              int64  `json:"size"`
+	SceneName         string `json:"sceneName"`
+	ReleaseGroup      string `json:"releaseGroup"`
+	CustomFormatScore int    `json:"customFormatScore"`
 }
 
 // RadarrHistoryRecord represents a history entry from Radarr's /api/v3/history/movie endpoint.

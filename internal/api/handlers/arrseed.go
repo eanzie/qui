@@ -43,10 +43,7 @@ func (h *ArrSeedHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 	if settings == nil {
 		settings = &models.ArrSeedSettings{
-			SearchDelaySeconds:        5,
-			EnableSeasonPackHighScore: true,
-			EnableSeasonPack:          true,
-			EnableEpisode:             true,
+			SearchDelaySeconds: 5,
 		}
 	}
 
@@ -55,13 +52,12 @@ func (h *ArrSeedHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 
 // ArrSeedSettingsPayload is the request body for updating settings.
 type ArrSeedSettingsPayload struct {
-	Enabled                   *bool `json:"enabled"`
-	SearchDelaySeconds        *int  `json:"searchDelaySeconds"`
-	MaxItemsPerRun            *int  `json:"maxItemsPerRun"`
-	EnableSeasonPackHighScore *bool `json:"enableSeasonPackHighScore"`
-	EnableSeasonPack          *bool `json:"enableSeasonPack"`
-	EnableEpisode             *bool `json:"enableEpisode"`
-	EnableSeasonPackUpgrade   *bool `json:"enableSeasonPackUpgrade"`
+	Enabled                 *bool `json:"enabled"`
+	SearchDelaySeconds      *int  `json:"searchDelaySeconds"`
+	MaxItemsPerRun          *int  `json:"maxItemsPerRun"`
+	EnableHighScoreOnly     *bool `json:"enableHighScoreOnly"`
+	EnableEpisode           *bool `json:"enableEpisode"`
+	EnableSeasonPackUpgrade *bool `json:"enableSeasonPackUpgrade"`
 }
 
 // UpdateSettings updates the global Arr Seed settings.
@@ -94,17 +90,19 @@ func (h *ArrSeedHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if payload.MaxItemsPerRun != nil {
 		settings.MaxItemsPerRun = *payload.MaxItemsPerRun
 	}
-	if payload.EnableSeasonPackHighScore != nil {
-		settings.EnableSeasonPackHighScore = *payload.EnableSeasonPackHighScore
-	}
-	if payload.EnableSeasonPack != nil {
-		settings.EnableSeasonPack = *payload.EnableSeasonPack
+	if payload.EnableHighScoreOnly != nil {
+		settings.EnableHighScoreOnly = *payload.EnableHighScoreOnly
 	}
 	if payload.EnableEpisode != nil {
 		settings.EnableEpisode = *payload.EnableEpisode
 	}
 	if payload.EnableSeasonPackUpgrade != nil {
 		settings.EnableSeasonPackUpgrade = *payload.EnableSeasonPackUpgrade
+	}
+
+	// Mutual exclusivity: season pack upgrade mode disables individual episodes
+	if settings.EnableSeasonPackUpgrade {
+		settings.EnableEpisode = false
 	}
 
 	updated, err := h.store.UpdateSettings(r.Context(), settings)

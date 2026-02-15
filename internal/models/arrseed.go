@@ -39,16 +39,15 @@ const (
 // ArrSeedSettings represents global Arr Seed settings.
 // Shared settings (startPaused, sizeTolerance, tags) are read from CrossSeedAutomationSettings.
 type ArrSeedSettings struct {
-	ID                        int       `json:"id"`
-	Enabled                   bool      `json:"enabled"`
-	SearchDelaySeconds        int       `json:"searchDelaySeconds"`
-	MaxItemsPerRun            int       `json:"maxItemsPerRun"`
-	EnableSeasonPackHighScore bool      `json:"enableSeasonPackHighScore"`
-	EnableSeasonPack          bool      `json:"enableSeasonPack"`
-	EnableEpisode             bool      `json:"enableEpisode"`
-	EnableSeasonPackUpgrade   bool      `json:"enableSeasonPackUpgrade"`
-	CreatedAt                 time.Time `json:"createdAt"`
-	UpdatedAt                 time.Time `json:"updatedAt"`
+	ID                      int       `json:"id"`
+	Enabled                 bool      `json:"enabled"`
+	SearchDelaySeconds      int       `json:"searchDelaySeconds"`
+	MaxItemsPerRun          int       `json:"maxItemsPerRun"`
+	EnableHighScoreOnly     bool      `json:"enableHighScoreOnly"`
+	EnableEpisode           bool      `json:"enableEpisode"`
+	EnableSeasonPackUpgrade bool      `json:"enableSeasonPackUpgrade"`
+	CreatedAt               time.Time `json:"createdAt"`
+	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
 // ArrSeedInstanceConfig represents a per-ARR-instance cross-seed configuration.
@@ -122,8 +121,7 @@ func NewArrSeedStore(db dbinterface.Querier) *ArrSeedStore {
 func (s *ArrSeedStore) GetSettings(ctx context.Context) (*ArrSeedSettings, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, enabled, search_delay_seconds, max_items_per_run,
-		       enable_season_pack_high_score, enable_season_pack,
-		       enable_episode, enable_season_pack_upgrade,
+		       enable_high_score_only, enable_episode, enable_season_pack_upgrade,
 		       created_at, updated_at
 		FROM arr_seed_settings WHERE id = 1
 	`)
@@ -135,8 +133,7 @@ func (s *ArrSeedStore) GetSettings(ctx context.Context) (*ArrSeedSettings, error
 		&settings.Enabled,
 		&settings.SearchDelaySeconds,
 		&settings.MaxItemsPerRun,
-		&settings.EnableSeasonPackHighScore,
-		&settings.EnableSeasonPack,
+		&settings.EnableHighScoreOnly,
 		&settings.EnableEpisode,
 		&settings.EnableSeasonPackUpgrade,
 		&settings.CreatedAt,
@@ -161,15 +158,14 @@ func (s *ArrSeedStore) UpdateSettings(ctx context.Context, settings *ArrSeedSett
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO arr_seed_settings (
 			id, enabled, search_delay_seconds, max_items_per_run,
-			enable_season_pack_high_score, enable_season_pack, enable_episode,
+			enable_high_score_only, enable_episode,
 			enable_season_pack_upgrade
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (1, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			enabled = excluded.enabled,
 			search_delay_seconds = excluded.search_delay_seconds,
 			max_items_per_run = excluded.max_items_per_run,
-			enable_season_pack_high_score = excluded.enable_season_pack_high_score,
-			enable_season_pack = excluded.enable_season_pack,
+			enable_high_score_only = excluded.enable_high_score_only,
 			enable_episode = excluded.enable_episode,
 			enable_season_pack_upgrade = excluded.enable_season_pack_upgrade,
 			updated_at = CURRENT_TIMESTAMP
@@ -177,8 +173,7 @@ func (s *ArrSeedStore) UpdateSettings(ctx context.Context, settings *ArrSeedSett
 		boolToInt(settings.Enabled),
 		settings.SearchDelaySeconds,
 		settings.MaxItemsPerRun,
-		boolToInt(settings.EnableSeasonPackHighScore),
-		boolToInt(settings.EnableSeasonPack),
+		boolToInt(settings.EnableHighScoreOnly),
 		boolToInt(settings.EnableEpisode),
 		boolToInt(settings.EnableSeasonPackUpgrade),
 	)
