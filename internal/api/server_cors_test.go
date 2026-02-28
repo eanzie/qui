@@ -29,7 +29,7 @@ func TestCORSPreflightBypassesAuth(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
-	require.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
+	require.Empty(t, rec.Header().Get("Access-Control-Allow-Credentials"))
 }
 
 func TestCORSAllowsXRequestedWithHeader(t *testing.T) {
@@ -53,7 +53,7 @@ func TestCORSAllowsXRequestedWithHeader(t *testing.T) {
 	// Basic CORS preflight should work
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
-	require.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
+	require.Empty(t, rec.Header().Get("Access-Control-Allow-Credentials"))
 
 	// rs/cors echoes back allowed headers (normalized to lowercase)
 	allowedHeaders := strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers"))
@@ -79,5 +79,5 @@ func TestCORSPreflightWithCustomBaseURL(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
-	require.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
+	require.Empty(t, rec.Header().Get("Access-Control-Allow-Credentials"))
 }

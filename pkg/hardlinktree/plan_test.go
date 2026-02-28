@@ -346,6 +346,60 @@ func TestBuildPlan_Deterministic(t *testing.T) {
 	}
 }
 
+func TestValidateCandidatePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{name: "parent traversal", path: "../../etc/evil", wantErr: true},
+		{name: "absolute unix path", path: "/etc/absolute", wantErr: true},
+		{name: "normal file", path: "normal/file.mkv", wantErr: false},
+		{name: "simple file", path: "movie.mkv", wantErr: false},
+		{name: "empty path", path: "", wantErr: true},
+		{name: "dot dot only", path: "..", wantErr: true},
+		{name: "embedded traversal", path: "dir/../../../etc/passwd", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCandidatePath(tt.path)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateCandidatePath(%q) should have returned error", tt.path)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateCandidatePath(%q) returned unexpected error: %v", tt.path, err)
+			}
+		})
+	}
+}
+
+func TestValidateTargetInsideBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		base    string
+		wantErr bool
+	}{
+		{name: "inside base", target: "/dest/sub/file.mkv", base: "/dest", wantErr: false},
+		{name: "outside base", target: "/other/file.mkv", base: "/dest", wantErr: true},
+		{name: "traversal outside", target: "/dest/../etc/passwd", base: "/dest", wantErr: true},
+		{name: "exact base", target: "/dest", base: "/dest", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateTargetInsideBase(tt.target, tt.base)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateTargetInsideBase(%q, %q) should have returned error", tt.target, tt.base)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateTargetInsideBase(%q, %q) returned unexpected error: %v", tt.target, tt.base, err)
+			}
+		})
+	}
+}
+
 func TestNormalizeFileKey(t *testing.T) {
 	tests := []struct {
 		name     string

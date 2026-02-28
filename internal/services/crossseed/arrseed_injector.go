@@ -461,7 +461,13 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		Files:   make([]hardlinktree.FilePlan, 0, len(matchedCandidates)),
 	}
 	for i, cf := range matchedCandidates {
+		if err := hardlinktree.ValidateCandidatePath(cf.Path); err != nil {
+			return nil, 0, fmt.Errorf("invalid torrent file path: %w", err)
+		}
 		targetPath := filepath.Join(savePath, filepath.FromSlash(cf.Path))
+		if err := hardlinktree.ValidateTargetInsideBase(targetPath, savePath); err != nil {
+			return nil, 0, fmt.Errorf("path traversal detected: %w", err)
+		}
 		plan.Files = append(plan.Files, hardlinktree.FilePlan{
 			SourcePath: matchedExisting[i].AbsPath,
 			TargetPath: targetPath,

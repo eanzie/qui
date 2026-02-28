@@ -4,6 +4,9 @@
 package crossseed
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -291,5 +294,75 @@ func TestBuildArrSeedArchiveExtSet(t *testing.T) {
 		if exts[ext] {
 			t.Errorf("did not expect %q in archive extensions", ext)
 		}
+	}
+}
+
+// --- Partial-Upgrade Path Traversal ---
+
+func TestBuildHardlinkPlan_PartialUpgrade_RejectsTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	savePath := filepath.Join(tmpDir, "save")
+	if err := os.MkdirAll(savePath, 0o755); err != nil {
+		t.Fatalf("create save path: %v", err)
+	}
+
+	// Create a dummy source file so the existing file reference is valid.
+	srcFile := filepath.Join(tmpDir, "S01E01.mkv")
+	if err := os.WriteFile(srcFile, []byte("x"), 0o644); err != nil {
+		t.Fatalf("create source file: %v", err)
+	}
+
+	inj := &arrSeedInjector{}
+
+	tests := []struct {
+		name      string
+		filePath  string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			// Use a path that matches by base name (S01E01.mkv) but contains
+			// traversal components, so the partial matcher pairs it before
+			// the new validation rejects it.
+			name:      "traversal path with matching base name",
+			filePath:  "../../etc/S01E01.mkv",
+			wantErr:   true,
+			errSubstr: "invalid torrent file path",
+		},
+		{
+			name:     "normal path",
+			filePath: "Show/S01E01.mkv",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := &ArrSeedMediaItem{
+				HostFiles: []HostFile{
+					{Path: srcFile, Size: 1},
+				},
+			}
+			parsed := &arrSeedParsedTorrent{
+				Name: "Show.S01",
+				Files: []arrSeedTorrentFile{
+					{Path: tt.filePath, Size: 1},
+				},
+			}
+
+			_, _, err := inj.buildHardlinkPlan(item, parsed, savePath, true, 0)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for path %q, got nil", tt.filePath)
+				}
+				if !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errSubstr)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for path %q: %v", tt.filePath, err)
+				}
+			}
+		})
 	}
 }

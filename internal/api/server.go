@@ -278,14 +278,14 @@ func (s *Server) Handler() (*chi.Mux, error) {
 		r.Use(compressor)
 	}
 
-	// CORS - mirror autobrr's permissive credentials setup
+	// CORS - same-origin requests carry cookies automatically; cross-origin
+	// API-key access works without credentials.  SSO-proxy users configure
+	// CORS on the proxy itself (see docs/advanced/sso-proxy-cors.md).
 	corsMiddleware := cors.New(cors.Options{
-		AllowCredentials: true,
-		AllowedMethods:   []string{"HEAD", "OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key", "X-Requested-With"},
-		AllowOriginFunc:  func(origin string) bool { return true },
-		MaxAge:           300,
-		Debug:            false,
+		AllowedMethods: []string{"HEAD", "OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-API-Key", "X-Requested-With"},
+		AllowOriginFunc: func(origin string) bool { return true },
+		MaxAge:          300,
 	})
 	r.Use(corsMiddleware.Handler)
 

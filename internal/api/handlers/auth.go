@@ -142,6 +142,8 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	// Renew token to prevent session fixation attacks
 	if err := h.sessionManager.RenewToken(r.Context()); err != nil {
 		log.Error().Err(err).Msg("Failed to renew session token")
+		RespondError(w, http.StatusInternalServerError, "Authentication failed")
+		return
 	}
 
 	h.sessionManager.Put(r.Context(), "authenticated", true)
@@ -270,6 +272,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Renew token to prevent session fixation attacks
 	if err := h.sessionManager.RenewToken(r.Context()); err != nil {
 		log.Error().Err(err).Msg("Failed to renew session token")
+		RespondError(w, http.StatusInternalServerError, "Authentication failed")
+		return
 	}
 
 	h.sessionManager.Put(r.Context(), "authenticated", true)

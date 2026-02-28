@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -93,9 +92,7 @@ func (c *AppConfig) defaults() {
 	// Generate secure session secret if not provided
 	sessionSecret, err := generateSecureToken(encryptionKeySize)
 	if err != nil {
-		// Log error but continue with a fallback
-		log.Error().Err(err).Msg("Failed to generate secure session secret, using fallback")
-		sessionSecret = "change-me-" + strconv.Itoa(os.Getpid())
+		log.Fatal().Err(err).Msg("Failed to generate secure session secret; cannot start safely")
 	}
 
 	c.viper.SetDefault("host", host)

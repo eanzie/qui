@@ -99,6 +99,24 @@ func TestGenerateSecureTokenHexOutput(t *testing.T) {
 	}
 }
 
+func TestGenerateSecureTokenUniqueness(t *testing.T) {
+	token1, err := generateSecureToken(encryptionKeySize)
+	require.NoError(t, err)
+
+	token2, err := generateSecureToken(encryptionKeySize)
+	require.NoError(t, err)
+
+	assert.Len(t, token1, encryptionKeySize*2, "token should be hex-encoded (2 chars per byte)")
+	assert.Len(t, token2, encryptionKeySize*2)
+
+	_, err = hex.DecodeString(token1)
+	require.NoError(t, err, "token1 must be valid hex")
+	_, err = hex.DecodeString(token2)
+	require.NoError(t, err, "token2 must be valid hex")
+
+	assert.NotEqual(t, token1, token2, "two generated tokens must differ")
+}
+
 func TestGetEncryptionKey(t *testing.T) {
 	tests := []struct {
 		name   string

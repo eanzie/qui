@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
@@ -282,4 +284,34 @@ func formatRoutes(routes []routeKey) string {
 		lines[i] = fmt.Sprintf("%s %s", route.Method, route.Path)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func TestCORSNoCredentials(t *testing.T) {
+	server := NewServer(newTestDependencies(t))
+	handler, err := server.Handler()
+	require.NoError(t, err)
+
+	t.Run("cross-origin request does not get Allow-Credentials header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		req.Header.Set("Origin", "https://evil.example.com")
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		assert.Empty(t, resp.Header().Get("Access-Control-Allow-Credentials"),
+			"response must not include Access-Control-Allow-Credentials")
+	})
+
+	t.Run("preflight does not include credentials", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/auth/me", nil)
+		req.Header.Set("Origin", "https://external-tool.example.com")
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		resp := httptest.NewRecorder()
+
+		handler.ServeHTTP(resp, req)
+
+		assert.Equal(t, http.StatusNoContent, resp.Code)
+		assert.Empty(t, resp.Header().Get("Access-Control-Allow-Credentials"),
+			"preflight must not include Access-Control-Allow-Credentials")
+	})
 }

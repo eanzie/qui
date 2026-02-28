@@ -77,7 +77,7 @@ func BuildPlan(
 
 	// Validate candidate file paths for path traversal attacks
 	for _, cf := range candidateFiles {
-		if err := validateCandidatePath(cf.Path); err != nil {
+		if err := ValidateCandidatePath(cf.Path); err != nil {
 			return nil, err
 		}
 	}
@@ -171,7 +171,7 @@ func BuildPlan(
 		targetPath := computeTargetPath(cf.Path, layout, torrentName, destDir)
 
 		// Validate that target path is inside destDir (defense in depth)
-		if err := validateTargetInsideBase(targetPath, destDir); err != nil {
+		if err := ValidateTargetInsideBase(targetPath, destDir); err != nil {
 			return nil, err
 		}
 
@@ -230,8 +230,8 @@ func computeTargetPath(candidatePath string, layout ContentLayout, torrentName, 
 	}
 }
 
-// validateCandidatePath checks if a torrent file path is safe (no path traversal).
-func validateCandidatePath(path string) error {
+// ValidateCandidatePath checks if a torrent file path is safe (no path traversal).
+func ValidateCandidatePath(path string) error {
 	if path == "" {
 		return errors.New("empty file path in torrent")
 	}
@@ -273,8 +273,8 @@ func validateCandidatePath(path string) error {
 	return nil
 }
 
-// validateTargetInsideBase ensures the target path is inside the base directory.
-func validateTargetInsideBase(targetPath, baseDir string) error {
+// ValidateTargetInsideBase ensures the target path is inside the base directory.
+func ValidateTargetInsideBase(targetPath, baseDir string) error {
 	// Get absolute paths for comparison
 	absTarget, err := filepath.Abs(targetPath)
 	if err != nil {
