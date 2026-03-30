@@ -20,9 +20,10 @@ import { usePersistedCompactViewState } from "@/hooks/usePersistedCompactViewSta
 import { usePersistedFilters } from "@/hooks/usePersistedFilters"
 import { usePersistedFilterSidebarState } from "@/hooks/usePersistedFilterSidebarState"
 import { usePersistedTitleBarSpeeds } from "@/hooks/usePersistedTitleBarSpeeds"
+import { usePersistedUnifiedInstanceFilter } from "@/hooks/usePersistedUnifiedInstanceFilter"
 import { useTitleBarSpeeds } from "@/hooks/useTitleBarSpeeds"
 import { api } from "@/lib/api"
-import { isAllInstancesScope, normalizeUnifiedInstanceIds, parseUnifiedInstanceIds } from "@/lib/instances"
+import { isAllInstancesScope, normalizeUnifiedInstanceIds } from "@/lib/instances"
 import { cn } from "@/lib/utils"
 import type { Category, CrossInstanceTorrent, ServerState, Torrent, TorrentCounts } from "@/types"
 import { useNavigate } from "@tanstack/react-router"
@@ -33,8 +34,8 @@ interface TorrentsProps {
   instanceId: number
   instanceName: string
   isAllInstancesView?: boolean
-  search: { modal?: "add-torrent" | "create-torrent" | "tasks" | undefined; torrent?: string; tab?: string; instanceIds?: string }
-  onSearchChange: (search: { modal?: "add-torrent" | "create-torrent" | "tasks" | undefined; torrent?: string; tab?: string; instanceIds?: string }) => void
+  search: { modal?: "add-torrent" | "create-torrent" | "tasks" | undefined; torrent?: string; tab?: string }
+  onSearchChange: (search: { modal?: "add-torrent" | "create-torrent" | "tasks" | undefined; torrent?: string; tab?: string }) => void
 }
 
 export function Torrents({ instanceId, instanceName, isAllInstancesView = false, search, onSearchChange }: TorrentsProps) {
@@ -44,6 +45,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
   const { viewMode } = usePersistedCompactViewState("normal")
   const { clearSelection } = useTorrentSelection()
   const { instances } = useInstances()
+  const [persistedUnifiedFilter] = usePersistedUnifiedInstanceFilter()
   const activeInstanceIds = useMemo(
     () => (instances ?? []).filter(current => current.isActive).map(current => current.id),
     [instances]
@@ -53,9 +55,9 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
       return undefined
     }
 
-    const normalized = normalizeUnifiedInstanceIds(parseUnifiedInstanceIds(search.instanceIds), activeInstanceIds)
+    const normalized = normalizeUnifiedInstanceIds(persistedUnifiedFilter, activeInstanceIds)
     return normalized.length > 0 ? normalized : undefined
-  }, [isAllInstances, search.instanceIds, activeInstanceIds])
+  }, [isAllInstances, persistedUnifiedFilter, activeInstanceIds])
   const instance = useMemo(() => {
     if (isAllInstances) {
       return undefined
@@ -77,12 +79,10 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
     enabled: titleBarSpeedsEnabled && !isAllInstances,
     instanceId,
     instanceName: instance?.name ?? instanceName,
-    foregroundSpeeds: serverState
-      ? {
-        dl: serverState.dl_info_speed ?? 0,
-        up: serverState.up_info_speed ?? 0,
-      }
-      : undefined,
+    foregroundSpeeds: serverState? {
+      dl: serverState.dl_info_speed ?? 0,
+      up: serverState.up_info_speed ?? 0,
+    }: undefined,
   })
 
   // Selection info for global status bar
@@ -122,36 +122,35 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
     const escapedHash = hash.replaceAll("\"", "\\\"")
 
     // Fetch the torrent by hash and select it
-    const fetchTorrentByHash = isAllInstances
-      ? api.getCrossInstanceTorrents({
-        filters: {
-          expr: `Hash == "${escapedHash}"`,
-          status: [],
-          excludeStatus: [],
-          categories: [],
-          excludeCategories: [],
-          tags: [],
-          excludeTags: [],
-          trackers: [],
-          excludeTrackers: [],
-        },
-        limit: 1,
-        instanceIds: unifiedScopeInstanceIds,
-      }).then((response) => response.crossInstanceTorrents?.[0] ?? response.cross_instance_torrents?.[0] ?? null)
-      : api.getTorrents(instanceId, {
-        filters: {
-          expr: `Hash == "${escapedHash}"`,
-          status: [],
-          excludeStatus: [],
-          categories: [],
-          excludeCategories: [],
-          tags: [],
-          excludeTags: [],
-          trackers: [],
-          excludeTrackers: [],
-        },
-        limit: 1,
-      }).then((response) => response.torrents[0] ?? null)
+    const fetchTorrentByHash = isAllInstances? api.getCrossInstanceTorrents({
+      filters: {
+        expr: `Hash == "${escapedHash}"`,
+        status: [],
+        excludeStatus: [],
+        categories: [],
+        excludeCategories: [],
+        tags: [],
+        excludeTags: [],
+        trackers: [],
+        excludeTrackers: [],
+      },
+      limit: 1,
+      // Deep links should resolve even when the saved unified scope excludes the owning instance.
+      instanceIds: activeInstanceIds.length > 0 ? activeInstanceIds : undefined,
+    }).then((response) => response.crossInstanceTorrents?.[0] ?? response.cross_instance_torrents?.[0] ?? null): api.getTorrents(instanceId, {
+      filters: {
+        expr: `Hash == "${escapedHash}"`,
+        status: [],
+        excludeStatus: [],
+        categories: [],
+        excludeCategories: [],
+        tags: [],
+        excludeTags: [],
+        trackers: [],
+        excludeTrackers: [],
+      },
+      limit: 1,
+    }).then((response) => response.torrents[0] ?? null)
 
     fetchTorrentByHash.then((torrent) => {
       if (cancelled) {
@@ -184,7 +183,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
     return () => {
       cancelled = true
     }
-  }, [instanceId, isAllInstances, search, onSearchChange, unifiedScopeInstanceIds])
+  }, [activeInstanceIds, instanceId, isAllInstances, onSearchChange, search])
 
   // Navigate to a cross-seed match torrent
   const handleNavigateToTorrent = useCallback((targetInstanceId: number, torrentHash: string) => {
@@ -288,6 +287,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
   const [categories, setCategories] = useState<Record<string, Category> | undefined>(undefined)
   const [tags, setTags] = useState<string[] | undefined>(undefined)
   const [useSubcategories, setUseSubcategories] = useState<boolean>(false)
+  const [supportsTrackerHealth, setSupportsTrackerHealth] = useState<boolean>(false)
   const [lastInstanceId, setLastInstanceId] = useState<number | null>(null)
 
   const isSameTorrent = useCallback((left: Torrent | null, right: Torrent | null) => {
@@ -318,7 +318,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
   }, [instanceId])
 
   // Callback when filtered data updates - now receives counts, categories, tags, and useSubcategories from backend
-  const handleFilteredDataUpdate = useCallback((_torrents: Torrent[], _total: number, counts?: TorrentCounts, categoriesData?: Record<string, Category>, tagsData?: string[], subcategoriesEnabled?: boolean) => {
+  const handleFilteredDataUpdate = useCallback((_torrents: Torrent[], _total: number, counts?: TorrentCounts, categoriesData?: Record<string, Category>, tagsData?: string[], subcategoriesEnabled?: boolean, trackerHealthEnabled?: boolean) => {
     // Update the last instance ID when we receive new data
     setLastInstanceId(instanceId)
 
@@ -371,6 +371,9 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
     // Update subcategories flag when provided
     if (subcategoriesEnabled !== undefined) {
       setUseSubcategories(subcategoriesEnabled)
+    }
+    if (trackerHealthEnabled !== undefined) {
+      setSupportsTrackerHealth(trackerHealthEnabled)
     }
   }, [instanceId])
 
@@ -446,6 +449,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
             key={`filter-sidebar-${instanceId}`}
             instanceId={instanceId}
             readOnly={isAllInstances}
+            supportsTrackerHealth={isAllInstances ? supportsTrackerHealth : undefined}
             selectedFilters={filters}
             onFilterChange={setFilters}
             torrentCounts={torrentCounts}
@@ -482,6 +486,7 @@ export function Torrents({ instanceId, instanceName, isAllInstancesView = false,
               key={`filter-sidebar-mobile-${instanceId}`}
               instanceId={instanceId}
               readOnly={isAllInstances}
+              supportsTrackerHealth={isAllInstances ? supportsTrackerHealth : undefined}
               selectedFilters={filters}
               onFilterChange={setFilters}
               torrentCounts={torrentCounts}

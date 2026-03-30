@@ -1286,7 +1286,56 @@ func TestPartialInPackMovieCollectionIntegration(t *testing.T) {
 		"partial-in-pack single file into folder uses SavePath, Subfolder layout creates folder")
 }
 
-// TestCrossSeed_TorrentCreationAndParsing tests creating torrents and extracting info
+func TestFindBestCandidateMatch_SingleFileSourceVsPackWithSample(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		releaseCache:     releases.NewDefaultParser(),
+		stringNormalizer: stringutils.NewDefaultNormalizer(),
+	}
+
+	sourceFiles := qbt.TorrentFiles{
+		{Name: "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP.mkv", Size: 2276921754},
+	}
+
+	candidateFiles := qbt.TorrentFiles{
+		{Name: "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP/A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP.mkv", Size: 2276921754},
+		{Name: "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP/Sample/a.real.file.that.exists.1998.s11e11.1080p.web.h264-somegroup.sample.mkv", Size: 52936909},
+		{Name: "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP/a.real.file.that.exists.1998.s11e11.1080p.web.h264-somegroup.nfo", Size: 494},
+		{Name: "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP/a.Real.file.that.exists.1998.s11e11.1080p.web.h264-somegroup.srr", Size: 4956},
+	}
+
+	sourceRelease := svc.releaseCache.Parse("A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP")
+
+	candidate := CrossSeedCandidate{
+		InstanceID:   1,
+		InstanceName: "test",
+		Torrents: []qbt.Torrent{{
+			Hash:     "abc123",
+			Name:     "A.Real.File.That.Exists.1998.S11E11.1080p.WEB.h264-SOMEGROUP",
+			Progress: 1.0,
+		}},
+	}
+
+	filesByHash := map[string]qbt.TorrentFiles{
+		"abc123": candidateFiles,
+	}
+
+	matchedTorrent, _, matchType, _ := svc.findBestCandidateMatch(
+		context.Background(),
+		candidate,
+		sourceRelease,
+		sourceFiles,
+		filesByHash,
+		5.0,
+	)
+
+	require.NotNil(t, matchedTorrent,
+		"single-file source should match candidate pack containing same episode with extra files")
+	require.Equal(t, "partial-contains", matchType,
+		"single-file source matched against pack with extras should produce partial-contains match")
+}
+
 func TestCrossSeed_TorrentCreationAndParsing(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2117,6 +2166,116 @@ func TestCheckWebhook_AutobrrPayload(t *testing.T) {
 			wantMatchType:      "metadata",
 		},
 		{
+			name: "discussion title matches filename HDR10P alias",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "End of Watch 2012 Hybrid 2160p UHD BluRay REMUX DV HDR10+ HEVC DTS-HD MA 5.1-FraMeSToR",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "framestor",
+					Name:     "End.of.Watch.2012.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR.mkv",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   true,
+			wantMatchCount:     1,
+			wantRecommendation: "download",
+			wantMatchType:      "metadata",
+		},
+		{
+			name: "tv webhook tolerates missing incoming collection for hdb when group matches",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "Sample Show S08E11 1080p WEB-DL DD+5.1 H.264-NTb",
+				Indexer:     "hdb",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "sample-show-dsnp",
+					Name:     "Sample.Show.S08E11.Episode.Title.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   true,
+			wantMatchCount:     1,
+			wantRecommendation: "download",
+			wantMatchType:      "metadata",
+		},
+		{
+			name: "tv webhook missing collection stays strict for non-hdb even when group matches",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "Sample Show S08E11 1080p WEB-DL DD+5.1 H.264-NTb",
+				Indexer:     "btn",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "sample-show-dsnp-non-hdb",
+					Name:     "Sample.Show.S08E11.Episode.Title.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   false,
+			wantMatchCount:     0,
+			wantRecommendation: "skip",
+		},
+		{
+			name: "tv webhook missing collection still requires matching group or site",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "Sample Show S08E11 1080p WEB-DL DD+5.1 H.264",
+				Indexer:     "hdb",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "sample-show-dsnp-no-group",
+					Name:     "Sample.Show.S08E11.Episode.Title.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   false,
+			wantMatchCount:     0,
+			wantRecommendation: "skip",
+		},
+		{
+			name: "movie webhook tolerates missing incoming collection for hdb when group matches",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "Sample Movie 2024 1080p WEB-DL DD+5.1 H.264-NTb",
+				Indexer:     "hdb",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "sample-movie-dsnp",
+					Name:     "Sample.Movie.2024.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   true,
+			wantMatchCount:     1,
+			wantRecommendation: "download",
+			wantMatchType:      "metadata",
+		},
+		{
+			name: "movie webhook missing collection still requires matching group or site",
+			request: &WebhookCheckRequest{
+				InstanceIDs: instanceIDs,
+				TorrentName: "Sample Movie 2024 1080p WEB-DL DD+5.1 H.264",
+				Indexer:     "hdb",
+			},
+			existingTorrents: []qbt.Torrent{
+				{
+					Hash:     "sample-movie-dsnp-no-group",
+					Name:     "Sample.Movie.2024.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
+					Progress: 1.0,
+				},
+			},
+			wantCanCrossSeed:   false,
+			wantMatchCount:     0,
+			wantRecommendation: "skip",
+		},
+		{
 			name: "pending match when torrent still downloading",
 			request: &WebhookCheckRequest{
 				InstanceIDs: instanceIDs,
@@ -2544,8 +2703,68 @@ func TestFindCandidates_NonTVDoesNotMatchUnrelatedTorrents(t *testing.T) {
 	require.Empty(t, resp.Candidates, "unrelated non-TV torrents should not be treated as matches")
 }
 
+func TestFindCandidates_MatchesHDR10PlusAliasAcrossNameFormats(t *testing.T) {
+	instance := &models.Instance{
+		ID:   1,
+		Name: "main",
+	}
+
+	torrents := []qbt.Torrent{
+		{
+			Hash:        "framestor",
+			Name:        "End.of.Watch.2012.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR.mkv",
+			Progress:    1.0,
+			ContentPath: "/downloads/End.of.Watch.2012.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR.mkv",
+			SavePath:    "/downloads",
+		},
+	}
+
+	files := map[string]qbt.TorrentFiles{
+		"framestor": {
+			{Name: "End.of.Watch.2012.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR.mkv", Size: 50 << 30},
+		},
+	}
+
+	store := &fakeInstanceStore{
+		instances: map[int]*models.Instance{
+			instance.ID: instance,
+		},
+	}
+
+	svc := &Service{
+		instanceStore:    store,
+		syncManager:      newFakeSyncManager(instance, torrents, files),
+		releaseCache:     NewReleaseCache(),
+		stringNormalizer: stringutils.NewDefaultNormalizer(),
+	}
+
+	resp, err := svc.FindCandidates(context.Background(), &FindCandidatesRequest{
+		TorrentName:       "End of Watch 2012 Hybrid 2160p UHD BluRay REMUX DV HDR10+ HEVC DTS-HD MA 5.1-FraMeSToR",
+		TargetInstanceIDs: []int{instance.ID},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Candidates, 1)
+	require.Len(t, resp.Candidates[0].Torrents, 1)
+	require.Equal(t, "framestor", resp.Candidates[0].Torrents[0].Hash)
+	require.NotEmpty(t, resp.Candidates[0].MatchType)
+}
+
 type fakeInstanceStore struct {
 	instances map[int]*models.Instance
+}
+
+func cloneFakeInstance(instance *models.Instance) *models.Instance {
+	if instance == nil {
+		return nil
+	}
+
+	clone := *instance
+	if !clone.IsActive {
+		// Test fixtures in this file usually omit IsActive; production defaults those instances to active.
+		clone.IsActive = true
+	}
+
+	return &clone
 }
 
 type recordingNotifier struct {
@@ -2564,7 +2783,7 @@ func (r *recordingNotifier) Events() []notifications.Event {
 
 func (f *fakeInstanceStore) Get(_ context.Context, id int) (*models.Instance, error) {
 	if inst, ok := f.instances[id]; ok {
-		return inst, nil
+		return cloneFakeInstance(inst), nil
 	}
 	return nil, models.ErrInstanceNotFound
 }
@@ -2572,7 +2791,7 @@ func (f *fakeInstanceStore) Get(_ context.Context, id int) (*models.Instance, er
 func (f *fakeInstanceStore) List(_ context.Context) ([]*models.Instance, error) {
 	result := make([]*models.Instance, 0, len(f.instances))
 	for _, inst := range f.instances {
-		result = append(result, inst)
+		result = append(result, cloneFakeInstance(inst))
 	}
 	return result, nil
 }

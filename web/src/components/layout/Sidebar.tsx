@@ -4,15 +4,7 @@
  */
 
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu"
+import { UnifiedScopeDropdownSection } from "@/components/layout/UnifiedScopeDropdownSection"
 import { Logo } from "@/components/ui/Logo"
 import { NapsterLogo } from "@/components/ui/NapsterLogo"
 import { Separator } from "@/components/ui/separator"
@@ -21,15 +13,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { UpdateBanner } from "@/components/ui/UpdateBanner"
 import { useAuth } from "@/hooks/useAuth"
 import { useCrossSeedInstanceState } from "@/hooks/useCrossSeedInstanceState"
+import { usePersistedUnifiedInstanceFilter } from "@/hooks/usePersistedUnifiedInstanceFilter"
 import { useTheme } from "@/hooks/useTheme"
 import { api } from "@/lib/api"
 import { getAppVersion } from "@/lib/build-info"
-import {
-  encodeUnifiedInstanceIds,
-  normalizeUnifiedInstanceIds,
-  resolveUnifiedInstanceIds,
-  UNIFIED_INSTANCE_IDS_SEARCH_PARAM
-} from "@/lib/instances"
+import { normalizeUnifiedInstanceIds } from "@/lib/instances"
 import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate, useSearch } from "@tanstack/react-router"
@@ -47,7 +35,6 @@ import {
   Search,
   SearchCode,
   Settings,
-  SlidersHorizontal,
   Zap
 } from "lucide-react"
 import { useCallback, useMemo } from "react"
@@ -136,35 +123,25 @@ export function Sidebar() {
     () => activeInstances.map(instance => instance.id),
     [activeInstances]
   )
-  const effectiveUnifiedInstanceIds = useMemo(
-    () => resolveUnifiedInstanceIds(routeSearch?.[UNIFIED_INSTANCE_IDS_SEARCH_PARAM], activeInstanceIds),
-    [routeSearch, activeInstanceIds]
-  )
+  const [persistedUnifiedFilter, saveUnifiedFilter] = usePersistedUnifiedInstanceFilter()
   const normalizedUnifiedInstanceIds = useMemo(
-    () => normalizeUnifiedInstanceIds(effectiveUnifiedInstanceIds, activeInstanceIds),
-    [effectiveUnifiedInstanceIds, activeInstanceIds]
+    () => normalizeUnifiedInstanceIds(persistedUnifiedFilter, activeInstanceIds),
+    [persistedUnifiedFilter, activeInstanceIds]
   )
+  const effectiveUnifiedInstanceIds = normalizedUnifiedInstanceIds.length > 0? normalizedUnifiedInstanceIds: activeInstanceIds
   const isAllInstancesActive = location.pathname === "/instances" || location.pathname === "/instances/"
-  const hasCustomUnifiedScope = normalizedUnifiedInstanceIds.length > 0
-  const unifiedScopeSummary = `${effectiveUnifiedInstanceIds.length}/${activeInstances.length}`
   const hasMultipleActiveInstances = activeInstances.length > 1
   const applyUnifiedScope = useCallback((nextIds: number[]) => {
     const normalizedIds = normalizeUnifiedInstanceIds(nextIds, activeInstanceIds)
+    saveUnifiedFilter(normalizedIds)
     const nextSearch: Record<string, unknown> = isAllInstancesActive ? { ...(routeSearch || {}) } : {}
-    const encoded = encodeUnifiedInstanceIds(normalizedIds)
-
-    if (encoded) {
-      nextSearch[UNIFIED_INSTANCE_IDS_SEARCH_PARAM] = encoded
-    } else {
-      delete nextSearch[UNIFIED_INSTANCE_IDS_SEARCH_PARAM]
-    }
 
     navigate({
       to: "/instances",
       search: nextSearch as any, // eslint-disable-line @typescript-eslint/no-explicit-any
       replace: isAllInstancesActive,
     })
-  }, [activeInstanceIds, isAllInstancesActive, navigate, routeSearch])
+  }, [activeInstanceIds, isAllInstancesActive, navigate, routeSearch, saveUnifiedFilter])
   const toggleUnifiedScopeInstance = useCallback((instanceId: number) => {
     const currentlySelected = effectiveUnifiedInstanceIds.includes(instanceId)
     const nextIds = currentlySelected? effectiveUnifiedInstanceIds.filter(id => id !== instanceId): [...effectiveUnifiedInstanceIds, instanceId]
@@ -230,93 +207,15 @@ export function Sidebar() {
             <div className="mt-1 flex-1 overflow-y-auto space-y-1 pr-1">
               {hasMultipleActiveInstances && (
                 <>
-                  <Link
-                    to="/instances"
-                    search={hasCustomUnifiedScope ? { [UNIFIED_INSTANCE_IDS_SEARCH_PARAM]: encodeUnifiedInstanceIds(normalizedUnifiedInstanceIds) } : undefined}
-                    className={cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200 ease-out",
-                      isAllInstancesActive ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                    )}
-                  >
-                    <HardDrive className="h-4 w-4 flex-shrink-0" />
-                    <span className="truncate max-w-36">Unified</span>
-                    <span
-                      className={cn(
-                        "ml-auto rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none flex-shrink-0",
-                        isAllInstancesActive ? "border-sidebar-primary-foreground/35 text-sidebar-primary-foreground/90" : "border-sidebar-border text-sidebar-foreground/70"
-                      )}
-                    >
-                      {activeInstances.length} active
-                    </span>
-                    {hasCustomUnifiedScope && (
-                      <span
-                        className={cn(
-                          "rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none flex-shrink-0",
-                          isAllInstancesActive ? "border-sidebar-primary-foreground/35 text-sidebar-primary-foreground/90" : "border-sidebar-border text-sidebar-foreground/70"
-                        )}
-                      >
-                        {unifiedScopeSummary}
-                      </span>
-                    )}
-                  </Link>
-                  <div className="px-3">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          className={cn(
-                            "mt-1 w-full rounded-md border border-sidebar-border/70 px-2 py-1 text-xs",
-                            "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                            "inline-flex items-center gap-1.5"
-                          )}
-                        >
-                          <SlidersHorizontal className="h-3 w-3" />
-                          Scope
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent side="right" align="start" className="w-56">
-                        <DropdownMenuLabel className="text-xs uppercase tracking-wide text-muted-foreground">
-                          Unified Scope
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onSelect={(event) => {
-                            event.preventDefault()
-                            applyUnifiedScope(activeInstanceIds)
-                          }}
-                          className="cursor-pointer text-xs"
-                        >
-                          All active ({activeInstances.length})
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {activeInstances.map((instance) => {
-                          const checked = effectiveUnifiedInstanceIds.includes(instance.id)
-                          return (
-                            <DropdownMenuCheckboxItem
-                              key={`sidebar-scope-${instance.id}`}
-                              checked={checked}
-                              onSelect={(event) => {
-                                event.preventDefault()
-                                toggleUnifiedScopeInstance(instance.id)
-                              }}
-                              className="cursor-pointer"
-                            >
-                              <span className="flex w-full items-center justify-between gap-2">
-                                <span className="truncate">{instance.name}</span>
-                                <span
-                                  className={cn(
-                                    "h-2 w-2 rounded-full flex-shrink-0",
-                                    instance.connected ? "bg-green-500" : "bg-red-500"
-                                  )}
-                                  aria-hidden="true"
-                                />
-                              </span>
-                            </DropdownMenuCheckboxItem>
-                          )
-                        })}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  <UnifiedScopeDropdownSection
+                    activeInstances={activeInstances}
+                    effectiveUnifiedInstanceIds={effectiveUnifiedInstanceIds}
+                    isAllInstancesRoute={isAllInstancesActive}
+                    onResetUnifiedScope={() => applyUnifiedScope(activeInstanceIds)}
+                    onToggleUnifiedScopeInstance={toggleUnifiedScopeInstance}
+                    scopeKeyPrefix="sidebar-scope"
+                    variant="sidebar"
+                  />
                   <Separator className="my-2" />
                 </>
               )}

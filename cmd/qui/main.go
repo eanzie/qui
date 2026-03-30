@@ -70,6 +70,7 @@ multiple qBittorrent instances with support for 10k+ torrents.`,
 	rootCmd.AddCommand(RunServeCommand())
 	rootCmd.AddCommand(RunVersionCommand(buildinfo.Version))
 	rootCmd.AddCommand(RunGenerateConfigCommand())
+	rootCmd.AddCommand(RunDBCommand())
 	rootCmd.AddCommand(RunCreateUserCommand())
 	rootCmd.AddCommand(RunChangePasswordCommand())
 	rootCmd.AddCommand(RunUpdateCommand())
@@ -214,7 +215,7 @@ If no --config-dir is specified, uses the OS-specific default location:
 				cfg.SetDataDir(dataDir)
 			}
 
-			db, err := database.New(cfg.GetDatabasePath())
+			db, err := database.OpenFromConfig(cfg.Config, cfg.GetDatabasePath())
 			if err != nil {
 				return fmt.Errorf("failed to initialize database: %w", err)
 			}
@@ -301,11 +302,13 @@ If no --config-dir is specified, uses the OS-specific default location:
 			}
 
 			dbPath := cfg.GetDatabasePath()
-			if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-				return fmt.Errorf("database not found at %s. Create a user first with 'create-user' command", dbPath)
+			if strings.EqualFold(strings.TrimSpace(cfg.Config.DatabaseEngine), "sqlite") {
+				if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+					return fmt.Errorf("database not found at %s. Create a user first with 'create-user' command", dbPath)
+				}
 			}
 
-			db, err := database.New(dbPath)
+			db, err := database.OpenFromConfig(cfg.Config, dbPath)
 			if err != nil {
 				return fmt.Errorf("failed to initialize database: %w", err)
 			}
@@ -457,6 +460,10 @@ func (app *Application) runServer() {
 		log.Warn().Msg("Only one of QUI__AUTH_DISABLED and QUI__I_ACKNOWLEDGE_THIS_IS_A_BAD_IDEA is set. Authentication remains enabled. Set both to disable authentication.")
 	}
 
+	if err := cfg.Config.NormalizeCORSAllowedOrigins(); err != nil {
+		log.Fatal().Err(err).Msg("Invalid corsAllowedOrigins configuration")
+	}
+
 	trackerIconService, err := trackericons.NewService(cfg.GetDataDir(), buildinfo.UserAgent)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to prepare tracker icon cache")
@@ -494,7 +501,7 @@ func (app *Application) runServer() {
 		Msg("Initialized Dodo Payments client")
 
 	// Initialize database
-	db, err := database.New(cfg.GetDatabasePath())
+	db, err := database.OpenFromConfig(cfg.Config, cfg.GetDatabasePath())
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize database")
 	}
@@ -570,10 +577,7 @@ func (app *Application) runServer() {
 	if cacheSettings, err := torznabSearchCache.GetSettings(context.Background()); err != nil {
 		log.Warn().Err(err).Msg("Using default torznab search cache TTL (failed to load settings)")
 	} else if cacheSettings != nil && cacheSettings.TTLMinutes > 0 {
-		cacheTTL = time.Duration(cacheSettings.TTLMinutes) * time.Minute
-		if cacheTTL < jackett.MinSearchCacheTTL {
-			cacheTTL = jackett.MinSearchCacheTTL
-		}
+		cacheTTL = max(time.Duration(cacheSettings.TTLMinutes)*time.Minute, jackett.MinSearchCacheTTL)
 
 		if rebased, err := torznabSearchCache.RebaseTTL(context.Background(), int(cacheTTL/time.Minute)); err != nil {
 			log.Warn().Err(err).Msg("Failed to rebase torznab search cache TTL to persisted settings")

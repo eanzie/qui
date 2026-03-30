@@ -37,6 +37,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { CrossSeedTable, GeneralTabHorizontal, PeersTable, TorrentFileTable, TrackerContextMenu, TrackersTable, WebSeedsTable } from "./details"
 import { EditTrackerDialog, RenameTorrentFileDialog, RenameTorrentFolderDialog } from "./TorrentDialogs"
+import { TorrentFileMediaInfoDialog } from "./TorrentFileMediaInfoDialog"
 import { TorrentFileTree } from "./TorrentFileTree"
 
 interface TorrentDetailsPanelProps {
@@ -661,6 +662,25 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
     api.downloadContentFile(instanceId, torrent.hash, file.index)
   }, [instanceId, torrent, incognitoMode])
 
+  const [showMediaInfoDialog, setShowMediaInfoDialog] = useState(false)
+  const [mediaInfoFile, setMediaInfoFile] = useState<TorrentFile | null>(null)
+  const [mediaInfoTorrentHash, setMediaInfoTorrentHash] = useState<string | null>(null)
+
+  const handleShowMediaInfo = useCallback((file: TorrentFile) => {
+    if (!torrent) return
+    setMediaInfoFile(file)
+    setMediaInfoTorrentHash(torrent.hash)
+    setShowMediaInfoDialog(true)
+  }, [torrent])
+
+  const handleMediaInfoDialogOpenChange = useCallback((open: boolean) => {
+    setShowMediaInfoDialog(open)
+    if (!open) {
+      setMediaInfoFile(null)
+      setMediaInfoTorrentHash(null)
+    }
+  }, [])
+
   // Handle rename folder
   const handleRenameFolderConfirm = useCallback(({ oldPath, newPath }: { oldPath: string; newPath: string }) => {
     if (!torrent) return
@@ -732,43 +752,25 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col overflow-hidden">
         <div className="border-b flex items-center">
           <div className="flex-1 overflow-x-auto scroll-smooth">
-            <TabsList className="w-fit sm:w-full justify-start rounded-none h-8 bg-background px-4 sm:px-6 py-0 flex-nowrap">
-              <TabsTrigger
-                value="general"
-                className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-              >
+            <TabsList className="w-full justify-start rounded-none h-8 bg-background px-4 sm:px-2 flex-nowrap">
+              <TabsTrigger value="general" className="text-xs shrink-0">
                 General
               </TabsTrigger>
-              <TabsTrigger
-                value="trackers"
-                className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-              >
+              <TabsTrigger value="trackers" className="text-xs shrink-0">
                 Trackers
               </TabsTrigger>
-              <TabsTrigger
-                value="peers"
-                className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-              >
+              <TabsTrigger value="peers" className="text-xs shrink-0">
                 Peers
               </TabsTrigger>
               {hasWebseeds && (
-                <TabsTrigger
-                  value="webseeds"
-                  className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-                >
+                <TabsTrigger value="webseeds" className="text-xs shrink-0">
                   HTTP Sources
                 </TabsTrigger>
               )}
-              <TabsTrigger
-                value="content"
-                className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-              >
+              <TabsTrigger value="content" className="text-xs shrink-0">
                 Content
               </TabsTrigger>
-              <TabsTrigger
-                value="crossseed"
-                className="relative text-xs rounded-none data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-accent/50 transition-all px-3 sm:px-4 cursor-pointer focus-visible:outline-none focus-visible:ring-0 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary after:scale-x-0 data-[state=active]:after:scale-x-100 after:transition-transform shrink-0"
-              >
+              <TabsTrigger value="crossseed" className="text-xs shrink-0">
                 Cross-Seed
               </TabsTrigger>
             </TabsList>
@@ -1512,6 +1514,7 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
                 onRenameFile={handleRenameFileClick}
                 onRenameFolder={(folderPath) => { void handleRenameFolderDialogOpen(folderPath) }}
                 onDownloadFile={hasLocalFilesystemAccess ? handleDownloadFile : undefined}
+                onShowMediaInfo={hasLocalFilesystemAccess ? handleShowMediaInfo : undefined}
               />
             ) : activeTab === "content" && loadingFiles && !files ? (
               <div className="flex items-center justify-center p-8 flex-1">
@@ -1565,6 +1568,7 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
                       onRenameFile={handleRenameFileClick}
                       onRenameFolder={(folderPath) => { void handleRenameFolderDialogOpen(folderPath) }}
                       onDownloadFile={hasLocalFilesystemAccess ? handleDownloadFile : undefined}
+                      onShowMediaInfo={hasLocalFilesystemAccess ? handleShowMediaInfo : undefined}
                     />
                   </div>
                 </ScrollArea>
@@ -2047,6 +2051,14 @@ tracker.example.com:8080
         selectedHashes={torrent ? [torrent.hash] : []}
         onConfirm={(oldURL, newURL) => editTrackerMutation.mutate({ oldURL, newURL })}
         isPending={editTrackerMutation.isPending}
+      />
+
+      <TorrentFileMediaInfoDialog
+        open={showMediaInfoDialog}
+        onOpenChange={handleMediaInfoDialogOpenChange}
+        instanceId={instanceId}
+        torrentHash={mediaInfoTorrentHash ?? ""}
+        file={mediaInfoFile}
       />
     </div>
   )

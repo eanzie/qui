@@ -6,8 +6,8 @@
 import { IndexersPage } from "@/components/indexers/IndexersPage"
 import { InstanceCard } from "@/components/instances/InstanceCard"
 import { InstanceForm } from "@/components/instances/InstanceForm"
-import { InstancePreferencesDialog } from "@/components/instances/preferences/InstancePreferencesDialog"
 import { PasswordIssuesBanner } from "@/components/instances/PasswordIssuesBanner"
+import { InstancePreferencesDialog } from "@/components/instances/preferences/InstancePreferencesDialog"
 import { ArrInstancesManager } from "@/components/settings/ArrInstancesManager"
 import { ClientApiKeysManager } from "@/components/settings/ClientApiKeysManager"
 import { DateTimePreferencesForm } from "@/components/settings/DateTimePreferencesForm"
@@ -40,7 +40,8 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select,
+import {
+  Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
@@ -54,14 +55,14 @@ import { api } from "@/lib/api"
 
 import { withBasePath } from "@/lib/base-url"
 import { canRegisterProtocolHandler, getMagnetHandlerRegistrationGuidance, registerMagnetHandler } from "@/lib/protocol-handler"
-import { copyTextToClipboard, formatBytes } from "@/lib/utils"
+import { copyTextToClipboard, formatBytes, formatDuration } from "@/lib/utils"
 import type { SettingsSearch } from "@/routes/_authenticated/settings"
-import type { Instance, TorznabSearchCacheStats } from "@/types"
+import type { Instance, TorznabSearchCacheStats, User } from "@/types"
 import { useForm } from "@tanstack/react-form"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Bell, Clock, Copy, Database, ExternalLink, FileText, Key, Layers, Link2, Loader2, Palette, Plus, RefreshCw, Server, Share2, Shield, Terminal, Trash2 } from "lucide-react"
-import type { FormEvent } from "react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { Bell, Clock, Copy, Database, ExternalLink, FileText, Info, Key, Layers, Link2, Loader2, Palette, Plus, RefreshCw, Server, Share2, Shield, Terminal, Trash2 } from "lucide-react"
+import type { FormEvent, ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 type SettingsTab = NonNullable<SettingsSearch["tab"]>
@@ -752,21 +753,417 @@ function TorznabSearchCachePanel() {
   )
 }
 
+function formatApplicationDate(value?: string): string {
+  if (!value || value.trim() === "") {
+    return "—"
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  })
+}
+
+function formatRelativeDate(value?: string): string {
+  if (!value || value.trim() === "") {
+    return "—"
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return "—"
+  }
+
+  const secondsDiff = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (Math.abs(secondsDiff) < 1) {
+    return "just now"
+  }
+
+  const duration = formatDuration(Math.abs(secondsDiff))
+  if (secondsDiff >= 0) {
+    return `${duration} ago`
+  }
+
+  return `in ${duration}`
+}
+
+function formatCurrentSessionAuth(user?: User): string {
+  if (!user) {
+    return "Unknown"
+  }
+
+  const methodRaw = user.auth_method?.trim() || ""
+  const method = methodRaw !== "" ? methodRaw : "builtin"
+  const username = user.username?.trim() || ""
+
+  if (username !== "") {
+    return `${method} (${username})`
+  }
+
+  return method
+}
+
+function isDevVersion(version?: string): boolean {
+  const value = version?.trim().toLowerCase() || ""
+  return value === "0.0.0-dev" || value.includes("dev") || value === "main"
+}
+
+function getLiveUptimeSeconds(baseUptime: number, startedAtMs: number): number {
+  const elapsed = Math.floor((Date.now() - startedAtMs) / 1000)
+  return Math.max(0, baseUptime + elapsed)
+}
+
+type ApplicationField = {
+  label: string
+  value: string
+  secondary?: string
+  copyValue?: string
+  monospace?: boolean
+}
+
+interface ApplicationSectionProps {
+  title: string
+  description: string
+  fields: ApplicationField[]
+  onCopy: (value: string, label: string) => Promise<void> | void
+  headerAction?: ReactNode
+}
+
+function ApplicationSection({ title, description, fields, onCopy, headerAction }: ApplicationSectionProps) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+        {headerAction}
+      </CardHeader>
+      <CardContent className="p-0">
+        <dl className="divide-y">
+          {fields.map((field) => (
+            <div key={field.label} className="group px-4 py-3 sm:px-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <dt className="text-xs uppercase text-muted-foreground sm:w-44 sm:shrink-0">{field.label}</dt>
+                <dd className="min-w-0 flex-1">
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`${field.monospace ? "font-mono text-xs sm:text-sm" : "text-sm font-medium"} break-all`}
+                        title={field.value}
+                      >
+                        {field.value}
+                      </p>
+                      {field.secondary && (
+                        <p className="mt-1 text-xs text-muted-foreground">{field.secondary}</p>
+                      )}
+                    </div>
+                    {field.copyValue && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        onClick={() => {
+                          void onCopy(field.copyValue || "", field.label)
+                        }}
+                        title={`Copy ${field.label}`}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </dd>
+              </div>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ApplicationInfoPanel() {
+  const appInfoQuery = useQuery({
+    queryKey: ["application-info"],
+    queryFn: () => api.getApplicationInfo(),
+    staleTime: 30 * 1000,
+  })
+
+  const currentUserQuery = useQuery({
+    queryKey: ["auth-me", "application-tab"],
+    queryFn: () => api.checkAuth(),
+    staleTime: 60 * 1000,
+  })
+
+  const latestVersionQuery = useQuery({
+    queryKey: ["latest-version"],
+    queryFn: () => api.getLatestVersion(),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const info = appInfoQuery.data
+  const user = currentUserQuery.data
+
+  const [liveUptimeSeconds, setLiveUptimeSeconds] = useState(0)
+
+  useEffect(() => {
+    if (!info) {
+      setLiveUptimeSeconds(0)
+      return
+    }
+
+    const baseUptime = Math.max(0, info.uptimeSeconds)
+    const startedAtMs = Date.now()
+    setLiveUptimeSeconds(baseUptime)
+
+    const timer = window.setInterval(() => {
+      setLiveUptimeSeconds(getLiveUptimeSeconds(baseUptime, startedAtMs))
+    }, 1000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [info])
+
+  let currentSessionAuth = "Unknown"
+  if (currentUserQuery.isLoading) {
+    currentSessionAuth = "Loading…"
+  } else if (currentUserQuery.isError) {
+    currentSessionAuth = "Unavailable"
+  } else {
+    currentSessionAuth = formatCurrentSessionAuth(user)
+  }
+
+  const updateStatus = useMemo(() => {
+    if (!info) {
+      return { label: "Unknown", detail: "Waiting for application metadata." }
+    }
+    if (!info.checkForUpdates) {
+      return { label: "Disabled", detail: "Update checks are disabled in config." }
+    }
+    if (isDevVersion(info.version)) {
+      return { label: "Dev build", detail: "" }
+    }
+    if (latestVersionQuery.isLoading || latestVersionQuery.isFetching) {
+      return { label: "Checking", detail: "Checking GitHub release cache." }
+    }
+    if (latestVersionQuery.data) {
+      return { label: "Update available", detail: latestVersionQuery.data.tag_name }
+    }
+    return { label: "Up to date", detail: "No newer release is currently cached." }
+  }, [info, latestVersionQuery.data, latestVersionQuery.isFetching, latestVersionQuery.isLoading])
+
+  const updateCheckedAt = latestVersionQuery.dataUpdatedAt > 0 ? formatApplicationDate(new Date(latestVersionQuery.dataUpdatedAt).toISOString()) : "Not checked yet"
+
+  const buildFields: ApplicationField[] = info ? [
+    { label: "Version", value: info.version || "—", monospace: true },
+    { label: "Commit", value: info.commitShort || info.commit || "—", copyValue: info.commit || "", monospace: true },
+    {
+      label: "Build date",
+      value: formatApplicationDate(info.buildDate),
+      secondary: formatRelativeDate(info.buildDate),
+    },
+    {
+      label: "Update status",
+      value: updateStatus.label,
+      secondary: [updateStatus.detail, `Last checked: ${updateCheckedAt}`].filter(Boolean).join(" • "),
+    },
+  ] : []
+
+  const runtimeFields: ApplicationField[] = info ? [
+    { label: "Uptime", value: formatDuration(liveUptimeSeconds) },
+    { label: "Runtime", value: `${info.goVersion} • ${info.goOS}/${info.goArch}`, monospace: true },
+  ] : []
+
+  const authFields: ApplicationField[] = info ? [
+    { label: "Current session auth", value: currentSessionAuth, monospace: true },
+    { label: "OIDC enabled", value: info.oidcEnabled ? "Yes" : "No" },
+    { label: "Built-in login enabled", value: info.builtInLoginEnabled ? "Yes" : "No" },
+    { label: "OIDC issuer host", value: info.oidcIssuerHost || "—", monospace: true },
+  ] : []
+
+  const storageFields: ApplicationField[] = info ? [
+    {
+      label: "Database",
+      value: `${info.database.engine}${info.database.target ? ` (${info.database.target})` : ""}`,
+      monospace: true,
+    },
+    { label: "Bind", value: `${info.host}:${info.port}${info.baseUrl}`, monospace: true },
+    { label: "Config dir", value: info.configDir || "—", copyValue: info.configDir || "", monospace: true },
+    { label: "Data dir", value: info.dataDir || "—", copyValue: info.dataDir || "", monospace: true },
+  ] : []
+
+  const handleCopy = useCallback(async (value: string, label: string) => {
+    if (!value) {
+      return
+    }
+
+    try {
+      await copyTextToClipboard(value)
+      toast.success(`${label} copied`)
+    } catch {
+      toast.error(`Failed to copy ${label.toLowerCase()}`)
+    }
+  }, [])
+
+  return (
+    <div className="space-y-4">
+      {appInfoQuery.isLoading && (
+        <Card>
+          <CardContent className="py-8">
+            <div className="flex items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading application info…
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {appInfoQuery.isError && (
+        <Card>
+          <CardContent className="py-6">
+            <p className="text-sm text-destructive">
+              {appInfoQuery.error instanceof Error ? appInfoQuery.error.message : "Failed to load application info"}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {info && (
+        <>
+          <ApplicationSection
+            title="Build"
+            description="Build identity and traceability."
+            fields={buildFields}
+            onCopy={handleCopy}
+            headerAction={(
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void appInfoQuery.refetch()
+                  void latestVersionQuery.refetch()
+                  void currentUserQuery.refetch()
+                }}
+                disabled={appInfoQuery.isFetching || latestVersionQuery.isFetching || currentUserQuery.isFetching}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${(appInfoQuery.isFetching || latestVersionQuery.isFetching || currentUserQuery.isFetching) ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            )}
+          />
+          <ApplicationSection
+            title="Runtime"
+            description="Process runtime and host platform."
+            fields={runtimeFields}
+            onCopy={handleCopy}
+          />
+          <ApplicationSection
+            title="Authentication"
+            description="Authentication settings and current session."
+            fields={authFields}
+            onCopy={handleCopy}
+          />
+          <ApplicationSection
+            title="Storage & Network"
+            description="Active paths, bind target, and database endpoint."
+            fields={storageFields}
+            onCopy={handleCopy}
+          />
+        </>
+      )}
+
+    </div>
+  )
+}
+
 interface SettingsProps {
   search: SettingsSearch
   onSearchChange: (search: SettingsSearch) => void
 }
 
+interface SettingsScrollPanelProps {
+  children: ReactNode
+  contentClassName?: string
+}
+
+function SettingsScrollPanel({ children, contentClassName }: SettingsScrollPanelProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const [showTopFade, setShowTopFade] = useState(false)
+  const [showBottomFade, setShowBottomFade] = useState(false)
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current
+    const contentElement = contentRef.current
+
+    if (!scrollElement) {
+      return
+    }
+
+    const updateFades = () => {
+      setShowTopFade(scrollElement.scrollTop > 4)
+      setShowBottomFade(scrollElement.scrollTop + scrollElement.clientHeight < scrollElement.scrollHeight - 4)
+    }
+
+    updateFades()
+
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      updateFades()
+    })
+
+    scrollElement.addEventListener("scroll", updateFades, { passive: true })
+    window.addEventListener("resize", updateFades)
+    resizeObserver?.observe(scrollElement)
+    if (contentElement) {
+      resizeObserver?.observe(contentElement)
+    }
+
+    return () => {
+      scrollElement.removeEventListener("scroll", updateFades)
+      window.removeEventListener("resize", updateFades)
+      resizeObserver?.disconnect()
+    }
+  }, [children])
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-linear-to-b from-background via-background/50 to-transparent transition-opacity duration-150 ${showTopFade ? "opacity-100" : "opacity-0"}`}
+      />
+      <div
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-linear-to-t from-background via-background/50 to-transparent transition-opacity duration-150 ${showBottomFade ? "opacity-100" : "opacity-0"}`}
+      />
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto md:pr-4">
+        <div ref={contentRef} className={contentClassName}>
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Settings({ search, onSearchChange }: SettingsProps) {
-  const activeTab: SettingsTab = search.tab ?? "instances"
+  const activeTab: SettingsTab = search.tab ?? "application"
+  const scrollPanelContentClassName = "space-y-4"
 
   const handleTabChange = (tab: SettingsTab) => {
     onSearchChange({ tab })
   }
 
   return (
-    <div className="container mx-auto p-4 md:p-6">
-      <div className="mb-4 md:mb-6">
+    <div className="container mx-auto flex h-full min-h-0 flex-col overflow-hidden p-4 md:p-6">
+      <div className="mb-4 shrink-0 md:mb-6">
         <h1 className="text-2xl md:text-3xl font-bold">Settings</h1>
         <p className="text-muted-foreground mt-1 md:mt-2 text-sm md:text-base">
           Manage your application preferences and security
@@ -774,7 +1171,7 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
       </div>
 
       {/* Mobile Dropdown Navigation */}
-      <div className="md:hidden mb-4">
+      <div className="mb-4 shrink-0 md:hidden">
         <Select
           value={activeTab}
           onValueChange={(value) => handleTabChange(value as SettingsTab)}
@@ -783,6 +1180,12 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="application">
+              <div className="flex items-center">
+                <Info className="w-4 h-4 mr-2" />
+                Application
+              </div>
+            </SelectItem>
             <SelectItem value="instances">
               <div className="flex items-center">
                 <Server className="w-4 h-4 mr-2" />
@@ -859,10 +1262,19 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
         </Select>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 md:flex-row">
         {/* Desktop Sidebar Navigation */}
-        <div className="hidden md:block w-64 shrink-0">
+        <div className="hidden w-64 shrink-0 overflow-y-auto md:block">
           <nav className="space-y-1">
+            <button
+              onClick={() => handleTabChange("application")}
+              className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                activeTab === "application" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+              }`}
+            >
+              <Info className="w-4 h-4 mr-2" />
+              Application
+            </button>
             <button
               onClick={() => handleTabChange("instances")}
               className={`w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
@@ -975,38 +1387,43 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
         </div>
 
         {/* Main Content Area */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
+          {activeTab === "application" && (
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
+              <ApplicationInfoPanel />
+            </SettingsScrollPanel>
+          )}
 
           {activeTab === "instances" && (
-            <div className="space-y-4">
-              <Card>
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
+              <Card className="flex min-h-full flex-col">
                 <CardHeader>
                   <CardTitle>Instances</CardTitle>
                   <CardDescription>
                     Manage your qBittorrent connection settings
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="min-h-0 flex-1">
                   <InstancesManager search={search} onSearchChange={onSearchChange} />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "indexers" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <IndexersPage withContainer={false} />
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "search-cache" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <TorznabSearchCachePanel />
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "integrations" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>ARR Integrations</CardTitle>
@@ -1018,11 +1435,11 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <ArrInstancesManager />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "client-api" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>Client Proxy API Keys</CardTitle>
@@ -1034,11 +1451,11 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <ClientApiKeysManager />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "api" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <div className="flex items-start justify-between">
@@ -1064,11 +1481,11 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <ApiKeysManager />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "external-programs" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>External Programs</CardTitle>
@@ -1080,11 +1497,11 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <ExternalProgramsManager />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "notifications" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>Notifications</CardTitle>
@@ -1096,11 +1513,11 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <NotificationsManager />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "datetime" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>Date & Time Preferences</CardTitle>
@@ -1112,22 +1529,22 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   <DateTimePreferencesForm />
                 </CardContent>
               </Card>
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "themes" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <LicenseManager
                 checkoutStatus={search.checkout}
                 checkoutPaymentStatus={search.status}
                 onCheckoutConsumed={() => onSearchChange({ tab: "themes" })}
               />
               <ThemeSelector />
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "security" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <Card>
                 <CardHeader>
                   <CardTitle>Change Password</CardTitle>
@@ -1174,13 +1591,13 @@ export function Settings({ search, onSearchChange }: SettingsProps) {
                   </CardContent>
                 </Card>
               )}
-            </div>
+            </SettingsScrollPanel>
           )}
 
           {activeTab === "logs" && (
-            <div className="space-y-4">
+            <SettingsScrollPanel contentClassName={scrollPanelContentClassName}>
               <LogSettingsPanel />
-            </div>
+            </SettingsScrollPanel>
           )}
         </div>
       </div>
