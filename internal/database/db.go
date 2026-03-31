@@ -125,6 +125,10 @@ var sharedMigrationFilenameRenames = []migrationFilenameRename{
 		from: "055_add_license_provider_dodo.sql",
 		to:   "057_add_license_provider_dodo.sql",
 	},
+	{
+		from: "061_add_arr_seed.sql",
+		to:   "068_add_arr_seed.sql",
+	},
 }
 
 var sqliteMigrationFilenameRenames = []migrationFilenameRename{
