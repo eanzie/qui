@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -15,6 +17,14 @@ import (
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/services/crossseed"
 )
+
+// validatePath checks that a path is absolute and contains no ".." traversal components.
+func validatePath(p string) bool {
+	if p == "" {
+		return true
+	}
+	return filepath.IsAbs(p) && !strings.Contains(filepath.Clean(p), "..")
+}
 
 // ArrSeedHandler handles HTTP requests for Arr Seed.
 type ArrSeedHandler struct {
@@ -164,6 +174,13 @@ func (h *ArrSeedHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, p := range []string{payload.ArrDockerPath, payload.HostDataPath, payload.TorrentSavePath} {
+		if !validatePath(p) {
+			RespondError(w, http.StatusBadRequest, "Paths must be absolute and must not contain '..'")
+			return
+		}
+	}
+
 	cfg := &models.ArrSeedInstanceConfig{
 		ArrInstanceID:        payload.ArrInstanceID,
 		Enabled:              payload.Enabled,
@@ -238,6 +255,13 @@ func (h *ArrSeedHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
+	}
+
+	for _, p := range []*string{payload.ArrDockerPath, payload.HostDataPath, payload.TorrentSavePath} {
+		if p != nil && !validatePath(*p) {
+			RespondError(w, http.StatusBadRequest, "Paths must be absolute and must not contain '..'")
+			return
+		}
 	}
 
 	params := &models.ArrSeedConfigUpdateParams{

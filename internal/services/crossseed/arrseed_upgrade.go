@@ -24,7 +24,7 @@ func (r *ArrSeedRunner) monitorPartialUpgrade(
 	mediaItem *ArrSeedMediaItem,
 	config *models.ArrSeedInstanceConfig,
 ) {
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+	ctx, cancel := context.WithTimeout(r.schedulerCtx, 6*time.Hour)
 	defer cancel()
 
 	l := log.With().

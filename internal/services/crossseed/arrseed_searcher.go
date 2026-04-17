@@ -32,7 +32,7 @@ func (s *arrSeedSearcher) searchRelease(
 	l *zerolog.Logger,
 ) ([]jackett.SearchResult, error) {
 	if s.jackettService == nil {
-		return nil, nil
+		return nil, fmt.Errorf("search service (Jackett/Prowlarr) is not configured — cannot search indexers")
 	}
 
 	categories := arrSeedCategoriesForItem(item)

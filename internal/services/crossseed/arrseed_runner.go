@@ -56,6 +56,10 @@ type ArrSeedRunner struct {
 	schedulerCtx    context.Context
 	schedulerCancel context.CancelFunc
 	schedulerWg     sync.WaitGroup
+
+	// Tracks fire-and-forget goroutines (e.g. partial upgrade monitors)
+	// so stop() can wait for them to finish.
+	monitorWg sync.WaitGroup
 }
 
 // InitArrSeed initializes the ArrSeed runner within the crossseed Service.
@@ -129,7 +133,7 @@ func (s *Service) ArrSeedGetScanProgress(configID int) *ArrSeedScanProgress {
 
 func (r *ArrSeedRunner) start(ctx context.Context) error {
 	if _, err := r.store.MarkActiveRunsFailed(ctx, "service restarted"); err != nil {
-		log.Error().Err(err).Msg("arrseed: failed to recover stuck runs")
+		return fmt.Errorf("arrseed: failed to recover stuck runs: %w", err)
 	}
 
 	r.schedulerCtx, r.schedulerCancel = context.WithCancel(ctx)
@@ -144,6 +148,7 @@ func (r *ArrSeedRunner) stop() {
 		r.schedulerCancel()
 	}
 	r.schedulerWg.Wait()
+	r.monitorWg.Wait()
 	log.Info().Msg("arrseed: scheduler stopped")
 }
 
@@ -253,7 +258,7 @@ func (r *ArrSeedRunner) startManualScan(ctx context.Context, configID int) (int6
 		return 0, fmt.Errorf("create run: %w", err)
 	}
 
-	r.startRun(context.Background(), configID, runID)
+	r.startRun(r.schedulerCtx, configID, runID)
 	return runID, nil
 }
 
@@ -526,6 +531,13 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 	}
 	l.Info().Int("upserted", upsertCount).Int("total", len(items)).Msg("arrseed: items upserted to database")
 
+	if upsertCount == 0 && len(items) > 0 {
+		errMsg := fmt.Sprintf("all %d item upserts failed — possible database issue", len(items))
+		l.Error().Msg("arrseed: " + errMsg)
+		_ = r.store.UpdateRunFailed(context.Background(), runID, errMsg)
+		return
+	}
+
 	// Get pending items
 	pendingItems, err := r.store.GetPendingItems(ctx, configID)
 	if err != nil {
@@ -650,14 +662,18 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 				return
 			}
 			l.Warn().Err(searchErr).Str("release", dbItem.ReleaseName).Msg("arrseed: search failed")
-			_ = r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusError, "", "", searchErr.Error())
+			if err := r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusError, "", "", searchErr.Error()); err != nil {
+				l.Error().Err(err).Str("release", dbItem.ReleaseName).Msg("arrseed: failed to update item status to error")
+			}
 			continue
 		}
 		stats.itemsSearched++
 
 		if len(results) == 0 {
 			l.Info().Str("release", dbItem.ReleaseName).Msg("arrseed: no search results found")
-			_ = r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", "")
+			if err := r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", ""); err != nil {
+				l.Error().Err(err).Str("release", dbItem.ReleaseName).Msg("arrseed: failed to update item status to no-match")
+			}
 			continue
 		}
 
@@ -705,7 +721,9 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 				Str("release", dbItem.ReleaseName).
 				Int("searchResults", len(results)).
 				Msg("arrseed: no matching releases after filtering")
-			_ = r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", "no matching releases")
+			if err := r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", "no matching releases"); err != nil {
+				l.Error().Err(err).Str("release", dbItem.ReleaseName).Msg("arrseed: failed to update item status to no-match")
+			}
 			continue
 		}
 
@@ -728,7 +746,6 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 				Str("title", result.Title).
 				Str("indexer", result.Indexer).
 				Int64("size", result.Size).
-				Str("downloadURL", result.DownloadURL).
 				Msg("arrseed: trying inject for matched result")
 
 			injectResult, injectErr := r.injector.tryInject(ctx, mediaItem, &result, config, injOpts, &l)
@@ -746,7 +763,9 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 				progress.TorrentsAdded = stats.torrentsAdded
 				r.progress.set(runID, progress)
 
-				_ = r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusSeeded, injectResult.TorrentHash, result.Indexer, "")
+				if err := r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusSeeded, injectResult.TorrentHash, result.Indexer, ""); err != nil {
+					l.Error().Err(err).Str("release", dbItem.ReleaseName).Msg("arrseed: failed to update item status to seeded — may cause duplicate injection")
+				}
 				injected = true
 
 				l.Info().
@@ -761,7 +780,11 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 						Str("hash", injectResult.TorrentHash).
 						Int("unmatched", injectResult.UnmatchedCount).
 						Msg("arrseed: partial upgrade injected, starting download monitor")
-					go r.monitorPartialUpgrade(config.TargetQbitInstanceID, injectResult.TorrentHash, arrClient, mediaItem, config)
+					r.monitorWg.Add(1)
+					go func() {
+						defer r.monitorWg.Done()
+						r.monitorPartialUpgrade(config.TargetQbitInstanceID, injectResult.TorrentHash, arrClient, mediaItem, config)
+					}()
 				} else {
 					r.postSeedExecutor.execute(ctx, arrClient, mediaItem, config, &l)
 				}
@@ -776,7 +799,9 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 
 		if !injected {
 			l.Info().Str("release", dbItem.ReleaseName).Int("triedResults", len(matched)).Msg("arrseed: no injectable results for item")
-			_ = r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", "no injectable results")
+			if err := r.store.UpdateItemStatus(ctx, dbItem.ID, models.ArrSeedItemStatusNoMatch, "", "", "no injectable results"); err != nil {
+				l.Error().Err(err).Str("release", dbItem.ReleaseName).Msg("arrseed: failed to update item status to no-match")
+			}
 		}
 
 		if settings.SearchDelaySeconds > 0 && i < len(pendingItems)-1 {
@@ -788,11 +813,17 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 			}
 		}
 
-		_ = r.store.UpdateRunStats(ctx, runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded)
+		if err := r.store.UpdateRunStats(ctx, runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded); err != nil {
+			l.Error().Err(err).Msg("arrseed: failed to update run stats")
+		}
 	}
 
-	_ = r.store.UpdateConfigLastScan(context.Background(), configID)
-	_ = r.store.UpdateRunCompleted(context.Background(), runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded)
+	if err := r.store.UpdateConfigLastScan(context.Background(), configID); err != nil {
+		l.Error().Err(err).Int("configID", configID).Msg("arrseed: failed to update config last scan time")
+	}
+	if err := r.store.UpdateRunCompleted(context.Background(), runID, stats.itemsScanned, stats.itemsSearched, stats.matchesFound, stats.torrentsAdded); err != nil {
+		l.Error().Err(err).Int64("runID", runID).Msg("arrseed: failed to mark run as completed — run may appear stuck")
+	}
 
 	l.Info().
 		Int("scanned", stats.itemsScanned).
