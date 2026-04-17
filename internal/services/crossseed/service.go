@@ -318,8 +318,9 @@ type Service struct {
 	// categoryCreationGroup deduplicates concurrent category creation calls.
 	// Key format: "instanceID:categoryName"
 	categoryCreationGroup singleflight.Group
-	// createdCategories tracks categories we've successfully created in this session
-	// to avoid relying on potentially stale GetCategories responses.
+	// createdCategories tracks categories we've successfully created or verified in this
+	// session, keyed by "instanceID:categoryName" with the normalized actual save path as
+	// the value. The cache is only valid for callers requesting the same save path.
 	createdCategories sync.Map
 
 	// Cached torrent file metadata for repeated analyze/search calls.
@@ -2069,7 +2070,8 @@ func (s *Service) getCompletionTorrents(ctx context.Context, instanceID int, has
 func isCompletionCheckingState(state qbt.TorrentState) bool {
 	return state == qbt.TorrentStateCheckingDl ||
 		state == qbt.TorrentStateCheckingUp ||
-		state == qbt.TorrentStateCheckingResumeData
+		state == qbt.TorrentStateCheckingResumeData ||
+		state == qbt.TorrentStateMoving
 }
 
 func (s *Service) executeCompletionSearchWithRetry(
@@ -4448,14 +4450,20 @@ func (s *Service) processCrossSeedCandidate(
 			categorySavePath = props.SavePath
 		}
 
-		// Ensure the cross-seed category exists with the correct SavePath
-		if err := s.ensureCrossCategory(ctx, candidate.InstanceID, crossCategory, categorySavePath); err != nil {
-			log.Warn().Err(err).
-				Str("category", crossCategory).
-				Str("savePath", categorySavePath).
-				Msg("[CROSSSEED] Failed to ensure category exists, continuing without category")
-			crossCategory = ""            // Clear category to proceed without it
-			categoryCreationFailed = true // Track for result message
+		// Defer category creation for reflink/hardlink modes — they will create the category
+		// with the correct save path derived from the base directory and tracker/instance name.
+		// This avoids setting incorrect save paths when the category doesn't exist yet and
+		// the fallback to props.SavePath would produce the wrong path.
+		if !useReflinkMode && !useHardlinkMode {
+			// Ensure the cross-seed category exists with the correct SavePath
+			if err := s.ensureCrossCategory(ctx, candidate.InstanceID, crossCategory, categorySavePath, true); err != nil {
+				log.Warn().Err(err).
+					Str("category", crossCategory).
+					Str("savePath", categorySavePath).
+					Msg("[CROSSSEED] Failed to ensure category exists, continuing without category")
+				crossCategory = ""            // Clear category to proceed without it
+				categoryCreationFailed = true // Track for result message
+			}
 		}
 	}
 
@@ -4489,6 +4497,18 @@ func (s *Service) processCrossSeedCandidate(
 			// Hardlink mode was attempted (regardless of success/failure)
 			return hlResult.Result
 		}
+	}
+
+	// If link mode fell through (Used=false), a category may already have been created
+	// with a link-mode base dir (e.g., handleError after ensureCrossCategory when
+	// FallbackToRegularMode is enabled). To avoid inheriting a mismatched save_path
+	// in regular mode, skip category isolation here.
+	if crossCategory != "" && (useReflinkMode || useHardlinkMode) {
+		log.Debug().
+			Str("category", crossCategory).
+			Msg("[CROSSSEED] Link-mode fallback to regular: skipping category to avoid inheriting link-mode save_path")
+		crossCategory = ""
+		categoryCreationFailed = true
 	}
 
 	// Regular mode: continue with reuse+rename alignment
@@ -8554,13 +8574,13 @@ func (s *Service) filterIndexerIDsForTorrentAsync(ctx context.Context, instanceI
 		if existing, found := s.asyncFilteringCache.Get(cacheKey); found {
 			existingSnapshot := existing.Clone()
 			if existingSnapshot != nil && existingSnapshot.ContentCompleted {
-				log.Warn().
+				log.Trace().
 					Str("torrentHash", hash).
 					Int("instanceID", instanceID).
 					Str("cacheKey", cacheKey).
 					Bool("existingContentCompleted", existingSnapshot.ContentCompleted).
 					Int("existingFilteredCount", len(existingSnapshot.FilteredIndexers)).
-					Msg("[CROSSSEED-ASYNC] WARNING: Avoiding overwrite of completed content filtering")
+					Msg("[crossseed-async] Reusing completed content-filtering cache entry")
 
 				var torrentInfo *TorrentInfo
 				asyncAnalysis, err := s.AnalyzeTorrentForSearchAsync(ctx, instanceID, hash, false)
@@ -9163,6 +9183,17 @@ func (s *Service) notifyAutomationRun(ctx context.Context, run *models.CrossSeed
 	eventType := notifications.EventCrossSeedAutomationSucceeded
 	if run.Status == models.CrossSeedRunStatusFailed || run.Status == models.CrossSeedRunStatusPartial {
 		eventType = notifications.EventCrossSeedAutomationFailed
+	} else if run.TorrentsAdded == 0 && run.TorrentsFailed == 0 {
+		log.Info().
+			Int64("runID", run.ID).
+			Str("status", string(run.Status)).
+			Int("feedItems", run.TotalFeedItems).
+			Int("candidates", run.CandidatesFound).
+			Int("added", run.TorrentsAdded).
+			Int("failed", run.TorrentsFailed).
+			Int("skipped", run.TorrentsSkipped).
+			Msg("Skipping cross-seed RSS success notification")
+		return
 	}
 
 	var errorMessage string
@@ -10005,29 +10036,55 @@ func applyCategoryAffix(category, affixMode, affix string) string {
 }
 
 // ensureCrossCategory ensures a .cross suffixed category exists with the correct save_path.
-// If the category already exists, it verifies the save_path matches (logs warning if different).
+// If compareExistingSavePath is true and the category already exists, it verifies the save_path
+// matches (logs warning if different). Link modes pass false because they add torrents with an
+// explicit savepath and autoTMM disabled, so category save_path drift is not actionable there.
 // If it doesn't exist, it creates it with the provided save_path.
 //
 // This function uses singleflight to deduplicate concurrent creation attempts for the same
 // category, and maintains local state to avoid relying on potentially stale GetCategories responses.
-func (s *Service) ensureCrossCategory(ctx context.Context, instanceID int, crossCategory, savePath string) error {
+func (s *Service) ensureCrossCategory(
+	ctx context.Context,
+	instanceID int,
+	crossCategory,
+	savePath string,
+	compareExistingSavePath bool,
+) error {
 	if crossCategory == "" {
 		return nil
 	}
 
 	key := fmt.Sprintf("%d:%s", instanceID, crossCategory)
+	requestedSavePath := normalizePathForComparison(savePath)
 
-	// Fast path: we already created this category in this session
-	if _, ok := s.createdCategories.Load(key); ok {
+	cacheMatches := func(cached any) bool {
+		if !compareExistingSavePath {
+			return true
+		}
+		cachedSavePath, ok := cached.(string)
+		if !ok {
+			return false
+		}
+		if requestedSavePath == "" {
+			return true
+		}
+		return normalizePathForComparison(cachedSavePath) == requestedSavePath
+	}
+
+	// Fast path: we already created or verified this category in this session
+	// for the same requested save path.
+	if cached, ok := s.createdCategories.Load(key); ok && cacheMatches(cached) {
 		return nil
 	}
 
 	// Use singleflight to deduplicate concurrent calls for the same category.
 	// Multiple goroutines trying to create the same category will share a single execution.
-	_, err, _ := s.categoryCreationGroup.Do(key, func() (any, error) {
+	actualSavePathValue, err, _ := s.categoryCreationGroup.Do(key, func() (any, error) {
 		// Double-check inside singleflight (another goroutine might have completed just before us)
-		if _, ok := s.createdCategories.Load(key); ok {
-			return nil, nil
+		// for the same requested save path.
+		if cached, ok := s.createdCategories.Load(key); ok && cacheMatches(cached) {
+			cachedSavePath, _ := cached.(string)
+			return cachedSavePath, nil
 		}
 
 		// Get existing categories from qBittorrent
@@ -10038,8 +10095,10 @@ func (s *Service) ensureCrossCategory(ctx context.Context, instanceID int, cross
 
 		// Check if category already exists
 		if existing, exists := categories[crossCategory]; exists {
+			actualSavePath := normalizePathForComparison(existing.SavePath)
+
 			// Category exists - check if save_path differs (informational warning only)
-			if savePath != "" && existing.SavePath != "" && normalizePath(existing.SavePath) != normalizePath(savePath) {
+			if shouldWarnOnCategorySavePathMismatch(compareExistingSavePath, requestedSavePath, existing.SavePath) {
 				log.Warn().
 					Int("instanceID", instanceID).
 					Str("category", crossCategory).
@@ -10047,8 +10106,8 @@ func (s *Service) ensureCrossCategory(ctx context.Context, instanceID int, cross
 					Str("actualSavePath", existing.SavePath).
 					Msg("[CROSSSEED] Cross-seed category exists with different save path")
 			}
-			s.createdCategories.Store(key, true)
-			return nil, nil
+			s.createdCategories.Store(key, actualSavePath)
+			return actualSavePath, nil
 		}
 
 		// Create the category with the save_path
@@ -10056,17 +10115,64 @@ func (s *Service) ensureCrossCategory(ctx context.Context, instanceID int, cross
 			return nil, fmt.Errorf("create category: %w", err)
 		}
 
-		s.createdCategories.Store(key, true)
+		s.createdCategories.Store(key, requestedSavePath)
 		log.Debug().
 			Int("instanceID", instanceID).
 			Str("category", crossCategory).
 			Str("savePath", savePath).
 			Msg("[CROSSSEED] Created category for cross-seed")
 
-		return nil, nil
+		return requestedSavePath, nil
 	})
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	actualSavePath, _ := actualSavePathValue.(string)
+	if !compareExistingSavePath || requestedSavePath == "" || actualSavePath == requestedSavePath {
+		return nil
+	}
+
+	categories, err := s.syncManager.GetCategories(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("get categories after singleflight: %w", err)
+	}
+
+	if existing, exists := categories[crossCategory]; exists {
+		actualSavePath = normalizePathForComparison(existing.SavePath)
+		if shouldWarnOnCategorySavePathMismatch(compareExistingSavePath, requestedSavePath, existing.SavePath) {
+			log.Warn().
+				Int("instanceID", instanceID).
+				Str("category", crossCategory).
+				Str("expectedSavePath", savePath).
+				Str("actualSavePath", existing.SavePath).
+				Msg("[CROSSSEED] Cross-seed category exists with different save path")
+		}
+		s.createdCategories.Store(key, actualSavePath)
+		return nil
+	}
+
+	if err := s.syncManager.CreateCategory(ctx, instanceID, crossCategory, savePath); err != nil {
+		return fmt.Errorf("create category after singleflight: %w", err)
+	}
+
+	s.createdCategories.Store(key, requestedSavePath)
+	log.Debug().
+		Int("instanceID", instanceID).
+		Str("category", crossCategory).
+		Str("savePath", savePath).
+		Msg("[CROSSSEED] Created category for cross-seed after singleflight revalidation")
+
+	return nil
+}
+
+func shouldWarnOnCategorySavePathMismatch(compareExistingSavePath bool, requestedSavePath, existingSavePath string) bool {
+	if !compareExistingSavePath || requestedSavePath == "" || existingSavePath == "" {
+		return false
+	}
+
+	return normalizePathForComparison(existingSavePath) != requestedSavePath
 }
 
 // determineCrossSeedCategory selects the category to apply to a cross-seeded torrent.
@@ -11080,6 +11186,21 @@ func (s *Service) processHardlinkMode(
 	// Build destination directory based on preset and torrent structure
 	destDir := s.buildHardlinkDestDir(ctx, instance, selectedBaseDir, torrentHash, torrentName, candidate, incomingTrackerDomain, req, candidateTorrentFilesAll)
 
+	// Ensure cross-seed category exists with the correct save path derived from
+	// the base directory and directory preset, rather than the matched torrent's save path.
+	categoryCreationFailed := false
+	if crossCategory != "" {
+		categorySavePath := s.buildCategorySavePath(ctx, instance, selectedBaseDir, incomingTrackerDomain, candidate, req)
+		if err := s.ensureCrossCategory(ctx, candidate.InstanceID, crossCategory, categorySavePath, false); err != nil {
+			log.Warn().Err(err).
+				Str("category", crossCategory).
+				Str("savePath", categorySavePath).
+				Msg("[CROSSSEED] Hardlink mode: failed to ensure category exists, continuing without category")
+			crossCategory = ""
+			categoryCreationFailed = true
+		}
+	}
+
 	// Build existing files list (all files on disk from matched torrent).
 	// We pass all existing files to BuildPlan so it can use path/name matching
 	// to select the correct source file for each target.
@@ -11253,7 +11374,15 @@ func (s *Service) processHardlinkMode(
 	}
 
 	// Build result message
-	statusMsg := fmt.Sprintf("Added via hardlink mode (match: %s, files: %d/%d)", matchType, len(candidateTorrentFilesToLink), len(sourceFiles))
+	var statusMsg string
+	switch {
+	case categoryCreationFailed:
+		statusMsg = fmt.Sprintf("Added via hardlink mode WITHOUT category isolation (match: %s, files: %d/%d)", matchType, len(candidateTorrentFilesToLink), len(sourceFiles))
+	case crossCategory != "":
+		statusMsg = fmt.Sprintf("Added via hardlink mode (match: %s, category: %s, files: %d/%d)", matchType, crossCategory, len(candidateTorrentFilesToLink), len(sourceFiles))
+	default:
+		statusMsg = fmt.Sprintf("Added via hardlink mode (match: %s, files: %d/%d)", matchType, len(candidateTorrentFilesToLink), len(sourceFiles))
+	}
 	if addPolicy.DiscLayout {
 		statusMsg += addPolicy.StatusSuffix()
 	}
@@ -11378,6 +11507,29 @@ func (s *Service) buildHardlinkDestDir(
 	default: // "flat" or unknown
 		// For flat layout, always use isolation folder to keep torrents separated
 		return filepath.Join(baseDir, pathutil.IsolationFolderName(torrentHash, torrentName))
+	}
+}
+
+// buildCategorySavePath computes the correct save path for a cross-seed category
+// based on the instance's directory preset. This produces the tracker-level or
+// instance-level base directory (e.g., /data/cross-seed/TrackerName) rather than
+// a torrent-specific path with an isolation folder suffix.
+func (s *Service) buildCategorySavePath(
+	ctx context.Context,
+	instance *models.Instance,
+	baseDir string,
+	incomingTrackerDomain string,
+	candidate CrossSeedCandidate,
+	req *CrossSeedRequest,
+) string {
+	switch instance.HardlinkDirPreset {
+	case "by-tracker":
+		trackerDisplayName := s.resolveTrackerDisplayName(ctx, incomingTrackerDomain, req)
+		return filepath.Join(baseDir, pathutil.SanitizePathSegment(trackerDisplayName))
+	case "by-instance":
+		return filepath.Join(baseDir, pathutil.SanitizePathSegment(candidate.InstanceName))
+	default: // "flat" or unknown
+		return baseDir
 	}
 }
 
@@ -11632,6 +11784,21 @@ func (s *Service) processReflinkMode(
 	// Build destination directory based on preset and torrent structure
 	destDir := s.buildHardlinkDestDir(ctx, instance, selectedBaseDir, torrentHash, torrentName, candidate, incomingTrackerDomain, req, candidateTorrentFilesAll)
 
+	// Ensure cross-seed category exists with the correct save path derived from
+	// the base directory and directory preset, rather than the matched torrent's save path.
+	categoryCreationFailed := false
+	if crossCategory != "" {
+		categorySavePath := s.buildCategorySavePath(ctx, instance, selectedBaseDir, incomingTrackerDomain, candidate, req)
+		if err := s.ensureCrossCategory(ctx, candidate.InstanceID, crossCategory, categorySavePath, false); err != nil {
+			log.Warn().Err(err).
+				Str("category", crossCategory).
+				Str("savePath", categorySavePath).
+				Msg("[CROSSSEED] Reflink mode: failed to ensure category exists, continuing without category")
+			crossCategory = ""
+			categoryCreationFailed = true
+		}
+	}
+
 	// Build existing files list (all files on disk from matched torrent)
 	existingFiles := make([]hardlinktree.ExistingFile, 0, len(candidateFiles))
 	for _, f := range candidateFiles {
@@ -11807,7 +11974,15 @@ func (s *Service) processReflinkMode(
 	}
 
 	// Build result message
-	statusMsg := fmt.Sprintf("Added via reflink mode (match: %s, files: %d/%d)", matchType, clonedFiles, totalFiles)
+	var statusMsg string
+	switch {
+	case categoryCreationFailed:
+		statusMsg = fmt.Sprintf("Added via reflink mode WITHOUT category isolation (match: %s, files: %d/%d)", matchType, clonedFiles, totalFiles)
+	case crossCategory != "":
+		statusMsg = fmt.Sprintf("Added via reflink mode (match: %s, category: %s, files: %d/%d)", matchType, crossCategory, clonedFiles, totalFiles)
+	default:
+		statusMsg = fmt.Sprintf("Added via reflink mode (match: %s, files: %d/%d)", matchType, clonedFiles, totalFiles)
+	}
 	if addPolicy.DiscLayout {
 		statusMsg += addPolicy.StatusSuffix()
 	}

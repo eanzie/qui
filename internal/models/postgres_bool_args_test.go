@@ -447,6 +447,7 @@ func TestAutomationReadsIntegerBooleanColumns(t *testing.T) {
 			conditions TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			dry_run INTEGER NOT NULL DEFAULT 0,
+			notify INTEGER NOT NULL DEFAULT 1,
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			interval_seconds INTEGER,
 			free_space_source TEXT,
@@ -456,8 +457,8 @@ func TestAutomationReadsIntegerBooleanColumns(t *testing.T) {
 		)
 	`)
 	mustExec(t, db, `
-		INSERT INTO automations (instance_id, name, tracker_pattern, conditions, enabled, dry_run, sort_order)
-		VALUES (1, 'Auto rule', 'tracker.example', '{}', 1, 0, 1)
+		INSERT INTO automations (instance_id, name, tracker_pattern, conditions, enabled, dry_run, notify, sort_order)
+		VALUES (1, 'Auto rule', 'tracker.example', '{}', 1, 0, 0, 1)
 	`)
 
 	store := NewAutomationStore(&capturingQuerier{db: db})
@@ -466,11 +467,13 @@ func TestAutomationReadsIntegerBooleanColumns(t *testing.T) {
 	require.Len(t, items, 1)
 	require.True(t, items[0].Enabled)
 	require.False(t, items[0].DryRun)
+	require.False(t, items[0].Notify)
 
 	item, err := store.Get(context.Background(), 1, items[0].ID)
 	require.NoError(t, err)
 	require.True(t, item.Enabled)
 	require.False(t, item.DryRun)
+	require.False(t, item.Notify)
 }
 
 func TestOrphanScanReadsIntegerBooleanColumns(t *testing.T) {
@@ -546,6 +549,7 @@ func TestDirScanReadsIntegerBooleanColumns(t *testing.T) {
 			allow_partial INTEGER NOT NULL DEFAULT 0,
 			skip_piece_boundary_safety_check INTEGER NOT NULL DEFAULT 0,
 			start_paused INTEGER NOT NULL DEFAULT 0,
+			download_missing_files INTEGER NOT NULL DEFAULT 1,
 			category TEXT,
 			tags TEXT NOT NULL DEFAULT '[]',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -570,9 +574,9 @@ func TestDirScanReadsIntegerBooleanColumns(t *testing.T) {
 	`)
 	mustExec(t, db, `
 		INSERT INTO dir_scan_settings
-			(id, enabled, match_mode, size_tolerance_percent, min_piece_ratio, max_searchees_per_run, max_searchee_age_days, allow_partial, skip_piece_boundary_safety_check, start_paused, category, tags)
+			(id, enabled, match_mode, size_tolerance_percent, min_piece_ratio, max_searchees_per_run, max_searchee_age_days, allow_partial, skip_piece_boundary_safety_check, start_paused, download_missing_files, category, tags)
 		VALUES
-			(1, 1, 'strict', 5.0, 0.85, 500, 365, 1, 1, 0, 'movies', '["tag1"]')
+			(1, 1, 'strict', 5.0, 0.85, 500, 365, 1, 1, 0, 1, 'movies', '["tag1"]')
 	`)
 	mustExec(t, db, `
 		INSERT INTO dir_scan_directories
@@ -588,6 +592,7 @@ func TestDirScanReadsIntegerBooleanColumns(t *testing.T) {
 	require.True(t, settings.AllowPartial)
 	require.True(t, settings.SkipPieceBoundarySafetyCheck)
 	require.False(t, settings.StartPaused)
+	require.True(t, settings.DownloadMissingFiles)
 
 	dir, err := store.GetDirectory(context.Background(), 1)
 	require.NoError(t, err)

@@ -14,6 +14,7 @@ Automations are evaluated in **sort order** (first match wins for exclusive acti
 
 - **Automatic** - Background service scans torrents every 20 seconds
 - **Per-Rule Intervals** - Each rule can have its own interval (minimum 60 seconds, default 15 minutes)
+- **Per-Rule Notifications** - If notification targets are configured, each rule can opt in or out of sending automation notifications
 - **Manual** - Click "Apply Now" to trigger immediately (bypasses interval checks)
 - **Manual dry-run** - Run "Dry-run now" from the workflow dialog or "Run dry-run now" from the workflow menu
 - **Debouncing** - Same torrent won't be re-processed within 2 minutes
@@ -76,6 +77,19 @@ The query builder supports complex nested conditions with AND/OR groups. Drag co
 | Max Inactive Seeding Time | Configured max inactive seeding time |
 | Seeding Time Limit       | Torrent seeding time limit            |
 | Inactive Seeding Time Limit | Torrent inactive seeding time limit |
+
+#### System Time Fields
+
+These fields use qui's current system time when the rule is evaluated. They are useful for time-window automations such as "only run at night" or "apply different actions on weekends."
+
+| Field              | Description                               |
+| ------------------ | ----------------------------------------- |
+| System Hour        | Current hour (`0-23`)                     |
+| System Minute      | Current minute (`0-59`)                   |
+| System Day of Week | Current weekday (`0=Sun` to `6=Sat`)      |
+| System Day         | Current day of month (`1-31`)             |
+| System Month       | Current month (`1-12`)                    |
+| System Year        | Current year                              |
 
 #### Progress Fields
 
@@ -145,6 +159,15 @@ Note: if you have **Settings → Tracker Customizations** configured, the **Trac
 | Release Group      | Parsed release specifier (e.g. `NTb`; may be empty)                                        |
 | Group Size         | Size of the selected group for this condition (requires grouping; see [Grouping](#grouping)) |
 | Is Grouped         | Boolean - true when selected group size > 1 (requires grouping; see [Grouping](#grouping)) |
+
+#### Cross-Seed Fields
+
+| Field                              | Description                                                                      |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| Exists on Other Instance           | Boolean - a matching torrent exists on at least one other active instance       |
+| Seeding on Other Instance          | Boolean - a matching torrent is actively seeding on at least one other active instance |
+| Cross-seed Exists on Same Instance | Boolean - another matching torrent exists on this instance                      |
+| Cross-seed Seeding on Same Instance | Boolean - another matching torrent is actively seeding on this instance        |
 
 #### Filesystem Fields
 
@@ -561,6 +584,19 @@ The move path is evaluated as a **Go template** for each torrent. You can use a 
 - By isolation folder: `/data/{{.IsolationFolderName}}`
 - By tracker: `/data/{{.Tracker}}` (when tracker display name is configured)
 
+### Auto Management
+
+Enable or disable qBittorrent's Automatic Torrent Management (AutoTMM) on matching torrents.
+
+| Mode      | Description                                      |
+| --------- | ------------------------------------------------ |
+| `enable`  | Enable automatic torrent management on matches   |
+| `disable` | Disable automatic torrent management on matches  |
+
+When AutoTMM is enabled, qBittorrent automatically moves torrents to the save path configured for their category. Disabling it allows manual control of save paths.
+
+If multiple rules match the same torrent with Auto Management actions, the **last matching rule** (by sort order) wins.
+
 ### External Program
 
 Run a pre-configured external program when torrents match the automation rule. Uses the same programs configured in **Settings → External Programs**.
@@ -600,7 +636,7 @@ The program's executable path must be present in the application's allowlist. Pr
 
 Automations detect cross-seeded torrents (same content/files) and can handle them specially:
 
-- **Detection** - Matches via ContentPath (and SavePath for category moves)
+- **Detection** - Cross-seed condition fields use the same matching logic as **Filter Cross-Seeds**: content path, exact name, and release metadata. Same-instance checks exclude the current torrent itself.
 - **Delete Rules**:
   - Use `deleteWithFilesPreserveCrossSeeds` to keep files if cross-seeds exist
   - Use `deleteWithFilesIncludeCrossSeeds` to delete matching torrents and all their cross-seeds together

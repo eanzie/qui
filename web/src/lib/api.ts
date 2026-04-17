@@ -348,7 +348,7 @@ async function attemptSSORecoveryNavigation(options?: { bypassGuard?: boolean; t
     try {
       const registrations = await navigator.serviceWorker.getRegistrations()
       await Promise.all(
-        registrations.filter(r => r.scope === quiScope).map(r => r.unregister()),
+        registrations.filter(r => r.scope === quiScope).map(r => r.unregister())
       )
     } catch {
       // ignore unregister errors
@@ -362,7 +362,7 @@ async function attemptSSORecoveryNavigation(options?: { bypassGuard?: boolean; t
     try {
       const names = await caches.keys()
       await Promise.all(
-        names.filter(name => name.endsWith(quiScope)).map(name => caches.delete(name)),
+        names.filter(name => name.endsWith(quiScope)).map(name => caches.delete(name))
       )
     } catch {
       // ignore cache clear errors
@@ -599,7 +599,6 @@ class ApiClient {
   async getOIDCConfig(): Promise<{
     enabled: boolean
     authorizationUrl: string
-    state: string
     disableBuiltInLogin: boolean
     issuerUrl: string
   }> {
@@ -610,7 +609,6 @@ class ApiClient {
       return {
         enabled: false,
         authorizationUrl: "",
-        state: "",
         disableBuiltInLogin: false,
         issuerUrl: "",
       }

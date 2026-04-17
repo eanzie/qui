@@ -10,7 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/autobrr/qui/internal/dbinterface"
 )
@@ -64,6 +67,7 @@ type DirScanSettings struct {
 	AllowPartial                 bool      `json:"allowPartial"`
 	SkipPieceBoundarySafetyCheck bool      `json:"skipPieceBoundarySafetyCheck"`
 	StartPaused                  bool      `json:"startPaused"`
+	DownloadMissingFiles         bool      `json:"downloadMissingFiles"`
 	Category                     string    `json:"category"`
 	Tags                         []string  `json:"tags"`
 	CreatedAt                    time.Time `json:"createdAt"`
@@ -163,6 +167,7 @@ func (s *DirScanStore) GetSettings(ctx context.Context) (*DirScanSettings, error
 		SELECT id, enabled, match_mode, size_tolerance_percent, min_piece_ratio, max_searchees_per_run,
 		       max_searchee_age_days,
 		       allow_partial, skip_piece_boundary_safety_check, start_paused,
+		       download_missing_files,
 		       category, tags, created_at, updated_at
 		FROM dir_scan_settings
 		WHERE id = 1
@@ -171,7 +176,7 @@ func (s *DirScanStore) GetSettings(ctx context.Context) (*DirScanSettings, error
 	var settings DirScanSettings
 	var category sql.NullString
 	var tagsJSON sql.NullString
-	var enabled, allowPartial, skipPieceBoundarySafetyCheck, startPaused int
+	var enabled, allowPartial, skipPieceBoundarySafetyCheck, startPaused, downloadMissingFiles int
 
 	err := row.Scan(
 		&settings.ID,
@@ -184,6 +189,7 @@ func (s *DirScanStore) GetSettings(ctx context.Context) (*DirScanSettings, error
 		&allowPartial,
 		&skipPieceBoundarySafetyCheck,
 		&startPaused,
+		&downloadMissingFiles,
 		&category,
 		&tagsJSON,
 		&settings.CreatedAt,
@@ -211,6 +217,7 @@ func (s *DirScanStore) GetSettings(ctx context.Context) (*DirScanSettings, error
 	settings.AllowPartial = SQLiteIntToBool(allowPartial)
 	settings.SkipPieceBoundarySafetyCheck = SQLiteIntToBool(skipPieceBoundarySafetyCheck)
 	settings.StartPaused = SQLiteIntToBool(startPaused)
+	settings.DownloadMissingFiles = SQLiteIntToBool(downloadMissingFiles)
 
 	// Store in DB uses a 0-1 ratio; API/UI expects percent (0-100).
 	settings.MinPieceRatio = minPieceRatioToPercent(settings.MinPieceRatio)
@@ -246,8 +253,9 @@ func (s *DirScanStore) UpdateSettings(ctx context.Context, settings *DirScanSett
 			id, enabled, match_mode, size_tolerance_percent, min_piece_ratio,
 			max_searchees_per_run, max_searchee_age_days,
 			allow_partial, skip_piece_boundary_safety_check, start_paused,
+			download_missing_files,
 			category, tags
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			enabled = excluded.enabled,
 			match_mode = excluded.match_mode,
@@ -258,6 +266,7 @@ func (s *DirScanStore) UpdateSettings(ctx context.Context, settings *DirScanSett
 			allow_partial = excluded.allow_partial,
 			skip_piece_boundary_safety_check = excluded.skip_piece_boundary_safety_check,
 			start_paused = excluded.start_paused,
+			download_missing_files = excluded.download_missing_files,
 			category = excluded.category,
 			tags = excluded.tags
 	`,
@@ -270,6 +279,7 @@ func (s *DirScanStore) UpdateSettings(ctx context.Context, settings *DirScanSett
 		boolToInt(settings.AllowPartial),
 		boolToInt(settings.SkipPieceBoundarySafetyCheck),
 		boolToInt(settings.StartPaused),
+		boolToInt(settings.DownloadMissingFiles),
 		category,
 		string(tagsJSON),
 	)
@@ -456,6 +466,33 @@ func (s *DirScanStore) ListDirectories(ctx context.Context) ([]*DirScanDirectory
 	return s.scanDirectoriesFromRows(rows)
 }
 
+// ListDirectoryIDs retrieves all scan directory IDs.
+func (s *DirScanStore) ListDirectoryIDs(ctx context.Context) ([]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id
+		FROM dir_scan_directories
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query directory ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan directory id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate directory ids: %w", err)
+	}
+
+	return ids, nil
+}
+
 // DirScanDirectoryUpdateParams holds optional fields for updating a directory.
 type DirScanDirectoryUpdateParams struct {
 	Path                *string
@@ -625,6 +662,11 @@ func (s *DirScanStore) ListEnabledDirectories(ctx context.Context) ([]*DirScanDi
 // ErrDirScanRunAlreadyActive is returned when attempting to create a run while one is active.
 var ErrDirScanRunAlreadyActive = errors.New("an active scan run already exists for this directory")
 
+const (
+	dirScanRunHistoryLimit       = 10
+	dirScanRunInjectionMaxPerRun = 256
+)
+
 // CreateRun creates a new scan run.
 func (s *DirScanStore) CreateRun(ctx context.Context, directoryID int, triggeredBy, scanRoot string) (int64, error) {
 	var scanRootValue any
@@ -641,6 +683,8 @@ func (s *DirScanStore) CreateRun(ctx context.Context, directoryID int, triggered
 	if err != nil {
 		return 0, fmt.Errorf("insert run: %w", err)
 	}
+
+	s.trimRunHistoryBestEffort(ctx, directoryID)
 
 	return id, nil
 }
@@ -669,6 +713,8 @@ func (s *DirScanStore) CreateRunIfNoActive(ctx context.Context, directoryID int,
 		}
 		return 0, fmt.Errorf("insert run: %w", err)
 	}
+
+	s.trimRunHistoryBestEffort(ctx, directoryID)
 
 	return id, nil
 }
@@ -732,7 +778,7 @@ func scanRunFromScanner(scanner sqlScanner) (*DirScanRun, error) {
 // ListRuns lists recent runs for a directory.
 func (s *DirScanStore) ListRuns(ctx context.Context, directoryID, limit int) ([]*DirScanRun, error) {
 	if limit <= 0 {
-		limit = 10
+		limit = dirScanRunHistoryLimit
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
@@ -740,7 +786,7 @@ func (s *DirScanStore) ListRuns(ctx context.Context, directoryID, limit int) ([]
 		       matches_found, torrents_added, error_message, started_at, completed_at
 		FROM dir_scan_runs
 		WHERE directory_id = ?
-		ORDER BY started_at DESC
+		ORDER BY started_at DESC, id DESC
 		LIMIT ?
 	`, directoryID, limit)
 	if err != nil {
@@ -749,6 +795,25 @@ func (s *DirScanStore) ListRuns(ctx context.Context, directoryID, limit int) ([]
 	defer rows.Close()
 
 	return scanRunsFromRows(rows)
+}
+
+// PruneRunHistory trims each directory to the most recent retained runs.
+func (s *DirScanStore) PruneRunHistory(ctx context.Context) error {
+	directoryIDs, err := s.ListDirectoryIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("list directories for run pruning: %w", err)
+	}
+
+	for _, directoryID := range directoryIDs {
+		if directoryID <= 0 {
+			continue
+		}
+		if err := s.pruneRunHistoryForDirectory(ctx, directoryID, dirScanRunHistoryLimit); err != nil {
+			return fmt.Errorf("prune run history for directory %d: %w", directoryID, err)
+		}
+	}
+
+	return nil
 }
 
 func scanRunsFromRows(rows *sql.Rows) ([]*DirScanRun, error) {
@@ -950,9 +1015,49 @@ func (s *DirScanStore) MarkActiveRunsFailed(ctx context.Context, errorMessage st
 	return rows, nil
 }
 
-// --- Run Injection Operations ---
+func (s *DirScanStore) pruneRunHistoryForDirectory(ctx context.Context, directoryID, limit int) error {
+	if directoryID <= 0 || limit <= 0 {
+		return nil
+	}
 
-const dirScanRunInjectionMaxPerRun = 256
+	_, err := s.db.ExecContext(ctx, pruneRunHistoryForDirectoryQuery(dbinterface.DialectOf(s.db)),
+		directoryID, directoryID, limit)
+	if err != nil {
+		return fmt.Errorf("delete old runs: %w", err)
+	}
+
+	return nil
+}
+
+func pruneRunHistoryForDirectoryQuery(dialect string) string {
+	base := `
+		DELETE FROM dir_scan_runs
+		WHERE directory_id = ?
+		  AND id IN (
+			  SELECT id FROM dir_scan_runs
+			  WHERE directory_id = ?
+			  ORDER BY started_at DESC, id DESC
+	`
+	if strings.EqualFold(strings.TrimSpace(dialect), "postgres") {
+		return base + `
+			  OFFSET ?
+		  )
+		`
+	}
+
+	return base + `
+			  LIMIT -1 OFFSET ?
+		  )
+		`
+}
+
+func (s *DirScanStore) trimRunHistoryBestEffort(ctx context.Context, directoryID int) {
+	if err := s.pruneRunHistoryForDirectory(ctx, directoryID, dirScanRunHistoryLimit); err != nil {
+		log.Warn().Err(err).Int("directoryID", directoryID).Msg("dirscan: failed to prune run history")
+	}
+}
+
+// --- Run Injection Operations ---
 
 // CreateRunInjection records a successful or failed injection attempt for a run.
 func (s *DirScanStore) CreateRunInjection(ctx context.Context, injection *DirScanRunInjection) error {
@@ -1056,7 +1161,7 @@ func (s *DirScanStore) trimRunInjectionsBestEffort(ctx context.Context, runID in
 			  LIMIT ?
 		  )
 	`, runID, runID, dirScanRunInjectionMaxPerRun); err != nil {
-		_ = err
+		log.Warn().Err(err).Int64("runID", runID).Msg("dirscan: failed to prune run injections")
 	}
 }
 

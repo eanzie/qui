@@ -364,7 +364,7 @@ function DirectoryCard({
 
   const handleCancel = useCallback(() => {
     cancelScan.mutate(undefined, {
-      onSuccess: () => toast.success("Scan canceled"),
+      onSuccess: () => toast.success("Scan canceled. Next run will recheck the directory and retry unfinished items."),
       onError: (error) => toast.error(`Failed to cancel scan: ${error.message}`),
     })
   }, [cancelScan])
@@ -681,7 +681,7 @@ function DirectoryDetails({ directoryId, formatDateTime, formatRelativeTime }: D
       <CardHeader className="flex flex-row items-start justify-between">
         <div>
           <CardTitle>Recent Scan Runs</CardTitle>
-          <CardDescription>History of recent scans for this directory.</CardDescription>
+          <CardDescription>Last 10 runs retained for this directory.</CardDescription>
         </div>
         <Button
           variant="outline"
@@ -742,8 +742,8 @@ function DirectoryDetails({ directoryId, formatDateTime, formatRelativeTime }: D
           <AlertDialogHeader>
             <AlertDialogTitle>Reset scan progress?</AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes tracked dir-scan file state for this directory. The next scan will
-              re-process searchees from the beginning.
+              This deletes tracked dir-scan progress for this directory. The next scan will
+              recheck the directory and retry all items, including ones that were already finished.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -781,6 +781,7 @@ function buildSettingsFormState(settings: SettingsDialogProps["settings"]) {
     maxSearcheesPerRun: settings?.maxSearcheesPerRun ?? 0,
     maxSearcheeAgeDays: settings?.maxSearcheeAgeDays ?? 0,
     allowPartial: settings?.allowPartial ?? false,
+    downloadMissingFiles: settings?.downloadMissingFiles ?? true,
     skipPieceBoundarySafetyCheck: settings?.skipPieceBoundarySafetyCheck ?? true,
     startPaused: settings?.startPaused ?? false,
     category: settings?.category ?? "",
@@ -920,7 +921,7 @@ function SettingsDialog({ open, onOpenChange, settings, instances }: SettingsDia
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Strict mode matches files by name and size. Flexible mode matches by size only.
+              Strict mode matches by filename plus exact file size. Flexible mode ignores filenames for primary matching, but file sizes must still match exactly.
             </p>
           </div>
 
@@ -941,7 +942,7 @@ function SettingsDialog({ open, onOpenChange, settings, instances }: SettingsDia
               }
             />
             <p className="text-xs text-muted-foreground">
-              Allows small size differences when comparing files (useful for minor repacks). Keep low for best accuracy.
+              Allows small differences in total torrent size before file matching. File sizes must still match exactly. Keep low for best accuracy.
             </p>
           </div>
 
@@ -984,7 +985,7 @@ function SettingsDialog({ open, onOpenChange, settings, instances }: SettingsDia
               }
             />
             <p className="text-xs text-muted-foreground">
-              0 = unlimited. Useful for making progress across restarts.
+              0 = unlimited. Useful when you want large directories to finish over multiple runs: each run rechecks the directory, skips finished items, and retries unfinished ones.
             </p>
           </div>
 
@@ -1068,15 +1069,43 @@ function SettingsDialog({ open, onOpenChange, settings, instances }: SettingsDia
                     <Info className="size-3.5 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
-                    Allows adding torrents even when the torrent has extra/missing files compared to what’s on disk. qBittorrent may download missing files into the save path.
+                    Matches torrents even when not all files are found on disk. Covers season packs, extras, and partial releases.
                   </TooltipContent>
                 </Tooltip>
               </Label>
             </div>
             <p className="text-xs text-muted-foreground">
-              Useful for packs/extras; be careful if scanning your *arr library folders.
+              Matches torrents even when not all files are found on disk. Covers season packs, extras, and partial releases.
             </p>
           </div>
+
+          {form.allowPartial && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="download-missing-files"
+                  checked={form.downloadMissingFiles}
+                  onCheckedChange={(checked) =>
+                    setForm((prev) => ({ ...prev, downloadMissingFiles: checked }))
+                  }
+                />
+                <Label htmlFor="download-missing-files" className="flex items-center gap-1">
+                  Download missing files
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="size-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      Downloads files not found on disk for partial matches. Needed for season packs in hardlink/reflink mode.
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Downloads files not found on disk for partial matches. Needed for season packs in hardlink/reflink mode.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1">
             <div className="flex items-center gap-2">

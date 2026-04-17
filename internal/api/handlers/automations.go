@@ -45,6 +45,7 @@ type AutomationPayload struct {
 	TrackerDomains  []string                 `json:"trackerDomains"`
 	Enabled         *bool                    `json:"enabled"`
 	DryRun          *bool                    `json:"dryRun"`
+	Notify          *bool                    `json:"notify"`
 	SortOrder       *int                     `json:"sortOrder"`
 	IntervalSeconds *int                     `json:"intervalSeconds,omitempty"` // nil = use DefaultRuleInterval (15m)
 	Conditions      *models.ActionConditions `json:"conditions"`
@@ -82,6 +83,7 @@ func (p *AutomationPayload) toModel(instanceID int, id int) *models.Automation {
 		SortingConfig:   p.SortingConfig,
 		Enabled:         true,
 		DryRun:          false,
+		Notify:          true,
 		IntervalSeconds: p.IntervalSeconds,
 	}
 	if p.Enabled != nil {
@@ -89,6 +91,9 @@ func (p *AutomationPayload) toModel(instanceID int, id int) *models.Automation {
 	}
 	if p.DryRun != nil {
 		automation.DryRun = *p.DryRun
+	}
+	if p.Notify != nil {
+		automation.Notify = *p.Notify
 	}
 	if p.SortOrder != nil {
 		automation.SortOrder = *p.SortOrder
@@ -350,7 +355,8 @@ func (h *AutomationHandler) validatePayload(ctx context.Context, instanceID int,
 			(len(payload.Conditions.TagActions()) > 0) ||
 			(payload.Conditions.Category != nil && payload.Conditions.Category.Enabled) ||
 			(payload.Conditions.Move != nil && payload.Conditions.Move.Enabled) ||
-			(payload.Conditions.ExternalProgram != nil && payload.Conditions.ExternalProgram.Enabled)
+			(payload.Conditions.ExternalProgram != nil && payload.Conditions.ExternalProgram.Enabled) ||
+			(payload.Conditions.AutoManagement != nil)
 		if hasOtherAction {
 			return http.StatusBadRequest, "Delete action cannot be combined with other actions", errors.New("delete must be standalone")
 		}
@@ -481,7 +487,8 @@ func conditionsUseField(conditions *models.ActionConditions, field automations.C
 		anyEnabledTagActionUsesField(c.TagActions(), field) ||
 		(c.Category != nil && check(c.Category.Enabled, c.Category.Condition)) ||
 		(c.Move != nil && check(c.Move.Enabled, c.Move.Condition)) ||
-		(c.ExternalProgram != nil && check(c.ExternalProgram.Enabled, c.ExternalProgram.Condition))
+		(c.ExternalProgram != nil && check(c.ExternalProgram.Enabled, c.ExternalProgram.Condition)) ||
+		(c.AutoManagement != nil && automations.ConditionUsesField(c.AutoManagement.Condition, field))
 }
 
 func anyEnabledTagActionUsesField(actions []*models.TagAction, field automations.ConditionField) bool {
@@ -624,6 +631,9 @@ func conditionTreesForValidation(conditions *models.ActionConditions) []*models.
 	}
 	if conditions.ExternalProgram != nil && conditions.ExternalProgram.Enabled {
 		trees = append(trees, conditions.ExternalProgram.Condition)
+	}
+	if conditions.AutoManagement != nil {
+		trees = append(trees, conditions.AutoManagement.Condition)
 	}
 	return trees
 }
@@ -1029,6 +1039,9 @@ func collectConditionRegexErrors(conditions *models.ActionConditions) []RegexVal
 	}
 	if conditions.ExternalProgram != nil {
 		validateConditionRegex(conditions.ExternalProgram.Condition, "/conditions/externalProgram/condition", &result)
+	}
+	if conditions.AutoManagement != nil {
+		validateConditionRegex(conditions.AutoManagement.Condition, "/conditions/autoManagement/condition", &result)
 	}
 
 	return result

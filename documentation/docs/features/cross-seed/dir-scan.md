@@ -133,6 +133,8 @@ Dir Scan maintains a FileID index (inode + device on Unix) to track files alread
 
 This avoids redundant searches and duplicate additions.
 
+If a torrent is removed from qBittorrent (for example, by an automation rule that removes torrents with missing files), its files are no longer tracked in the index. The next scan of whichever directory contains those files will treat them as new searchees and search indexers for them again.
+
 ### Recheck Behavior
 
 - **Full matches**: Torrent is added with "skip hash check" enabled. Seeding starts immediately.
@@ -167,15 +169,23 @@ Open **Dir Scan > Settings**:
 
 | Setting | Description |
 |---------|-------------|
-| Match Mode | `Strict` matches by filename + size. `Flexible` matches by size only. |
-| Size Tolerance (%) | Allows small size differences when matching. |
+| Match Mode | `Strict` matches by filename + exact file size. `Flexible` ignores filenames for primary matching, but matched files must still have the same exact file size. |
+| Size Tolerance (%) | Allows small differences in total torrent size when filtering candidates before file matching. |
 | Minimum Piece Ratio (%) | For partial matches, minimum percent of torrent data that must exist on disk. |
 | Max searchees per run | Limits how many eligible searchees are processed per run. `0` = unlimited. Useful for making progress across restarts. |
 | Only process items changed within the last (days) | Excludes stale work items before search. Uses video/audio mtimes only for manual/scheduled scans. Webhook-triggered scans ignore this cutoff. `0` = disabled. |
 | Allow partial matches | Add torrents even if they have extra/missing files compared to disk. |
+| Download missing files | Downloads files not found on disk for partial matches. Required for season packs and partial releases in hardlink/reflink mode. Enabled by default. |
 | Skip piece boundary safety check | Allow partial matches where downloading missing files could modify pieces containing existing content. |
 | Start torrents paused | Add injected torrents in paused state. |
 | Default Category / Tags | Applied to all injected torrents. Directory-level settings add to these. |
+
+In practice:
+
+- **Strict** is best when filenames on disk are still close to the release layout.
+- **Flexible** is best for renamed libraries, but it still requires exact file-size matches for the files it pairs.
+- **Size Tolerance** only affects which search results are considered based on **total torrent size**. It does **not** allow per-file size mismatches.
+- Flexible single-file matches may still be rejected when the candidate lacks corroborating title or external ID evidence. This prevents false positives when an indexer falls back from ID-based search to plain title search.
 
 ### "Max searchees per run" explained
 
@@ -184,7 +194,7 @@ This setting limits how many **top-level folders/files** Dir Scan will process i
 - If your directory is a TV root like `/mnt/storage/media/tv`, then each **show folder** is one searchee (for example `Show.Name/`, `Another.Show/`).
 - If your directory is a movies root like `/mnt/storage/media/movies`, then each **movie folder** is one searchee (for example `Movie.Title (2024)/`, `Another.Movie (2023)/`).
 
-So if **Max searchees per run = 5**, Dir Scan will process up to **5 show folders** (TV) or **5 movie folders** (movies) per run, then stop and persist per-file progress for the next run (so already-final files won't be reprocessed). See [Incremental progress and resets](#incremental-progress-and-resets).
+So if **Max searchees per run = 5**, Dir Scan will process up to **5 show folders** (TV) or **5 movie folders** (movies) per run, then stop and persist per-file progress for the next run. The next run rechecks the directory, skips already-final files, and retries unfinished work. See [Incremental progress and resets](#incremental-progress-and-resets).
 
 This is **not** a cap on the total number of indexer searches. TV folders can trigger multiple searches (season-level + per-episode heuristics), even though they still count as a single top-level searchee.
 
@@ -228,7 +238,15 @@ Only one scan runs per directory at a time. If a scheduled scan triggers while a
 
 ### Incremental progress and resets
 
-Dir Scan persists per-file progress and skips unchanged searchees whose files are already in a final state (matched/no match/already seeding/in qBittorrent). This makes scans resumable across restarts.
+Dir Scan persists per-file progress and skips unchanged searchees whose files are already in a final state (matched/no match/already seeding/in qBittorrent).
+
+This is **not** an exact checkpoint resume. When you start a new run after canceling or restarting qui, Dir Scan:
+
+- rechecks the directory from the top
+- keeps finished files skipped if they are unchanged
+- retries unfinished or errored files
+
+From a user perspective, this behaves like **restart with preserved progress**, not “continue from the exact file where it stopped.”
 
 If you want to force a directory to be re-processed from scratch, use **Reset Scan Progress** for that directory in the UI. This clears the tracked file state for that directory.
 
@@ -238,6 +256,8 @@ If you want to force a directory to be re-processed from scratch, use **Reset Sc
 - **Manual scans** can be triggered from the UI at any time via the "Scan Now" button.
 
 Both types can be canceled from the UI while running.
+
+The UI keeps the **last 10 run entries** per directory. Older run rows are pruned automatically.
 
 ### Webhook trigger
 
@@ -316,6 +336,10 @@ If the target qBittorrent instance has hardlink or reflink mode enabled, Dir Sca
 
 - Builds a link tree matching the incoming torrent's layout.
 - Adds the torrent pointing at that tree (`contentLayout=Original`). Full matches use `skip_checking=true`; partial matches allow qBittorrent to verify existing data and download missing files safely into the link tree.
+
+:::note
+Partial matches in link tree mode (hardlink or reflink) require **Download missing files** to be enabled in Dir Scan settings. Without it, partial link tree injections are rejected.
+:::
 
 See:
 - [Hardlink Mode](hardlink-mode)
