@@ -846,7 +846,7 @@ class ApiClient {
 
   async getTorrentField(
     instanceId: number,
-    field: "name" | "hash" | "full_path" | "tags",
+    field: "name" | "hash" | "full_path" | "tags" | "magnet_uri",
     params: {
       sort?: string
       order?: "asc" | "desc"
