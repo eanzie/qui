@@ -127,11 +127,15 @@ var sharedMigrationFilenameRenames = []migrationFilenameRename{
 	},
 	{
 		from: "061_add_arr_seed.sql",
-		to:   "071_add_arr_seed.sql",
+		to:   "073_add_arr_seed.sql",
 	},
 	{
 		from: "068_add_arr_seed.sql",
-		to:   "071_add_arr_seed.sql",
+		to:   "073_add_arr_seed.sql",
+	},
+	{
+		from: "071_add_arr_seed.sql",
+		to:   "073_add_arr_seed.sql",
 	},
 }
 
