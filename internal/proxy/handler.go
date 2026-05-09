@@ -197,9 +197,6 @@ func (h *Handler) rewriteRequest(pr *httputil.ProxyRequest) {
 	}
 	forwardedProto := pr.In.Header.Get("X-Forwarded-Proto")
 	forwardedHost := pr.In.Header.Get("X-Forwarded-Host")
-	if forwardedHost != "" {
-		pr.Out.Header.Set("X-Forwarded-Host", forwardedHost)
-	}
 	pr.SetXForwarded()
 	if forwardedProto != "" {
 		pr.Out.Header.Set("X-Forwarded-Proto", forwardedProto)
