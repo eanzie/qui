@@ -43,6 +43,7 @@ docker run -d \
 - **Automations**: Rule-based torrent management with conditions and actions
 - **Backups & Restore**: Scheduled snapshots with multiple restore modes
 - **Reverse Proxy**: Transparent qBittorrent proxy for external apps
+- **Multi-Language**: Available in English, German, French, and Simplified Chinese, with automatic browser-language detection
 
 ## Community
 
@@ -103,6 +104,8 @@ For other currencies or donation methods, [reach out on Discord](https://discord
 ## Contributing
 
 Contributions are welcome. Note: this repo restricts pull request creation to **collaborators only**. Please start with a Discussion/Issue (or Discord) so we can coordinate changes.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development and test workflow.
 
 ## License
 

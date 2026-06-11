@@ -268,7 +268,7 @@ func (inj *arrSeedInjector) tryInject(
 		Msg("arrseed: adding torrent to qBittorrent")
 
 	// Add the torrent to qBittorrent
-	if err := inj.svc.syncManager.AddTorrent(ctx, config.TargetQbitInstanceID, torrentBytes, options); err != nil {
+	if _, err := inj.svc.syncManager.AddTorrent(ctx, config.TargetQbitInstanceID, torrentBytes, options); err != nil {
 		l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to add torrent to qBit, rolling back hardlinks")
 		if rollbackErr := hardlinktree.Rollback(plan); rollbackErr != nil {
 			l.Warn().Err(rollbackErr).Str("rootDir", plan.RootDir).Msg("arrseed: failed to rollback hardlink tree")
@@ -300,7 +300,8 @@ func (inj *arrSeedInjector) tryInject(
 			l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to trigger recheck")
 		} else {
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume")
-			if qErr := inj.svc.queueRecheckResume(ctx, config.TargetQbitInstanceID, parsed.InfoHash); qErr != nil {
+			resumeThreshold := arrseedResumeThreshold(ctx, inj.svc)
+			if qErr := inj.svc.queueRecheckResumeWithThreshold(ctx, config.TargetQbitInstanceID, parsed.InfoHash, resumeThreshold); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume")
 			}
 		}
@@ -539,6 +540,17 @@ func arrSeedBuildAddOptions(category string, injOpts *arrSeedInjectionOptions, s
 	}
 
 	return options
+}
+
+// arrseedResumeThreshold computes the resume threshold for arrseed-injected
+// torrents from the configured size mismatch tolerance, falling back to a
+// 5% default when settings are unavailable.
+func arrseedResumeThreshold(ctx context.Context, svc *Service) float64 {
+	tolerancePercent := 5.0
+	if settings, err := svc.GetAutomationSettings(ctx); err == nil && settings != nil {
+		tolerancePercent = settings.SizeMismatchTolerancePercent
+	}
+	return clampedResumeThresholdFromTolerance(tolerancePercent)
 }
 
 // arrSeedExtractEpisodeID extracts a normalized episode identifier (e.g. "e02")
