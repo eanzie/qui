@@ -18,7 +18,7 @@ import (
 type ArrSeedItemStatus string
 
 const (
-	ArrSeedItemStatusPending  ArrSeedItemStatus = "pending"  //nolint:goconst
+	ArrSeedItemStatusPending  ArrSeedItemStatus = "pending" //nolint:goconst
 	ArrSeedItemStatusSearched ArrSeedItemStatus = "searched"
 	ArrSeedItemStatusMatched  ArrSeedItemStatus = "matched"
 	ArrSeedItemStatusSeeded   ArrSeedItemStatus = "seeded"
@@ -52,23 +52,23 @@ type ArrSeedSettings struct {
 
 // ArrSeedInstanceConfig represents a per-ARR-instance cross-seed configuration.
 type ArrSeedInstanceConfig struct {
-	ID                    int        `json:"id"`
-	ArrInstanceID         int        `json:"arrInstanceId"`
-	ArrInstanceName       string     `json:"arrInstanceName,omitempty"`
-	ArrInstanceType       string     `json:"arrInstanceType,omitempty"`
-	Enabled               bool       `json:"enabled"`
-	TargetQbitInstanceID  int        `json:"targetQbitInstanceId"`
-	TargetQbitInstanceName string    `json:"targetQbitInstanceName,omitempty"`
-	Category              string     `json:"category"`
-	ArrDockerPath         string     `json:"arrDockerPath"`
-	HostDataPath          string     `json:"hostDataPath"`
-	TorrentSavePath       string     `json:"torrentSavePath"`
-	ScanIntervalMinutes   int        `json:"scanIntervalMinutes"`
-	UnmonitorAfterSeed    bool       `json:"unmonitorAfterSeed"`
-	TagAfterSeed          string     `json:"tagAfterSeed"`
-	LastScanAt            *time.Time `json:"lastScanAt,omitempty"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	UpdatedAt             time.Time  `json:"updatedAt"`
+	ID                     int        `json:"id"`
+	ArrInstanceID          int        `json:"arrInstanceId"`
+	ArrInstanceName        string     `json:"arrInstanceName,omitempty"`
+	ArrInstanceType        string     `json:"arrInstanceType,omitempty"`
+	Enabled                bool       `json:"enabled"`
+	TargetQbitInstanceID   int        `json:"targetQbitInstanceId"`
+	TargetQbitInstanceName string     `json:"targetQbitInstanceName,omitempty"`
+	Category               string     `json:"category"`
+	ArrDockerPath          string     `json:"arrDockerPath"`
+	HostDataPath           string     `json:"hostDataPath"`
+	TorrentSavePath        string     `json:"torrentSavePath"`
+	ScanIntervalMinutes    int        `json:"scanIntervalMinutes"`
+	UnmonitorAfterSeed     bool       `json:"unmonitorAfterSeed"`
+	TagAfterSeed           string     `json:"tagAfterSeed"`
+	LastScanAt             *time.Time `json:"lastScanAt,omitempty"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
 // ArrSeedRun represents a scan run history entry.
