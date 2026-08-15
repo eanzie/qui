@@ -52,6 +52,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { FieldHelp } from "@/components/ui/field-help"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -291,15 +292,10 @@ function SettingsDialog({
                   updateSettings.mutate({ enableHighScoreOnly: checked })
                 }
               />
-              <Label className="text-sm">{t("arrScan.settingsDialog.highScoreOnlyLabel")}</Label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {t("arrScan.settingsDialog.highScoreOnlyHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <Label className="text-sm flex items-center gap-1">
+                {t("arrScan.settingsDialog.highScoreOnlyLabel")}
+                <FieldHelp>{t("arrScan.settingsDialog.highScoreOnlyHelp")}</FieldHelp>
+              </Label>
             </div>
           </div>
           <div className="space-y-2">
@@ -313,17 +309,14 @@ function SettingsDialog({
                     updateSettings.mutate({ enableEpisode: checked })
                   }
                 />
-                <Label className="text-sm">{t("arrScan.settingsDialog.individualEpisodesLabel")}</Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
+                <Label className="text-sm flex items-center gap-1">
+                  {t("arrScan.settingsDialog.individualEpisodesLabel")}
+                  <FieldHelp>
                     {settings?.enableSeasonPackUpgrade
                       ? t("arrScan.settingsDialog.individualEpisodesDisabledHelp")
                       : t("arrScan.settingsDialog.individualEpisodesHelp")}
-                  </TooltipContent>
-                </Tooltip>
+                  </FieldHelp>
+                </Label>
               </div>
             </div>
           </div>
@@ -336,15 +329,10 @@ function SettingsDialog({
                   updateSettings.mutate({ enableSeasonPackUpgrade: checked })
                 }
               />
-              <Label className="text-sm">{t("arrScan.settingsDialog.enableSeasonPackUpgradeLabel")}</Label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {t("arrScan.settingsDialog.seasonPackUpgradeHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <Label className="text-sm flex items-center gap-1">
+                {t("arrScan.settingsDialog.enableSeasonPackUpgradeLabel")}
+                <FieldHelp>{t("arrScan.settingsDialog.seasonPackUpgradeHelp")}</FieldHelp>
+              </Label>
             </div>
           </div>
         </div>
@@ -855,16 +843,9 @@ function AddConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.arrDockerPathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.arrDockerPathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.arrDockerPathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.arrDockerPath ?? ""}
@@ -874,16 +855,9 @@ function AddConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.hostDataPathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.hostDataPathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.hostDataPathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.hostDataPath ?? ""}
@@ -893,16 +867,9 @@ function AddConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.torrentSavePathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.torrentSavePathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.torrentSavePathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.torrentSavePath ?? ""}
@@ -928,28 +895,16 @@ function AddConfigDialog({
               checked={form.unmonitorAfterSeed ?? false}
               onCheckedChange={(checked) => setForm({ ...form, unmonitorAfterSeed: checked })}
             />
-            <Label>{t("arrScan.configDialog.unmonitorAfterSeedLabel")}</Label>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("arrScan.configDialog.unmonitorAfterSeedHelp")}
-              </TooltipContent>
-            </Tooltip>
+            <Label className="flex items-center gap-1">
+              {t("arrScan.configDialog.unmonitorAfterSeedLabel")}
+              <FieldHelp>{t("arrScan.configDialog.unmonitorAfterSeedHelp")}</FieldHelp>
+            </Label>
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.tagAfterSeedLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.tagAfterSeedHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.tagAfterSeedHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.tagAfterSeed ?? ""}
@@ -1077,16 +1032,9 @@ function EditConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.arrDockerPathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.arrDockerPathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.arrDockerPathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.arrDockerPath}
@@ -1096,16 +1044,9 @@ function EditConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.hostDataPathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.hostDataPathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.hostDataPathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.hostDataPath}
@@ -1115,16 +1056,9 @@ function EditConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.torrentSavePathLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.torrentSavePathHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.torrentSavePathHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.torrentSavePath}
@@ -1150,28 +1084,16 @@ function EditConfigDialog({
               checked={form.unmonitorAfterSeed}
               onCheckedChange={(checked) => setForm({ ...form, unmonitorAfterSeed: checked })}
             />
-            <Label>{t("arrScan.configDialog.unmonitorAfterSeedLabel")}</Label>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("arrScan.configDialog.unmonitorAfterSeedHelp")}
-              </TooltipContent>
-            </Tooltip>
+            <Label className="flex items-center gap-1">
+              {t("arrScan.configDialog.unmonitorAfterSeedLabel")}
+              <FieldHelp>{t("arrScan.configDialog.unmonitorAfterSeedHelp")}</FieldHelp>
+            </Label>
           </div>
 
           <div className="space-y-2">
-            <Label>
+            <Label className="flex items-center gap-1">
               {t("arrScan.configDialog.tagAfterSeedLabel")}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("arrScan.configDialog.tagAfterSeedHelp")}
-                </TooltipContent>
-              </Tooltip>
+              <FieldHelp>{t("arrScan.configDialog.tagAfterSeedHelp")}</FieldHelp>
             </Label>
             <Input
               value={form.tagAfterSeed}
