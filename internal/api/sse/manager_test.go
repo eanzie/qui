@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,11 +17,13 @@ import (
 	"testing"
 	"time"
 
+	qbt "github.com/autobrr/go-qbittorrent"
 	"github.com/stretchr/testify/require"
 	"github.com/tmaxmax/go-sse"
 
 	"github.com/autobrr/qui/internal/database"
 	"github.com/autobrr/qui/internal/models"
+	"github.com/autobrr/qui/internal/qbittorrent"
 )
 
 func TestStreamManagerHandleSyncErrorPublishesErrorEvent(t *testing.T) {
@@ -55,6 +58,257 @@ func TestStreamManagerHandleSyncErrorPublishesErrorEvent(t *testing.T) {
 	require.Equal(t, sub.options.InstanceID, payload.Meta.InstanceID)
 	require.Positive(t, payload.Meta.RetryInSeconds, "expected retry interval to be populated")
 	require.Contains(t, payload.Err, "sync failed")
+}
+
+func TestStreamManagerHandleSyncErrorPreservesHealthBlockerStatus(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	sub := &subscriptionState{
+		id:      "subscription-blocked",
+		options: StreamOptions{InstanceID: 42},
+		created: time.Now(),
+	}
+
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	manager.HandleSyncError(sub.options.InstanceID, &qbittorrent.InstanceHealthBlockerError{
+		Kind:       qbittorrent.InstanceHealthBlockerHealthCheckInProgress,
+		InstanceID: sub.options.InstanceID,
+	})
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "expected a single broadcast message")
+
+	payload := decodeStreamPayload(t, provider.messagesFor(sub.id)[0])
+	require.Equal(t, streamEventError, payload.Type)
+	require.Positive(t, payload.Meta.RetryInSeconds, "expected retry interval to be populated")
+	require.Contains(t, payload.Err, "paused")
+	require.Contains(t, payload.Err, "already running a health check")
+	require.Contains(t, payload.Err, "retry shortly")
+	require.NotContains(t, payload.Err, "Sync with qBittorrent failed")
+}
+
+func TestStreamManagerHandleSyncErrorPreservesBackoffStatus(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	sub := &subscriptionState{
+		id:      "subscription-backoff",
+		options: StreamOptions{InstanceID: 42},
+		created: time.Now(),
+	}
+
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	manager.HandleSyncError(sub.options.InstanceID, fmt.Errorf("failed to get client: %w", &qbittorrent.InstanceHealthBlockerError{
+		Kind:       qbittorrent.InstanceHealthBlockerBackoff,
+		InstanceID: sub.options.InstanceID,
+		RetryAfter: 12 * time.Second,
+	}))
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "expected a single broadcast message")
+
+	payload := decodeStreamPayload(t, provider.messagesFor(sub.id)[0])
+	require.Equal(t, streamEventError, payload.Type)
+	require.Equal(t, 12, payload.Meta.RetryInSeconds, "retry hint must tick on the blocker's clock, not the sync loop's")
+	require.Contains(t, payload.Err, "paused")
+	require.Contains(t, payload.Err, "health-check backoff")
+	require.Contains(t, payload.Err, "retrying in 12s")
+	require.NotContains(t, payload.Err, "Sync with qBittorrent failed")
+}
+
+func TestStreamManagerHandleSyncErrorMapsAuthFailure(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	sub := &subscriptionState{
+		id:      "subscription-auth",
+		options: StreamOptions{InstanceID: 42},
+		created: time.Now(),
+	}
+
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	manager.HandleSyncError(sub.options.InstanceID, qbt.ErrBadCredentials)
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "expected a single broadcast message")
+
+	payload := decodeStreamPayload(t, provider.messagesFor(sub.id)[0])
+	require.Equal(t, streamEventError, payload.Type)
+	require.Contains(t, payload.Err, "paused")
+	require.Contains(t, payload.Err, "2FA")
+	require.Contains(t, payload.Err, "unattended")
+	require.Contains(t, payload.Err, "Update the instance login details")
+	require.NotContains(t, payload.Err, "Sync with qBittorrent failed")
+}
+
+func TestBlockerRetrySecondsFloorsSubSecondBackoff(t *testing.T) {
+	seconds, ok := blockerRetrySeconds(fmt.Errorf("failed to get client: %w", &qbittorrent.InstanceHealthBlockerError{
+		Kind:       qbittorrent.InstanceHealthBlockerBackoff,
+		InstanceID: 1,
+		RetryAfter: 300 * time.Millisecond,
+	}))
+	require.True(t, ok)
+	require.Equal(t, 1, seconds, "sub-second backoff must not round to 0 (omitempty would drop the hint)")
+
+	_, ok = blockerRetrySeconds(errors.New("plain failure"))
+	require.False(t, ok)
+}
+
+func TestSyncErrorMessageRetryHints(t *testing.T) {
+	blocker := &qbittorrent.InstanceHealthBlockerError{
+		Kind:       qbittorrent.InstanceHealthBlockerBackoff,
+		InstanceID: 42,
+		RetryAfter: 12 * time.Second,
+	}
+	blockerMessage := syncErrorMessage(blocker, 30)
+	require.Equal(t, "Sync with qBittorrent paused: qBittorrent instance 42 is in health-check backoff after a failed connection; retrying in 12s", blockerMessage)
+	require.NotContains(t, blockerMessage, "retrying in 12s; retrying in 30s")
+
+	authMessage := syncErrorMessage(qbt.ErrBadCredentials, 30)
+	require.Contains(t, authMessage, "Sync with qBittorrent paused:")
+	require.Contains(t, authMessage, "retrying in 30s")
+
+	fallbackMessage := syncErrorMessage(errors.New("temporary sync failure"), 30)
+	require.Equal(t, "Sync with qBittorrent failed (temporary sync failure); retrying in 30s", fallbackMessage)
+}
+
+func TestStreamManagerHandleSyncErrorStampsLastSuccessfulSync(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	// Source the last good sync from a fixed point well in the past so the test can
+	// prove the error meta reports when data was last fresh, not when the failure
+	// happened. That distinction is the whole point of issue #2052's staleness badge.
+	lastGood := time.Now().Add(-90 * time.Second)
+	manager.lastSuccessfulSyncFn = func(_ context.Context, _ int) time.Time {
+		return lastGood
+	}
+
+	sub := &subscriptionState{
+		id:      "subscription-stale",
+		options: StreamOptions{InstanceID: 42},
+		created: time.Now(),
+	}
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	manager.HandleSyncError(sub.options.InstanceID, errors.New("sync failed"))
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "expected a single broadcast message")
+
+	payload := decodeStreamPayload(t, provider.messagesFor(sub.id)[0])
+	require.Equal(t, streamEventError, payload.Type)
+	require.NotNil(t, payload.Meta.LastSuccessfulSync, "error meta must carry the last successful sync time")
+	require.WithinDuration(t, lastGood, *payload.Meta.LastSuccessfulSync, time.Second)
+	// It must reflect the last good sync, not "now" when the failure fired, otherwise
+	// the staleness badge would reset on every failed attempt.
+	require.True(t, payload.Meta.LastSuccessfulSync.Before(time.Now().Add(-30*time.Second)),
+		"last successful sync must not advance on a failed attempt")
+}
+
+func TestStreamManagerHandleSyncErrorResolvesStampOffCallbackGoroutine(t *testing.T) {
+	// The staleness stamp is resolved on a fresh goroutine so this callback's fan-out
+	// does not hold up the qBittorrent sync loop.
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	stampStarted := make(chan struct{})
+	releaseStamp := make(chan struct{})
+	manager.lastSuccessfulSyncFn = func(_ context.Context, _ int) time.Time {
+		close(stampStarted)
+		<-releaseStamp
+		return time.Time{}
+	}
+
+	sub := &subscriptionState{
+		id:      "subscription-async-stamp",
+		options: StreamOptions{InstanceID: 42},
+		created: time.Now(),
+	}
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	returned := make(chan struct{})
+	go func() {
+		manager.HandleSyncError(sub.options.InstanceID, errors.New("sync failed"))
+		close(returned)
+	}()
+
+	// The stamp must run on a separate goroutine...
+	select {
+	case <-stampStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("lastSuccessfulSyncFn was never invoked")
+	}
+
+	// ...and HandleSyncError must have already returned to the (lock-holding) sync
+	// loop even though the stamp is still in flight. If the stamp were resolved
+	// synchronously, HandleSyncError would block here on releaseStamp.
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleSyncError blocked on the staleness stamp; it must resolve it off the sync-loop callback goroutine")
+	}
+
+	close(releaseStamp)
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "error frame should still be published once the stamp resolves")
+}
+
+func TestStreamManagerHandleSyncErrorOmitsLastSuccessfulSyncWhenUnknown(t *testing.T) {
+	// A nil client pool means the default source cannot resolve a sync time, so the
+	// field must be omitted rather than serialized as the time.Time zero value.
+	manager := NewStreamManager(nil, nil, nil)
+	provider := newRecordingProvider()
+	manager.server.Provider = provider
+
+	sub := &subscriptionState{
+		id:      "subscription-unknown",
+		options: StreamOptions{InstanceID: 7},
+		created: time.Now(),
+	}
+	manager.subscriptions[sub.id] = sub
+	manager.instanceIndex[sub.options.InstanceID] = map[string]*subscriptionState{
+		sub.id: sub,
+	}
+
+	manager.HandleSyncError(sub.options.InstanceID, errors.New("boom"))
+
+	require.Eventually(t, func() bool {
+		return len(provider.messagesFor(sub.id)) == 1
+	}, time.Second, 5*time.Millisecond, "expected a single broadcast message")
+
+	payload := decodeStreamPayload(t, provider.messagesFor(sub.id)[0])
+	require.Nil(t, payload.Meta.LastSuccessfulSync, "no resolvable client means the field must be omitted")
 }
 
 func TestStreamManagerHandleSyncErrorWithoutSubscribers(t *testing.T) {
@@ -327,15 +581,117 @@ func TestMarkSyncSuccess_ResetsBackoff(t *testing.T) {
 	require.Equal(t, defaultSyncInterval, state.interval, "interval should be reset to default")
 }
 
-func TestMarkSyncSuccess_NoOpWithoutPriorState(t *testing.T) {
+func TestMarkSyncSuccess_PrimesWithoutPriorState(t *testing.T) {
 	manager := NewStreamManager(nil, nil, nil)
 
-	// Calling success without prior failure should be a no-op
+	// First success without a prior failure should create a primed entry so the
+	// next sync uses the incremental budget.
 	manager.markSyncSuccess(99)
 
-	// Backoff state should not exist for this instance
-	_, exists := manager.syncBackoff[99]
-	require.False(t, exists, "backoff state should not be created by markSyncSuccess")
+	state, exists := manager.syncBackoff[99]
+	require.True(t, exists, "first success should create a primed backoff entry")
+	require.True(t, state.primed, "first success should prime the instance")
+	require.Equal(t, 0, state.attempt)
+}
+
+func TestStreamManager_syncTimeout(t *testing.T) {
+	tests := []struct {
+		name  string
+		state *backoffState
+		want  time.Duration
+	}{
+		{name: "no_state_uses_full", state: nil, want: syncTimeoutFull},
+		{name: "unprimed_attempt0_uses_full", state: &backoffState{primed: false, attempt: 0}, want: syncTimeoutFull},
+		{name: "unprimed_with_attempts_uses_full", state: &backoffState{primed: false, attempt: 2}, want: syncTimeoutFull},
+		{name: "failure_streak_uses_full", state: &backoffState{primed: true, attempt: 1}, want: syncTimeoutFull},
+		{name: "deep_failure_streak_uses_full", state: &backoffState{primed: true, attempt: 4}, want: syncTimeoutFull},
+		{name: "primed_healthy_uses_incremental", state: &backoffState{primed: true, attempt: 0}, want: syncTimeoutIncremental},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := NewStreamManager(nil, nil, nil)
+			if tt.state != nil {
+				manager.syncBackoff[1] = tt.state
+			}
+			require.Equal(t, tt.want, manager.syncTimeout(1))
+		})
+	}
+}
+
+func TestStreamManager_syncTimeout_concurrent(t *testing.T) {
+	// syncTimeout reads backoffState fields that markSyncSuccess/markSyncFailure
+	// mutate under m.mu. This must stay race-free; run under `go test -race`.
+	manager := NewStreamManager(nil, nil, nil)
+
+	const goroutines = 8
+	const iterations = 500
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 3)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				_ = manager.syncTimeout(1)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				manager.markSyncFailure(1)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				manager.markSyncSuccess(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// State stays readable and yields a valid budget after concurrent access.
+	require.Contains(t, []time.Duration{syncTimeoutIncremental, syncTimeoutFull}, manager.syncTimeout(1))
+}
+
+func TestStreamManager_markSyncSuccess_primes(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+
+	manager.markSyncSuccess(1)
+
+	require.True(t, manager.syncBackoff[1].primed, "first success should prime the instance")
+	require.Equal(t, syncTimeoutIncremental, manager.syncTimeout(1), "primed healthy instance uses incremental budget")
+}
+
+func TestStreamManager_failureAfterPrimeKeepsFull_thenRecovers(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+
+	manager.markSyncSuccess(1)
+	require.Equal(t, syncTimeoutIncremental, manager.syncTimeout(1))
+
+	manager.markSyncFailure(1)
+	require.Positive(t, manager.syncBackoff[1].attempt, "failure should advance attempt")
+	require.True(t, manager.syncBackoff[1].primed, "failure must not clear primed")
+	require.Equal(t, syncTimeoutFull, manager.syncTimeout(1), "failure streak uses full budget")
+
+	manager.markSyncSuccess(1)
+	require.Equal(t, 0, manager.syncBackoff[1].attempt, "recovery resets attempt")
+	require.True(t, manager.syncBackoff[1].primed)
+	require.Equal(t, syncTimeoutIncremental, manager.syncTimeout(1), "recovered instance returns to incremental budget")
+}
+
+func TestStreamManager_unprimedFirstSyncUsesFull(t *testing.T) {
+	manager := NewStreamManager(nil, nil, nil)
+
+	// Failure before the first success creates an unprimed entry (the wedge condition).
+	manager.markSyncFailure(1)
+	require.Equal(t, syncTimeoutFull, manager.syncTimeout(1), "unprimed instance uses full budget")
+
+	manager.markSyncSuccess(1)
+	require.Equal(t, syncTimeoutIncremental, manager.syncTimeout(1), "first success drops to incremental budget")
 }
 
 func TestBackoffState_IndependentPerInstance(t *testing.T) {
@@ -490,7 +846,6 @@ func TestStreamManager_ProcessGroupCoalescing(t *testing.T) {
 	// First enqueue sets hasPending and sends
 	group.mu.Lock()
 	group.pendingMeta = &StreamMeta{InstanceID: 1, Timestamp: time.Now()}
-	group.pendingType = streamEventUpdate
 	group.hasPending = true
 	group.sending = true // Simulate that processGroup is already running
 	group.mu.Unlock()
@@ -499,7 +854,6 @@ func TestStreamManager_ProcessGroupCoalescing(t *testing.T) {
 	newMeta := &StreamMeta{InstanceID: 1, Timestamp: time.Now().Add(time.Second)}
 	group.mu.Lock()
 	group.pendingMeta = newMeta
-	group.pendingType = streamEventUpdate
 	group.hasPending = true
 	// sending stays true - no new goroutine needed
 	group.mu.Unlock()
@@ -508,7 +862,6 @@ func TestStreamManager_ProcessGroupCoalescing(t *testing.T) {
 	finalMeta := &StreamMeta{InstanceID: 1, Timestamp: time.Now().Add(2 * time.Second)}
 	group.mu.Lock()
 	group.pendingMeta = finalMeta
-	group.pendingType = streamEventUpdate
 	group.hasPending = true
 	group.mu.Unlock()
 
@@ -667,6 +1020,30 @@ func TestHandleSyncError_NilError(t *testing.T) {
 
 	messages := provider.allMessages()
 	require.Empty(t, messages, "nil error should not produce any messages")
+}
+
+func TestIsContextStopped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "canceled sentinel", err: context.Canceled, want: true},
+		{name: "deadline sentinel", err: context.DeadlineExceeded, want: true},
+		{name: "wrapped canceled text", err: errors.New("All attempts fail: context canceled"), want: true},
+		{name: "wrapped deadline text", err: errors.New("All attempts fail: context deadline exceeded"), want: true},
+		{name: "real error", err: errors.New("connection refused"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, isContextStopped(tt.err))
+		})
+	}
 }
 
 func TestParseStreamRequests_EmptyStreamsParam(t *testing.T) {

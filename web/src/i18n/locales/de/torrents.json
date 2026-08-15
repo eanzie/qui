@@ -128,6 +128,12 @@
     "deleteCrossSeeds": "Diese Cross-Seeds werden ebenfalls gelöscht",
     "deletingFilesBreaks": "Das Löschen von Dateien zerstört diese Cross-Seeds",
     "dataPreserved": "Cross-Seeds erkannt: Daten bleiben erhalten",
+    "hardlinkedCopies": "Diese Cross-Seeds sind Hardlink-Kopien derselben Daten",
+    "spaceNotFreed": "- das Löschen der Dateien gibt keinen Speicherplatz frei, solange andere Hardlinks bestehen",
+    "mixedHardlinkNote": "Als Hardlink markierte Kopien halten die Daten auch nach dem Löschen der Dateien auf der Festplatte",
+    "linkedCopies": "Diese Cross-Seeds sind unabhängig nutzbare verknüpfte Kopien",
+    "sharedBlocksMayRemain": "- verknüpfte Kopien bleiben nutzbar; gemeinsam genutzte Blöcke können belegt bleiben",
+    "mixedLinkedNote": "Als Hardlink oder Reflink markierte Kopien bleiben nach dem Löschen der Quelldateien nutzbar",
     "torrentShares": "{{count}} Torrent teilt sich diese Dateien",
     "torrentsShare": "{{count}} Torrents teilen sich diese Dateien",
     "acrossInstances": "über {{count}} Instanzen",
@@ -486,6 +492,12 @@
   },
   "creationTasks": {
     "dialogTitle": "Aufgaben zur Torrent-Erstellung",
+    "statusLabels": {
+      "Queued": "In Warteschlange",
+      "Running": "Läuft",
+      "Finished": "Abgeschlossen",
+      "Failed": "Fehlgeschlagen"
+    },
     "loadingTasks": "Aufgaben werden geladen...",
     "noTasks": "Keine Aufgaben zur Torrent-Erstellung gefunden",
     "tableHeaders": {
@@ -519,11 +531,14 @@
     "renameFolder": "Ordner umbenennen",
     "download": "Herunterladen",
     "mediaInfo": "MediaInfo",
-    "rename": "Umbenennen",
     "toggle": "Umschalten",
     "selectFileForDownload": "Datei zum Herunterladen auswählen",
     "skipFileDownload": "Datei beim Download überspringen",
-    "selectAllFilesIn": "Alle Dateien in {{name}} auswählen"
+    "selectAllFilesIn": "Alle Dateien in {{name}} auswählen",
+    "copyPath": "Pfad kopieren",
+    "filePathCopied": "Dateipfad in die Zwischenablage kopiert",
+    "folderPathCopied": "Ordnerpfad in die Zwischenablage kopiert",
+    "copyPathFailed": "Pfad konnte nicht in die Zwischenablage kopiert werden"
   },
   "mediaInfoDialog": {
     "title": "MediaInfo",
@@ -669,6 +684,9 @@
     "cached": "Zwischengespeichert {{time}}",
     "expires": "Läuft ab {{time}}",
     "refreshFromIndexers": "Von Indexern aktualisieren",
+    "partialResults": "Teilergebnisse – einige Indexer haben nicht geantwortet",
+    "arrLookupFailed": "Metadaten-ID-Abfrage fehlgeschlagen – nur Titelsuche, Ergebnisse können unvollständig sein",
+    "arrNoIds": "Keine Metadaten-IDs für dieses Release gefunden – nur Titelsuche",
     "searchScope": "Suchbereich",
     "noIndexers": "Keine Torznab-Indexer verfügbar",
     "noIndexersHelp": "Füge in den Einstellungen Torznab-Indexer hinzu oder aktiviere sie, um nach Cross-Seeds zu suchen.",
@@ -791,6 +809,32 @@
     }
   },
   "filterSidebar": {
+    "views": {
+      "title": "Ansichten",
+      "empty": "Noch keine gespeicherten Ansichten. Wähle Filter aus und speichere sie hier.",
+      "saveCurrent": "Aktuelle Filter speichern",
+      "actions": "Ansichtsaktionen",
+      "updateFilters": "Filter aktualisieren",
+      "rename": "Umbenennen",
+      "delete": "Löschen",
+      "undo": "Rückgängig",
+      "cancel": "Abbrechen",
+      "save": "Speichern",
+      "saveTitle": "Ansicht speichern",
+      "saveDescription": "Speichert die aktuelle Filterauswahl als benannte Ansicht. Suche, Sortierung und Spaltenfilter sind nicht enthalten.",
+      "renameTitle": "Ansicht umbenennen",
+      "renameDescription": "Gib dieser gespeicherten Ansicht einen neuen Namen.",
+      "nameLabel": "Name",
+      "namePlaceholder": "z. B. Hängende Seeds",
+      "deleteTitle": "Ansicht löschen",
+      "deleteDescription": "„{{name}}“ löschen? Das kann nicht rückgängig gemacht werden.",
+      "toasts": {
+        "createFailed": "Ansicht konnte nicht gespeichert werden",
+        "updateFailed": "Ansicht konnte nicht aktualisiert werden",
+        "deleteFailed": "Ansicht konnte nicht gelöscht werden",
+        "updated": "„{{name}}“ aktualisiert"
+      }
+    },
     "title": "Filter",
     "clearAll": "Alle löschen",
     "loading": "Wird geladen...",
@@ -924,7 +968,13 @@
         "label": "Stream offline, Abruf wird verwendet",
         "message": "Wechsel zur regelmäßigen Aktualisierung, während der Stream nicht verfügbar ist.",
         "serverRetry": "Server-Wiederholung in {{seconds}} s, Abruf-Fallback aktiv",
-        "retrying": "Automatische Wiederholung mit Abruf-Fallback"
+        "retrying": "Automatische Wiederholung mit Abruf-Fallback",
+        "degraded": {
+          "label": "Live-Aktualisierungen pausiert",
+          "message": "Die letzten Ergebnisse werden angezeigt, während die Verbindung wiederhergestellt wird.",
+          "dataAge": "Letzte Aktualisierung {{age}}",
+          "dataAgeRetry": "Letzte Aktualisierung {{age}} • Wiederholung in {{seconds}} s"
+        }
       },
       "connecting": {
         "label": "Verbindung zum Stream wird hergestellt…",
@@ -1176,6 +1226,14 @@
       "urlCopied": "URL in die Zwischenablage kopiert"
     }
   },
+  "filePriority": {
+    "header": "Priorität",
+    "doNotDownload": "Nicht herunterladen",
+    "normal": "Normal",
+    "high": "Hoch",
+    "maximum": "Maximal",
+    "mixed": "Gemischt"
+  },
   "fileTable": {
     "expandAll": "Alle ausklappen",
     "collapseAll": "Alle einklappen",
@@ -1191,7 +1249,11 @@
     "download": "Herunterladen",
     "mediaInfo": "MediaInfo",
     "renameFile": "Datei umbenennen",
-    "renameFolder": "Ordner umbenennen"
+    "renameFolder": "Ordner umbenennen",
+    "copyPath": "Pfad kopieren",
+    "filePathCopied": "Dateipfad in die Zwischenablage kopiert",
+    "folderPathCopied": "Ordnerpfad in die Zwischenablage kopiert",
+    "copyPathFailed": "Pfad konnte nicht in die Zwischenablage kopiert werden"
   },
   "crossSeedTable": {
     "name": "Name",
@@ -1226,6 +1288,14 @@
       "release": {
         "label": "Release",
         "description": "Gleiches Release (über Metadaten abgeglichen)"
+      },
+      "hardlink": {
+        "label": "Hardlink",
+        "description": "Dateien sind Hardlinks derselben Daten auf der Festplatte"
+      },
+      "reflink": {
+        "label": "Reflink",
+        "description": "Dateien teilen derzeit mindestens einen ReFS-Extent; durch Copy-on-Write kann nur ein Teil gemeinsam bleiben"
       }
     },
     "noMatches": "Keine passenden Torrents auf anderen Instanzen gefunden",

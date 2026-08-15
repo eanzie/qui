@@ -266,7 +266,6 @@
         "discord": "discord://token@id"
       },
       "enabled": "已启用",
-      "enabledDescription": "切换此目标的投递状态。",
       "events": "事件",
       "selectAll": "全选",
       "select": "选择",
@@ -405,6 +404,13 @@
       "jsonCopied": "JSON 日志条目已复制",
       "rawCopied": "原始日志条目已复制",
       "copyFailed": "复制日志条目失败"
+    },
+    "files": {
+      "title": "日志文件",
+      "downloadSrOnly": "下载 {{filename}}",
+      "toasts": {
+        "downloadFailed": "下载 {{filename}} 失败"
+      }
     }
   },
   "themes": {
@@ -444,7 +450,7 @@
       },
       "status": {
         "unlockTitle": "解锁高级主题",
-        "unlockDescription": "随心付费（最低 $4.99）· 终身许可证 · 所有主题",
+        "unlockDescription": "随心付费（最低 $9.99）· 终身许可证 · 所有主题",
         "activeTitle": "高级访问已激活",
         "activeDescription": "您可以访问所有当前和未来的高级主题",
         "activationRequiredTitle": "需要激活许可证",
@@ -508,7 +514,7 @@
       },
       "paymentDialog": {
         "title": "获取高级许可证",
-        "description": "随心付费（最低 $4.99）· 终身许可证 · 所有主题",
+        "description": "随心付费（最低 $9.99）· 终身许可证 · 所有主题",
         "steps": {
           "choosePaymentMethod": {
             "title": "选择支付方式",
@@ -550,6 +556,19 @@
         "refreshedAll": "所有许可证刷新成功",
         "refreshFailed": "刷新许可证失败"
       }
+    },
+    "custom": {
+      "badge": "自定义",
+      "title": "自定义主题",
+      "lockedTitle": "自定义主题是高级功能",
+      "lockedDescription": "解锁高级版即可从磁盘目录加载你自己的主题 CSS 文件。",
+      "unlockCta": "解锁高级版",
+      "directoryLabel": "主题目录",
+      "refresh": "刷新",
+      "detectedCount": "找到的主题：{{total}}",
+      "parseErrorsTitle": "无法解析以下文件：",
+      "noneFound": "未找到自定义主题。请将 .css 文件放入主题目录，然后点击刷新。",
+      "loadError": "无法加载自定义主题。请检查服务器日志和主题目录权限。"
     }
   },
   "arrInstances": {
@@ -672,6 +691,27 @@
       "capsSynced": "已从后端同步功能信息",
       "failedToSyncCaps": "同步功能信息失败"
     },
+    "priorityLabels": {
+      "interactive": "交互式",
+      "rss": "RSS",
+      "completion": "补全",
+      "background": "后台"
+    },
+    "contentTypeLabels": {
+      "movie": "电影",
+      "tv": "剧集",
+      "tv_daily": "每日剧集",
+      "xxx": "成人",
+      "music": "音乐",
+      "audiobook": "有声书",
+      "book": "书籍",
+      "comic": "漫画",
+      "magazine": "杂志",
+      "education": "教育",
+      "app": "应用",
+      "game": "游戏",
+      "unknown": "未知"
+    },
     "page": {
       "summary": "{{enabled}} 个已启用，{{capabilities}} 个有功能信息",
       "description": "管理由 Jackett、Prowlarr 或原生 Tracker 端点驱动的 Torznab 索引器",
@@ -790,6 +830,13 @@
         "created": "{{count}} 个已创建",
         "updated": "{{count}} 个已更新",
         "failed": "{{count}} 个失败"
+      },
+      "savedConnections": {
+        "title": "已保存的连接",
+        "description": "使用您之前导入过的服务器。API 密钥保存在服务器上。",
+        "manual": "手动输入",
+        "storedKey": "将使用该服务器已保存的 API 密钥。",
+        "indexerCount_other": "{{count}} 个索引器"
       }
     },
     "table": {

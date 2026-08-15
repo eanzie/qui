@@ -138,6 +138,73 @@ type discPolicyInstanceStore struct {
 	instances map[int]*models.Instance
 }
 
+func TestTitleRescueForcesPausedFullRecheck(t *testing.T) {
+	t.Parallel()
+
+	const (
+		instanceID  = 1
+		matchedHash = "matchedhash"
+		newHash     = "newhash"
+		matchedName = "Original.Show.S01E01.1080p.WEB-DL.H.264-GROUP"
+		newName     = "Renamed.Show.S01E01.1080p.WEB-DL.H.264-GROUP"
+	)
+	candidateFiles := qbt.TorrentFiles{{Name: matchedName + "/old-name.mkv", Size: 1_000_000_000}}
+	sourceFiles := qbt.TorrentFiles{{Name: newName + "/new-name.mkv", Size: 1_000_000_000}}
+	matchedTorrent := qbt.Torrent{
+		Hash:        matchedHash,
+		Name:        matchedName,
+		ContentPath: "/downloads/" + matchedName,
+		Progress:    1,
+		Size:        1_000_000_000,
+	}
+	mockSync := &discPolicySyncManager{
+		files: map[string]qbt.TorrentFiles{matchedHash: candidateFiles},
+		props: map[string]*qbt.TorrentProperties{
+			matchedHash: {SavePath: "/downloads"},
+		},
+		matchedTorrent: &matchedTorrent,
+	}
+	service := &Service{
+		syncManager:       mockSync,
+		instanceStore:     &discPolicyInstanceStore{instances: map[int]*models.Instance{instanceID: {ID: instanceID}}},
+		stringNormalizer:  stringutils.NewDefaultNormalizer(),
+		releaseCache:      NewReleaseCache(),
+		recheckResumeChan: make(chan *pendingResume, 1),
+		recheckResumeCtx:  context.Background(),
+		automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
+			return models.DefaultCrossSeedAutomationSettings(), nil
+		},
+	}
+	startPaused := false
+	result := service.processCrossSeedCandidate(
+		context.Background(),
+		CrossSeedCandidate{
+			InstanceID: instanceID, InstanceName: "main", Torrents: []qbt.Torrent{matchedTorrent}, titleRescue: true,
+		},
+		[]byte("torrent"),
+		newHash,
+		"",
+		newName,
+		&CrossSeedRequest{StartPaused: &startPaused},
+		service.releaseCache.Parse(newName),
+		sourceFiles,
+		nil,
+	)
+
+	require.True(t, result.Success, result.Message)
+	require.Equal(t, "true", mockSync.addedOptions["paused"])
+	require.Equal(t, "true", mockSync.addedOptions["stopped"])
+	require.Contains(t, mockSync.bulkActions, "recheck:"+newHash)
+	require.NotContains(t, mockSync.bulkActions, "resume:"+newHash)
+	select {
+	case pending := <-service.recheckResumeChan:
+		require.NotNil(t, pending.budgetBytes)
+		require.Zero(t, *pending.budgetBytes)
+	default:
+		require.Fail(t, "expected title rescue to wait for a full recheck")
+	}
+}
+
 func (m *discPolicyInstanceStore) Get(_ context.Context, id int) (*models.Instance, error) {
 	if inst, ok := m.instances[id]; ok {
 		return inst, nil
@@ -250,7 +317,9 @@ func TestDiscLayoutPolicy_ForcePausedEvenWhenStartPausedFalse(t *testing.T) {
 		require.NotNil(t, pending)
 		assert.Equal(t, instanceID, pending.instanceID)
 		assert.Equal(t, newHash, pending.hash)
-		assert.Equal(t, 1.0, pending.threshold)
+		if assert.NotNil(t, pending.budgetBytes) {
+			assert.Zero(t, *pending.budgetBytes, "full-recheck queue entries must carry a zero byte budget")
+		}
 	default:
 		require.Fail(t, "expected disc-layout torrent to be queued for recheck resume")
 	}
@@ -349,7 +418,9 @@ func TestDiscLayoutPolicy_ResumeOnlyAfterFullRecheck(t *testing.T) {
 		require.NotNil(t, pending)
 		assert.Equal(t, instanceID, pending.instanceID)
 		assert.Equal(t, newHash, pending.hash)
-		assert.Equal(t, 1.0, pending.threshold)
+		if assert.NotNil(t, pending.budgetBytes) {
+			assert.Zero(t, *pending.budgetBytes, "full-recheck queue entries must carry a zero byte budget")
+		}
 	default:
 		require.Fail(t, "expected disc-layout torrent to be queued for recheck resume")
 	}
@@ -509,7 +580,6 @@ func TestLinkModeFilesystemFallback_ResumeOnlyAfterFullRecheck(t *testing.T) {
 		recheckResumeCtx:  context.Background(),
 		automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
 			settings := models.DefaultCrossSeedAutomationSettings()
-			settings.SizeMismatchTolerancePercent = 5.0
 			return settings, nil
 		},
 	}
@@ -542,7 +612,9 @@ func TestLinkModeFilesystemFallback_ResumeOnlyAfterFullRecheck(t *testing.T) {
 		require.NotNil(t, pending)
 		assert.Equal(t, instanceID, pending.instanceID)
 		assert.Equal(t, newHash, pending.hash)
-		assert.InDelta(t, 1.0, pending.threshold, 0.001)
+		if assert.NotNil(t, pending.budgetBytes) {
+			assert.Zero(t, *pending.budgetBytes, "full-recheck queue entries must carry a zero byte budget")
+		}
 	default:
 		require.Fail(t, "expected filesystem fallback torrent to be queued for full recheck resume")
 	}
@@ -615,7 +687,6 @@ func TestLinkModeFilesystemFallback_DoesNotRecheckWhenAlignmentFails(t *testing.
 		recheckResumeCtx:  context.Background(),
 		automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
 			settings := models.DefaultCrossSeedAutomationSettings()
-			settings.SizeMismatchTolerancePercent = 5.0
 			return settings, nil
 		},
 	}

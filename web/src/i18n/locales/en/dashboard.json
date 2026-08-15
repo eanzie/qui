@@ -22,6 +22,8 @@
       "tracker": "Tracker Name",
       "uploaded": "Uploaded",
       "downloaded": "Downloaded",
+      "downloadedSession": "Downloaded (Session)",
+      "uploadedSession": "Uploaded (Session)",
       "ratio": "Ratio",
       "buffer": "Buffer",
       "count": "Torrents",
@@ -66,6 +68,11 @@
     "connectable": "Connectable",
     "portInfo": ". Port: {{port}}",
     "connectionStatus": "qBittorrent connection status: {{status}}",
+    "streamStatus": {
+      "cached": "Showing cached dashboard snapshot while refreshing",
+      "fallback": "Refreshing dashboard stats",
+      "error": "Stream issue; using fallback refresh"
+    },
     "altSpeedDialog": {
       "enableTitle": "Enable Alternative Speed Limits?",
       "disableTitle": "Disable Alternative Speed Limits?",
@@ -77,7 +84,6 @@
     }
   },
   "mobileOverview": {
-    "title": "Overview",
     "instances": "Instances",
     "connected": "Connected",
     "torrents": "Torrents",
@@ -103,6 +109,8 @@
       "instance": "Instance",
       "downloaded": "Downloaded",
       "uploaded": "Uploaded",
+      "downloadedSession": "Downloaded (Session)",
+      "uploadedSession": "Uploaded (Session)",
       "ratio": "Ratio",
       "peers": "Peers"
     }
@@ -117,6 +125,8 @@
       "tracker": "Tracker",
       "uploaded": "Uploaded",
       "downloaded": "Downloaded",
+      "downloadedSession": "Downloaded (Session)",
+      "uploadedSession": "Uploaded (Session)",
       "ratio": "Ratio",
       "torrents": "Torrents",
       "size": "Size",
@@ -126,6 +136,8 @@
       "tracker": "Tracker",
       "uploaded": "Uploaded",
       "downloaded": "Downloaded",
+      "downloadedSession": "Downloaded (Session)",
+      "uploadedSession": "Uploaded (Session)",
       "ratio": "Ratio",
       "buffer": "Buffer",
       "torrents": "Torrents",
@@ -139,6 +151,8 @@
     "mergeIntoGroup": "Merge into group",
     "addToMerge": "Add to merge",
     "rename": "Rename",
+    "edit": "Edit",
+    "delete": "Delete",
     "pagination": {
       "range": "{{start}}-{{end}} of {{total}} trackers",
       "previous": "Previous",

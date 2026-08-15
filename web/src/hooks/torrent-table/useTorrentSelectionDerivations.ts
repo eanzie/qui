@@ -4,11 +4,19 @@
  */
 
 import type { SelectionRow } from "@/hooks/torrent-table/useTorrentSelection"
-import { buildTorrentActionTargets } from "@/lib/torrent-action-targets"
+import { buildTorrentActionTargets, type TorrentActionTarget } from "@/lib/torrent-action-targets"
 import { getTotalSize } from "@/lib/torrent-utils"
 import { formatBytes } from "@/lib/utils"
 import type { Torrent, TorrentFilters } from "@/types"
 import { useMemo, useRef } from "react"
+
+// Stable results for the no-selection steady state. The memos below depend on
+// sortedTorrents, which is a fresh array on every stream tick; without these
+// constants an empty selection would still produce a new [] per tick and defeat
+// the referential stability that row/menu memoization relies on.
+const EMPTY_HASHES: string[] = []
+const EMPTY_TORRENTS: Torrent[] = []
+const EMPTY_TARGETS: TorrentActionTarget[] = []
 
 export interface UseTorrentSelectionDerivationsParams {
   isAllSelected: boolean
@@ -67,6 +75,9 @@ export function useTorrentSelectionDerivations({
         .filter(torrent => !excludedFromSelectAll.has(getSelectionIdentity(torrent)))
         .map(torrent => torrent.hash)
     } else {
+      if (selectedRowIdSet.size === 0) {
+        return EMPTY_HASHES
+      }
       // Regular selection mode - get hashes from selected torrents directly
       const tableRows = getVisibleRowsRef.current()
       return tableRows
@@ -92,6 +103,9 @@ export function useTorrentSelectionDerivations({
       // When all are selected, return all torrents minus exclusions
       return sortedTorrents.filter(t => !excludedFromSelectAll.has(getSelectionIdentity(t)))
     } else {
+      if (selectedRowIdSet.size === 0) {
+        return EMPTY_TORRENTS
+      }
       // Regular selection mode
       return getVisibleRowsRef.current()
         .filter(row => selectedRowIdSet.has(row.id))
@@ -185,7 +199,7 @@ export function useTorrentSelectionDerivations({
 
   const selectAllExcludedTargets = useMemo(() => {
     if (!isAllSelected || excludedFromSelectAll.size === 0) {
-      return []
+      return EMPTY_TARGETS
     }
     const excludedTorrents = sortedTorrents.filter(torrent => excludedFromSelectAll.has(getSelectionIdentity(torrent)))
     return buildTorrentActionTargets(excludedTorrents, instanceId)

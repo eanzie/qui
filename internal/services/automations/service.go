@@ -803,8 +803,8 @@ type PreviewTorrent struct {
 	LastActivity       int64    `json:"lastActivity"`                 // Last activity timestamp
 	CompletionOn       int64    `json:"completionOn"`                 // Completion timestamp
 	TotalSize          int64    `json:"totalSize"`                    // Total torrent size
-	HardlinkScope      string   `json:"hardlinkScope,omitempty"`      // none, torrents_only, outside_qbittorrent
-	HardlinkCrossScope string   `json:"hardlinkCrossScope,omitempty"` // cross-instance scope: none, torrents_only, outside_qbittorrent
+	HardlinkScope      string   `json:"hardlinkScope,omitempty"`      // none, torrents_only, outside_qbittorrent, both
+	HardlinkCrossScope string   `json:"hardlinkCrossScope,omitempty"` // cross-instance scope: none, torrents_only, outside_qbittorrent, both
 	Score              *float64 `json:"score,omitempty"`              // Sorting score
 }
 
@@ -834,7 +834,7 @@ func buildPreviewTorrent(torrent *qbt.Torrent, tracker string, evalCtx *EvalCont
 		Availability:   torrent.Availability,
 		TimeActive:     torrent.TimeActive,
 		LastActivity:   torrent.LastActivity,
-		CompletionOn:   torrent.CompletionOn,
+		CompletionOn:   qbittorrent.NormalizeCompletionTimestamp(torrent.CompletionOn),
 		TotalSize:      torrent.TotalSize,
 		Score:          score,
 	}
@@ -915,10 +915,11 @@ func (s *Service) setupPreviewCrossMatchContext(ctx context.Context, instanceID 
 	needs := CrossMatchNeeds{
 		SameExists:   ConditionUsesField(cond, FieldExistsOnSameInstance) || sortingConfigUsesField(rule.SortingConfig, FieldExistsOnSameInstance),
 		SameSeeding:  ConditionUsesField(cond, FieldSeedingOnSameInstance) || sortingConfigUsesField(rule.SortingConfig, FieldSeedingOnSameInstance),
+		SameTags:     ConditionUsesField(cond, FieldCrossSeedTags) || sortingConfigUsesField(rule.SortingConfig, FieldCrossSeedTags),
 		OtherExists:  ConditionUsesField(cond, FieldExistsOnOtherInstance) || sortingConfigUsesField(rule.SortingConfig, FieldExistsOnOtherInstance),
 		OtherSeeding: ConditionUsesField(cond, FieldSeedingOnOtherInstance) || sortingConfigUsesField(rule.SortingConfig, FieldSeedingOnOtherInstance),
 	}
-	if !needs.SameExists && !needs.SameSeeding && !needs.OtherExists && !needs.OtherSeeding {
+	if !needs.SameExists && !needs.SameSeeding && !needs.SameTags && !needs.OtherExists && !needs.OtherSeeding {
 		return
 	}
 
@@ -987,6 +988,7 @@ func (s *Service) PreviewDeleteRule(ctx context.Context, instanceID int, rule *m
 	if err != nil {
 		return nil, fmt.Errorf("failed to get torrents: %w", err)
 	}
+	torrents = s.hydrateTorrentTrackersForRule(ctx, instanceID, torrents, rule)
 
 	cfg := previewConfig{limit: limit, offset: offset}
 	cfg.normalize()
@@ -1026,22 +1028,12 @@ func (s *Service) setupDeleteHardlinkContext(ctx context.Context, instanceID int
 	if instance == nil || !instance.HasLocalFilesystemAccess {
 		return nil
 	}
-	if rule.Conditions == nil || rule.Conditions.Delete == nil {
-		return nil
-	}
-
-	cond := rule.Conditions.Delete.Condition
-	needsHardlinkScope := ConditionUsesField(cond, FieldHardlinkScope) ||
-		sortingConfigUsesField(rule.SortingConfig, FieldHardlinkScope) ||
-		rule.Conditions.Delete.IncludeHardlinks
-	needsCrossScope := ConditionUsesField(cond, FieldHardlinkScopeCross) ||
-		sortingConfigUsesField(rule.SortingConfig, FieldHardlinkScopeCross)
-	needsHardlinkSignatureGrouping := ruleUsesHardlinkSignatureGrouping(rule)
+	needsHardlinkScope, needsCrossScope, needsHardlinkSignatureGrouping := deleteHardlinkNeeds(rule)
 	if !needsHardlinkScope && !needsHardlinkSignatureGrouping && !needsCrossScope {
 		return nil
 	}
 
-	hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents, needsCrossScope)
+	hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents)
 	if hardlinkIndex != nil {
 		evalCtx.HardlinkScopeByHash = hardlinkIndex.ScopeByHash
 		if needsHardlinkSignatureGrouping {
@@ -1606,6 +1598,7 @@ func (s *Service) PreviewCategoryRule(ctx context.Context, instanceID int, rule 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get torrents: %w", err)
 	}
+	torrents = s.hydrateTorrentTrackersForRule(ctx, instanceID, torrents, rule)
 
 	crossSeedIndex := buildCrossSeedIndex(torrents)
 
@@ -1687,7 +1680,7 @@ func (s *Service) setupCategoryHardlinkContext(ctx context.Context, instanceID i
 		return
 	}
 
-	hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents, needsCrossScope)
+	hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents)
 	if hardlinkIndex != nil {
 		evalCtx.HardlinkScopeByHash = hardlinkIndex.ScopeByHash
 		if needsHardlinkSignatureGrouping {
@@ -1902,6 +1895,64 @@ func (s *Service) buildCategoryPreviewResult(
 	return result
 }
 
+// deleteHardlinkNeeds reports which hardlink data a rule's delete needs: the
+// single-instance scope, the cross-instance scope, and the signature groups. A rule that
+// sorts or groups by that data picks its delete batch from the index just as surely as
+// one that conditions on it.
+//
+// Both the code that loads the data and the code that re-verifies the deletions must
+// agree on this answer, so they read it from here rather than each deciding again.
+func deleteHardlinkNeeds(rule *models.Automation) (scope, cross, grouping bool) {
+	if rule == nil || rule.Conditions == nil || rule.Conditions.Delete == nil {
+		return false, false, false
+	}
+	cond := rule.Conditions.Delete.Condition
+	scope = rule.Conditions.Delete.IncludeHardlinks ||
+		ConditionUsesField(cond, FieldHardlinkScope) ||
+		sortingConfigUsesField(rule.SortingConfig, FieldHardlinkScope)
+	cross = ConditionUsesField(cond, FieldHardlinkScopeCross) ||
+		sortingConfigUsesField(rule.SortingConfig, FieldHardlinkScopeCross)
+	return scope, cross, ruleUsesHardlinkSignatureGrouping(rule)
+}
+
+// deleteUsesHardlinkData reports whether a rule's delete decision rests on hardlink state.
+func deleteUsesHardlinkData(rule *models.Automation) bool {
+	scope, cross, grouping := deleteHardlinkNeeds(rule)
+	return scope || cross || grouping
+}
+
+// blockedDeleteCandidates returns the queued deletions that must not run because their
+// hardlink state no longer matches what the rule decided on. Only candidates chosen with
+// hardlink data are re-read: a rule deleting on ratio or an unregistered tracker owes
+// nothing to the index, and holding those back on an unreadable file would be a new way
+// to fail.
+func (s *Service) blockedDeleteCandidates(
+	ctx context.Context,
+	instanceID int,
+	hardlinkIndex *HardlinkIndex,
+	torrentByHash map[string]qbt.Torrent,
+	deleteHashesByMode map[string][]string,
+	pendingByHash map[string]pendingDeletion,
+	ruleByID map[int]*models.Automation,
+) map[string]string {
+	if hardlinkIndex == nil {
+		return nil
+	}
+
+	var candidates []string
+	for _, hashes := range deleteHashesByMode {
+		for _, hash := range hashes {
+			pending, queued := pendingByHash[hash]
+			if !queued || !deleteUsesHardlinkData(ruleByID[pending.ruleID]) {
+				continue
+			}
+			candidates = append(candidates, hash)
+		}
+	}
+
+	return s.verifyDeleteCandidates(ctx, instanceID, hardlinkIndex, torrentByHash, candidates)
+}
+
 func (s *Service) applyForInstance(ctx context.Context, instanceID int, force bool) error {
 	rules, err := s.ruleStore.ListByInstance(ctx, instanceID)
 	if err != nil {
@@ -2028,6 +2079,10 @@ func (s *Service) applyRulesForInstance(ctx context.Context, instanceID int, for
 		return nil, nil
 	}
 
+	if rulesUseTrackerEntryData(eligibleRules) {
+		torrents = s.syncManager.HydrateTorrentTrackers(ctx, instanceID, torrents)
+	}
+
 	// Get instance for local filesystem access check
 	instance, err := s.instanceStore.Get(ctx, instanceID)
 	if err != nil {
@@ -2060,7 +2115,7 @@ func (s *Service) applyRulesForInstance(ctx context.Context, instanceID int, for
 	needsHardlinkSignatureGrouping := rulesUseHardlinkSignatureGrouping(eligibleRules)
 	needsHardlinkIndex := needsHardlinkScope || needsHardlinkSignatureGrouping || needsCrossScope
 	if instance.HasLocalFilesystemAccess && needsHardlinkIndex {
-		hardlinkIndex = s.GetHardlinkIndex(ctx, instanceID, torrents, needsCrossScope)
+		hardlinkIndex = s.GetHardlinkIndex(ctx, instanceID, torrents)
 		if hardlinkIndex != nil {
 			evalCtx.HardlinkScopeByHash = hardlinkIndex.ScopeByHash
 			if needsHardlinkSignatureGrouping {
@@ -2089,10 +2144,11 @@ func (s *Service) applyRulesForInstance(ctx context.Context, instanceID int, for
 	needs := CrossMatchNeeds{
 		SameExists:   rulesUseCondition(eligibleRules, FieldExistsOnSameInstance),
 		SameSeeding:  rulesUseCondition(eligibleRules, FieldSeedingOnSameInstance),
+		SameTags:     rulesUseCondition(eligibleRules, FieldCrossSeedTags),
 		OtherExists:  rulesUseCondition(eligibleRules, FieldExistsOnOtherInstance),
 		OtherSeeding: rulesUseCondition(eligibleRules, FieldSeedingOnOtherInstance),
 	}
-	if needs.SameExists || needs.SameSeeding || needs.OtherExists || needs.OtherSeeding {
+	if needs.SameExists || needs.SameSeeding || needs.SameTags || needs.OtherExists || needs.OtherSeeding {
 		s.applyCrossMatchResult(evalCtx, s.buildCrossMatchSets(ctx, instanceID, needs))
 	}
 
@@ -3838,6 +3894,34 @@ func (s *Service) applyRulesForInstance(ctx context.Context, instanceID int, for
 	// - stop_tracker_timeout setting (default 2s) controls how long to wait for tracker ack
 	//
 	// This behavior is identical for both BitTorrent v1 and v2 torrents.
+	//
+	// Candidates chosen with hardlink data are re-read off disk first. The index may be
+	// up to hardlinkIndexTTL behind for link changes no torrent reported, which is fine
+	// for tagging and not fine here.
+	if blocked := s.blockedDeleteCandidates(ctx, instanceID, hardlinkIndex, torrentByHash, deleteHashesByMode, pendingByHash, ruleByID); len(blocked) > 0 {
+		for mode, hashes := range deleteHashesByMode {
+			kept := hashes[:0]
+			for _, hash := range hashes {
+				reason, isBlocked := blocked[hash]
+				if !isBlocked {
+					kept = append(kept, hash)
+					continue
+				}
+
+				pending := pendingByHash[hash]
+				delete(pendingByHash, hash)
+				log.Warn().
+					Int("instanceID", instanceID).
+					Str("hash", hash).
+					Str("name", pending.torrentName).
+					Str("ruleName", pending.ruleName).
+					Str("reason", reason).
+					Msg("automations: skipped delete, hardlink state changed since the rule decided")
+			}
+			deleteHashesByMode[mode] = kept
+		}
+	}
+
 	for mode, hashes := range deleteHashesByMode {
 		if len(hashes) == 0 {
 			continue
@@ -4941,6 +5025,20 @@ func scoreRuleUsesField(rule models.ScoreRule, field ConditionField) bool {
 	return false
 }
 
+func rulesUseTrackerEntryData(rules []*models.Automation) bool {
+	return rulesUseCondition(rules, FieldTrackerStatus) || rulesUseCondition(rules, FieldTrackerMessage)
+}
+
+func (s *Service) hydrateTorrentTrackersForRule(ctx context.Context, instanceID int, torrents []qbt.Torrent, rule *models.Automation) []qbt.Torrent {
+	if s == nil || s.syncManager == nil || rule == nil {
+		return torrents
+	}
+	if !ruleUsesCondition(rule, FieldTrackerStatus) && !ruleUsesCondition(rule, FieldTrackerMessage) {
+		return torrents
+	}
+	return s.syncManager.HydrateTorrentTrackers(ctx, instanceID, torrents)
+}
+
 // rulesUseCondition checks if any enabled rule uses the given field.
 func rulesUseCondition(rules []*models.Automation, field ConditionField) bool {
 	for _, rule := range rules {
@@ -5000,6 +5098,9 @@ func (s *Service) applyCrossMatchResult(evalCtx *EvalContext, result *CrossMatch
 	}
 	if result.SameInstanceSeeding != nil {
 		evalCtx.SameInstanceCrossSeedSeedingHashSet = result.SameInstanceSeeding
+	}
+	if result.SameInstanceTagsByHash != nil {
+		evalCtx.SameInstanceCrossSeedTagsByHash = result.SameInstanceTagsByHash
 	}
 	if result.OtherInstanceExists != nil {
 		evalCtx.CrossInstanceHashSet = result.OtherInstanceExists
@@ -5241,7 +5342,7 @@ func (s *Service) recordDryRunActivities(
 					}
 				}
 				if needsHardlinkSignature || needsDryRunCrossScope {
-					hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents, needsDryRunCrossScope)
+					hardlinkIndex := s.GetHardlinkIndex(ctx, instanceID, torrents)
 					if hardlinkIndex != nil {
 						dryRunEvalCtx.HardlinkScopeByHash = hardlinkIndex.ScopeByHash
 						if needsHardlinkSignature {

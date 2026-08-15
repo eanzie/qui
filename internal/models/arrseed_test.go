@@ -47,16 +47,16 @@ func createTestConfig(t *testing.T, store *models.ArrSeedStore, arrInstanceID in
 	t.Helper()
 	ctx := context.Background()
 	cfg, err := store.CreateConfig(ctx, &models.ArrSeedInstanceConfig{
-		ArrInstanceID:       arrInstanceID,
-		Enabled:             enabled,
+		ArrInstanceID:        arrInstanceID,
+		Enabled:              enabled,
 		TargetQbitInstanceID: 0,
-		Category:            "tv",
-		ArrDockerPath:       "/data",
-		HostDataPath:        "/host/data",
-		TorrentSavePath:     "/torrents",
-		ScanIntervalMinutes: 30,
-		UnmonitorAfterSeed:  false,
-		TagAfterSeed:        "cross-seeded",
+		Category:             "tv",
+		ArrDockerPath:        "/data",
+		HostDataPath:         "/host/data",
+		TorrentSavePath:      "/torrents",
+		ScanIntervalMinutes:  30,
+		UnmonitorAfterSeed:   false,
+		TagAfterSeed:         "cross-seeded",
 	})
 	require.NoError(t, err)
 	return cfg
@@ -168,16 +168,16 @@ func TestArrSeedStore_CreateConfig_PersistsAllFields(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := store.CreateConfig(ctx, &models.ArrSeedInstanceConfig{
-		ArrInstanceID:       arrID,
-		Enabled:             true,
+		ArrInstanceID:        arrID,
+		Enabled:              true,
 		TargetQbitInstanceID: 0,
-		Category:            "movies",
-		ArrDockerPath:       "/docker/data",
-		HostDataPath:        "/host/data",
-		TorrentSavePath:     "/torrents/save",
-		ScanIntervalMinutes: 60,
-		UnmonitorAfterSeed:  true,
-		TagAfterSeed:        "seeded",
+		Category:             "movies",
+		ArrDockerPath:        "/docker/data",
+		HostDataPath:         "/host/data",
+		TorrentSavePath:      "/torrents/save",
+		ScanIntervalMinutes:  60,
+		UnmonitorAfterSeed:   true,
+		TagAfterSeed:         "seeded",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
@@ -449,7 +449,7 @@ func TestArrSeedStore_ListRuns_DefaultsLimitTo20(t *testing.T) {
 	ctx := context.Background()
 
 	// Create and complete 25 runs
-	for i := 0; i < 25; i++ {
+	for range 25 {
 		runID, err := store.CreateRunIfNoActive(ctx, cfg.ID, "auto")
 		require.NoError(t, err)
 		err = store.UpdateRunCompleted(ctx, runID, 1, 1, 0, 0)
@@ -469,7 +469,7 @@ func TestArrSeedStore_ListRuns_DescendingOrder(t *testing.T) {
 	ctx := context.Background()
 
 	var runIDs []int64
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		runID, err := store.CreateRunIfNoActive(ctx, cfg.ID, "auto")
 		require.NoError(t, err)
 		runIDs = append(runIDs, runID)
@@ -815,7 +815,7 @@ func TestArrSeedStore_ListItems_AllWithNilStatus(t *testing.T) {
 	cfg := createTestConfig(t, store, arrID, true)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		err := store.UpsertItem(ctx, &models.ArrSeedItem{
 			ConfigID:    cfg.ID,
 			ItemType:    "episode",
@@ -880,7 +880,7 @@ func TestArrSeedStore_ListItems_DefaultsLimitTo100(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert 105 items
-	for i := 0; i < 105; i++ {
+	for i := range 105 {
 		err := store.UpsertItem(ctx, &models.ArrSeedItem{
 			ConfigID: cfg.ID, ItemType: "episode", ArrFileID: 700 + i,
 			ReleaseName: "Ep", FilePath: "/ep", FileSize: 100, Priority: 1,
@@ -997,7 +997,7 @@ func TestArrSeedStore_DeleteItemsForConfig(t *testing.T) {
 	cfg := createTestConfig(t, store, arrID, true)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		err := store.UpsertItem(ctx, &models.ArrSeedItem{
 			ConfigID: cfg.ID, ItemType: "episode", ArrFileID: 1000 + i,
 			ReleaseName: "Ep", FilePath: "/ep", FileSize: 100, Priority: 1,
@@ -1021,7 +1021,7 @@ func TestArrSeedStore_DeleteItemsByIDs(t *testing.T) {
 	cfg := createTestConfig(t, store, arrID, true)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		err := store.UpsertItem(ctx, &models.ArrSeedItem{
 			ConfigID: cfg.ID, ItemType: "episode", ArrFileID: 1100 + i,
 			ReleaseName: "Ep", FilePath: "/ep", FileSize: 100, Priority: 1,

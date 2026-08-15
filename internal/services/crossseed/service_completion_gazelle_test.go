@@ -176,7 +176,8 @@ func (*completionGazelleSyncMock) ResumeWhenComplete(_ int, _ []string, _ intern
 }
 
 func TestHandleTorrentCompletion_AllowsGazelleWhenJackettMissing(t *testing.T) {
-	t.Parallel()
+	// Not parallel: the test stubs the package-level findGazelleMatch.
+	stubGazelleMatchLookup(t)
 
 	db, err := sql.Open("sqlite", "file:completion_gazelle_guard?mode=memory&cache=shared")
 	if err != nil {
@@ -249,7 +250,8 @@ func TestHandleTorrentCompletion_AllowsGazelleWhenJackettMissing(t *testing.T) {
 }
 
 func TestExecuteCompletionSearch_GazelleSourceSkipsTorznab(t *testing.T) {
-	t.Parallel()
+	// Not parallel: the test stubs the package-level findGazelleMatch.
+	stubGazelleMatchLookup(t)
 
 	db := testdb.NewMigratedSQLite(t, "completion-gazelle-search")
 

@@ -920,6 +920,7 @@
       "scanTruncated": " (Scan wurde gekürzt, möglicherweise existieren weitere Dateien)",
       "viewPreview": "Vorschau anzeigen",
       "recentScans": "Letzte Scans",
+      "scannedPaths": "Gescannte Pfade ({{total}})",
       "zeroOrphans": "0 Orphans",
       "deletedStats": "{{deleted}} gelöscht · {{size}}",
       "partialFailure": "Teilweise fehlgeschlagen – prüfe die letzten Scans",
@@ -962,6 +963,12 @@
       "exportCSV": "CSV exportieren",
       "close": "Schließen",
       "deleteFiles": "Dateien löschen",
+      "statusLabels": {
+        "pending": "Ausstehend",
+        "deleted": "Gelöscht",
+        "skipped": "Übersprungen",
+        "failed": "Fehlgeschlagen"
+      },
       "toast": {
         "deletionStarted": "Löschung gestartet",
         "deletionDescription": "Orphan-Dateien werden entfernt",
@@ -997,7 +1004,6 @@
       "autoCleanup": "Auto-Cleanup",
       "autoCleanupLabel": "Auto-Cleanup für geplante Scans",
       "autoCleanupTooltip": "Wenn aktiviert, löschen geplante Scans Orphan-Dateien automatisch, ohne dass eine manuelle Bestätigung erforderlich ist. Manuelle Scans zeigen immer zuerst eine Vorschau.",
-      "autoCleanupDescription": "Orphan-Dateien nach Abschluss geplanter Scans automatisch löschen",
       "autoDeleteWarningTitle": "Auto-Löschung entfernt Dateien dauerhaft",
       "autoDeleteWarningBody": "Als Orphans markierte Dateien werden automatisch ohne manuelle Prüfung gelöscht. Wenn der Dir-Scan im normalen Modus konfiguriert ist, werden alle Dateien in den gescannten Verzeichnissen, die <span class=\"font-medium\">keinem Torrent zugeordnet sind, als Orphans markiert</span> und gelöscht.",
       "autoDeleteWarningPaths": "Stelle sicher, dass deine <span class=\"font-medium\">Ignore-Pfade</span> korrekt konfiguriert sind, oder nutze den hardlink/reflink-Modus für den Dir-Scan.",
@@ -1005,12 +1011,10 @@
       "maxFilesThreshold": "Schwellwert für max. Dateien",
       "maxFilesThresholdTooltip": "Sicherheitslimit: Findet ein Scan mehr Dateien als dieser Schwellwert, überspringt er das Auto-Cleanup und erfordert eine manuelle Prüfung. Das fängt Anomalien wie falsch konfigurierte Ignore-Pfade ab.",
       "files": "Dateien",
-      "maxFilesThresholdDescription": "Werden mehr Dateien gefunden, ist stattdessen eine manuelle Prüfung erforderlich",
       "exclusions": "Ausschlüsse",
       "ignorePaths": "Ignore-Pfade",
       "ignorePathsTooltip": "Pfade, die vom Scan ausgeschlossen werden. Dateien in diesen Verzeichnissen werden nie als Orphans markiert. Gib einen Pfad pro Zeile ein.",
       "ignorePathsPlaceholder": "/downloads/preserve\n/downloads/manual\n/data/keep",
-      "ignorePathsDescription": "Ein Pfad pro Zeile. Pfade werden als Präfixe abgeglichen.",
       "saving": "Wird gespeichert…",
       "saveChanges": "Änderungen speichern",
       "toast": {
@@ -1146,6 +1150,21 @@
       "enableMonitoring": "Aktiviere die Überwachung, um stehengebliebene Torrents zu verfolgen.",
       "hashCopied": "Hash kopiert",
       "copyHash": "Hash kopieren",
+      "outcomes": {
+        "succeeded": "Erfolgreich",
+        "failed": "Fehlgeschlagen",
+        "skipped": "Übersprungen",
+        "started": "Gestartet"
+      },
+      "reasons": {
+        "debouncedCooldown": "Entprellt während des Cooldown-Fensters",
+        "debouncedRetry": "Entprellt während des Wiederholungsintervalls",
+        "serviceNotStarted": "Dienst nicht gestartet",
+        "trackerHealthy": "Tracker gesund",
+        "jobSucceeded": "Reannounce-Job erfolgreich",
+        "jobStarted_one": "Reannounce-Job gestartet (max. {{count}} Versuch)",
+        "jobStarted_other": "Reannounce-Job gestartet (max. {{count}} Versuche)"
+      },
       "form": {
         "instanceMissing": "Instanz fehlt",
         "settingsSaved": "Einstellungen erfolgreich gespeichert.",
@@ -1170,7 +1189,6 @@
         "maxRetries": "Max. Wiederholungen",
         "maxRetriesDescription": "Wiederholungsversuche pro Torrent",
         "quickRetry": "Schnelle Wiederholung",
-        "quickRetryDescription": "Wiederholungsintervall statt 2 Minuten als Cooldown nutzen",
         "quickRetryTooltip": "Nutzt das Wiederholungsintervall als Cooldown zwischen Scans statt der standardmäßigen 2 Minuten. Nützlich bei Trackern, die neue Uploads nur langsam registrieren. qui wartet immer, während ein Tracker aktualisiert, und spammt nie.",
         "scopeFiltering": "Geltungsbereich & Filterung",
         "monitorAllStalled": "Alle stehengebliebenen Torrents überwachen",
@@ -1364,8 +1382,7 @@
         "skipIfCrossSeedExists": "Überspringen, wenn Cross-Seed in Kategorien vorhanden",
         "aboutSkipping": "Über das Überspringen, wenn Cross-Seeds vorhanden sind",
         "skipHelp": "Nützlich mit *arr-Import-Warteschlangen: verhindert, dass die Automatisierung die Torrents verschiebt, wenn mindestens einer von ihnen in der *arr-Import-Warteschlange ist.",
-        "selectCategories": "Kategorien auswählen...",
-        "skipDescription": "Überspringt die Kategorieänderung, wenn ein anderer Torrent, der auf denselben Inhalt auf der Festplatte zeigt, bereits in einer dieser Kategorien ist."
+        "selectCategories": "Kategorien auswählen..."
       },
       "externalProgram": {
         "program": "Programm",
@@ -1626,9 +1643,16 @@
   },
   "backups": {
     "pageTitle": "Backups",
-    "pageDescription": "Verwalte Torrent-Backups für deine Instanzen",
+    "pageDescription": "Torrent-Backups für Ihre Instanzen verwalten",
     "selectInstancePlaceholder": "Instanz auswählen",
     "loadingCapabilities": "Instanz-Fähigkeiten werden geladen...",
+    "statusLabels": {
+      "pending": "Ausstehend",
+      "running": "Läuft",
+      "success": "Erfolgreich",
+      "failed": "Fehlgeschlagen",
+      "canceled": "Abgebrochen"
+    },
     "runKinds": {
       "manual": "Manuell",
       "hourly": "Stündlich",
@@ -1684,6 +1708,8 @@
       "includeCategoriesDescription": "Torrents im Archiv nach ihrer Kategorie gruppieren",
       "includeTags": "Tags einbeziehen",
       "includeTagsDescription": "Torrent-Tags im Manifest speichern",
+      "includeSavePaths": "Speicherpfade einbeziehen",
+      "includeSavePathsDescription": "Speichert den Speicherpfad jedes Torrents, wenn er von seiner Kategorie abweicht, damit verschobene und Cross-Seed-Torrents am richtigen Ort wiederhergestellt werden",
       "schedule": {
         "title": "Automatische Rhythmen",
         "description": "Stündliche, tägliche, wöchentliche und monatliche Läufe starten, nachdem das vorherige Backup abgeschlossen ist und das jeweilige Intervall verstrichen ist. Lass sie alle aus, wenn du Backups nur manuell auslöst.",

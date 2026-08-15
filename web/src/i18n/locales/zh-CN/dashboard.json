@@ -22,6 +22,8 @@
       "tracker": "Tracker 名称",
       "uploaded": "已上传",
       "downloaded": "已下载",
+      "downloadedSession": "已下载（本次）",
+      "uploadedSession": "已上传（本次）",
       "ratio": "分享率",
       "buffer": "缓冲",
       "count": "种子数",
@@ -66,6 +68,11 @@
     "connectable": "可连接",
     "portInfo": "。端口：{{port}}",
     "connectionStatus": "qBittorrent 连接状态：{{status}}",
+    "streamStatus": {
+      "cached": "刷新时显示缓存的仪表盘快照",
+      "fallback": "正在刷新仪表盘统计信息",
+      "error": "流出现问题；正在使用备用刷新"
+    },
     "altSpeedDialog": {
       "enableTitle": "启用备用速度限制？",
       "disableTitle": "禁用备用速度限制？",
@@ -77,7 +84,6 @@
     }
   },
   "mobileOverview": {
-    "title": "概览",
     "instances": "实例",
     "connected": "已连接",
     "torrents": "种子",
@@ -102,6 +108,8 @@
     "tableHeaders": {
       "instance": "实例",
       "downloaded": "已下载",
+      "downloadedSession": "已下载（本次）",
+      "uploadedSession": "已上传（本次）",
       "uploaded": "已上传",
       "ratio": "分享率",
       "peers": "节点"
@@ -117,6 +125,8 @@
       "tracker": "Tracker",
       "uploaded": "已上传",
       "downloaded": "已下载",
+      "downloadedSession": "已下载（本次）",
+      "uploadedSession": "已上传（本次）",
       "ratio": "分享率",
       "torrents": "种子数",
       "size": "大小",
@@ -126,6 +136,8 @@
       "tracker": "Tracker",
       "uploaded": "已上传",
       "downloaded": "已下载",
+      "downloadedSession": "已下载（本次）",
+      "uploadedSession": "已上传（本次）",
       "ratio": "分享率",
       "buffer": "缓冲",
       "torrents": "种子数",
@@ -139,6 +151,8 @@
     "mergeIntoGroup": "合并到分组",
     "addToMerge": "添加到合并",
     "rename": "重命名",
+    "edit": "编辑",
+    "delete": "删除",
     "pagination": {
       "range": "第 {{start}}-{{end}} 项，共 {{total}} 个 Tracker",
       "previous": "上一页",

@@ -920,6 +920,7 @@
       "scanTruncated": " (scan was truncated, more files may exist)",
       "viewPreview": "View Preview",
       "recentScans": "Recent Scans",
+      "scannedPaths": "Scanned Paths ({{total}})",
       "zeroOrphans": "0 orphans",
       "deletedStats": "{{deleted}} deleted · {{size}}",
       "partialFailure": "Partial failure - check recent scans",
@@ -962,6 +963,12 @@
       "exportCSV": "Export CSV",
       "close": "Close",
       "deleteFiles": "Delete Files",
+      "statusLabels": {
+        "pending": "Pending",
+        "deleted": "Deleted",
+        "skipped": "Skipped",
+        "failed": "Failed"
+      },
       "toast": {
         "deletionStarted": "Deletion started",
         "deletionDescription": "Orphan files are being removed",
@@ -997,7 +1004,6 @@
       "autoCleanup": "Auto-Cleanup",
       "autoCleanupLabel": "Auto-Cleanup for Scheduled Scans",
       "autoCleanupTooltip": "When enabled, scheduled scans will automatically delete orphan files without requiring manual confirmation. Manual scans will always show a preview first.",
-      "autoCleanupDescription": "Automatically delete orphan files after scheduled scans complete",
       "autoDeleteWarningTitle": "Auto-delete will permanently remove files",
       "autoDeleteWarningBody": "Files flagged as orphans will be deleted automatically without manual review. If dir scan is configured in regular mode, any files in scanned directories that <span class=\"font-medium\">are not matched by a torrent will be flagged as orphans</span> and deleted.",
       "autoDeleteWarningPaths": "Ensure your <span class=\"font-medium\">Ignore Paths</span> are correctly configured or use hardlink/reflink mode for dir scan.",
@@ -1005,12 +1011,10 @@
       "maxFilesThreshold": "Max Files Threshold",
       "maxFilesThresholdTooltip": "Safety limit: if a scan finds more files than this threshold, it will skip auto-cleanup and require manual review. This catches anomalies like misconfigured ignore paths.",
       "files": "files",
-      "maxFilesThresholdDescription": "If more files are found, manual review will be required instead",
       "exclusions": "Exclusions",
       "ignorePaths": "Ignore Paths",
-      "ignorePathsTooltip": "Paths to exclude from scanning. Files in these directories will never be flagged as orphans. Enter one path per line.",
+      "ignorePathsTooltip": "Paths to exclude from scanning. Files in these directories will never be flagged as orphans. Enter one path per line. Paths are matched as prefixes.",
       "ignorePathsPlaceholder": "/downloads/preserve\n/downloads/manual\n/data/keep",
-      "ignorePathsDescription": "One path per line. Paths are matched as prefixes.",
       "saving": "Saving...",
       "saveChanges": "Save Changes",
       "toast": {
@@ -1146,6 +1150,21 @@
       "enableMonitoring": "Enable monitoring to start tracking stalled torrents.",
       "hashCopied": "Hash copied",
       "copyHash": "Copy hash",
+      "outcomes": {
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "skipped": "Skipped",
+        "started": "Started"
+      },
+      "reasons": {
+        "debouncedCooldown": "Debounced during cooldown window",
+        "debouncedRetry": "Debounced during retry interval window",
+        "serviceNotStarted": "Service not started",
+        "trackerHealthy": "Tracker healthy",
+        "jobStarted_one": "Reannounce job started (max {{count}} retry)",
+        "jobStarted_other": "Reannounce job started (max {{count}} retries)",
+        "jobSucceeded": "Reannounce job succeeded"
+      },
       "form": {
         "instanceMissing": "Instance missing",
         "settingsSaved": "Settings saved successfully.",
@@ -1170,7 +1189,6 @@
         "maxRetries": "Max Retries",
         "maxRetriesDescription": "Retry attempts per torrent",
         "quickRetry": "Quick Retry",
-        "quickRetryDescription": "Use Retry Interval for cooldown instead of 2 minutes",
         "quickRetryTooltip": "Use the Retry Interval as the cooldown between scans instead of the default 2 minutes. Useful on trackers that are slow to register new uploads. qui always waits while a tracker is updating and never spams.",
         "scopeFiltering": "Scope & Filtering",
         "monitorAllStalled": "Monitor All Stalled Torrents",
@@ -1363,9 +1381,8 @@
         "includeAffectedCrossSeeds": "Include affected cross-seeds",
         "skipIfCrossSeedExists": "Skip if cross-seed exists in categories",
         "aboutSkipping": "About skipping when cross-seeds exist",
-        "skipHelp": "Useful with *arr import queues: prevents automation from moving the torrents if at least one of them are in the *arr import queue.",
-        "selectCategories": "Select categories...",
-        "skipDescription": "Skips the category change if another torrent pointing at the same on-disk content is already in one of these categories."
+        "skipHelp": "Skips the category change if another torrent pointing at the same on-disk content is already in one of these categories. Useful with *arr import queues: prevents automation from moving the torrents if at least one of them is in the *arr import queue.",
+        "selectCategories": "Select categories..."
       },
       "externalProgram": {
         "program": "Program",
@@ -1627,8 +1644,15 @@
   "backups": {
     "pageTitle": "Backups",
     "pageDescription": "Manage torrent backups for your instances",
-    "selectInstancePlaceholder": "Select instance",
+    "selectInstancePlaceholder": "Select an instance",
     "loadingCapabilities": "Loading instance capabilities...",
+    "statusLabels": {
+      "pending": "Pending",
+      "running": "Running",
+      "success": "Success",
+      "failed": "Failed",
+      "canceled": "Canceled"
+    },
     "runKinds": {
       "manual": "Manual",
       "hourly": "Hourly",
@@ -1684,6 +1708,8 @@
       "includeCategoriesDescription": "Group torrents inside the archive by their category",
       "includeTags": "Include tags",
       "includeTagsDescription": "Store torrent tags in the manifest",
+      "includeSavePaths": "Include save paths",
+      "includeSavePathsDescription": "Store each torrent's save path when it differs from its category, so relocated and cross-seed torrents restore to the right folder",
       "schedule": {
         "title": "Automatic cadences",
         "description": "Hourly, daily, weekly, and monthly runs start after the previous backup finishes and their interval has elapsed. Leave them all off if you only trigger backups manually.",

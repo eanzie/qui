@@ -132,7 +132,8 @@
     "switchedToThemeVariation": "Zu Design {{theme}} ({{variation}}) gewechselt",
     "unableToVerifyLicense": "Lizenz konnte nicht überprüft werden",
     "licenseCheckFailed": "Lizenzprüfung fehlgeschlagen. Der Wechsel zu Premium-Designs ist vorübergehend nicht verfügbar.",
-    "premiumThemeError": "Dies ist ein Premium-Design. Öffne Einstellungen → Designs, um eine Lizenz zu aktivieren."
+    "premiumThemeError": "Dies ist ein Premium-Design. Öffne Einstellungen → Designs, um eine Lizenz zu aktivieren.",
+    "custom": "Eigene"
   },
   "updateBanner": {
     "updateAvailable": "Update verfügbar",
@@ -161,6 +162,9 @@
       "default": "Wenn dein Browser dich dazu auffordert, bestätige bitte, um die Registrierung abzuschließen."
     }
   },
+  "fieldHelp": {
+    "trigger": "Weitere Informationen"
+  },
   "numberInput": {
     "unlimited": "Unbegrenzt",
     "useUnlimited": " (-1 für unbegrenzt verwenden)"
@@ -188,5 +192,14 @@
       "year_one": "{{count}} Jahr",
       "year_other": "{{count}} Jahre"
     }
+  },
+  "support": {
+    "title": "qui unterstützen",
+    "description": "Hast du schon Designs und möchtest weiter helfen? Alles in qui gehört dir bereits. Ein Abo schaltet keine Funktionen frei, es finanziert die Zeit, die in ihre Entwicklung fließt.",
+    "perkPrefix": "Patrons erhalten die Rolle",
+    "perkSuffix": "in Discord und unsere ewige Dankbarkeit.",
+    "yearly": "{{price}} / Jahr",
+    "monthly": "{{price}} / Monat",
+    "notLicense": "Premium-Designs sind ein separater einmaliger Kauf."
   }
 }

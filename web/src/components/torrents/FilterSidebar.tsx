@@ -42,7 +42,8 @@ import { usePersistedCompactViewState } from "@/hooks/usePersistedCompactViewSta
 import { usePersistedShowEmptyState } from "@/hooks/usePersistedShowEmptyState"
 import { buildTrackerCustomizationMaps, useTrackerCustomizations } from "@/hooks/useTrackerCustomizations"
 import { useTrackerIcons } from "@/hooks/useTrackerIcons"
-import { getLinuxCount, LINUX_CATEGORIES, LINUX_TAGS, LINUX_TRACKERS, useIncognitoMode } from "@/lib/incognito"
+import { getIncognitoCategories, getIncognitoTags, getIncognitoTrackers, getLinuxCount, useIncognitoMode } from "@/lib/incognito"
+import { useSpreadsheetDisguise } from "@/lib/spreadsheet-disguise"
 import { cn, formatBytes } from "@/lib/utils"
 import type { Category, TorrentFilters } from "@/types"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -70,6 +71,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { CategoryTree } from "./CategoryTree"
+import { FilterViewsSection } from "./FilterViewsSection"
 import {
   CreateCategoryDialog,
   CreateTagDialog,
@@ -204,6 +206,9 @@ const FilterSidebarComponent = ({
 
   // Use incognito mode hook
   const [incognitoMode] = useIncognitoMode()
+  // Incognito vocabulary changes with the spreadsheet theme, so the fake lists
+  // below have to recompute when the theme switches.
+  const spreadsheetDisguise = useSpreadsheetDisguise()
   const { data: trackerIcons } = useTrackerIcons()
   const { data: trackerCustomizations } = useTrackerCustomizations()
   const { data: capabilities } = useInstanceCapabilities(
@@ -546,16 +551,16 @@ const FilterSidebarComponent = ({
   // Use fake data if in incognito mode, otherwise use props
   // When loading or showing stale data, show empty data to prevent stale data from previous instance
   const categories = useMemo(() => {
-    if (incognitoMode) return LINUX_CATEGORIES
+    if (incognitoMode) return getIncognitoCategories(spreadsheetDisguise)
     if (isLoading || isStaleData) return {}  // Clear categories during loading or when stale
     return propsCategories || {}
-  }, [incognitoMode, propsCategories, isLoading, isStaleData])
+  }, [incognitoMode, propsCategories, isLoading, isStaleData, spreadsheetDisguise])
 
   const tags = useMemo(() => {
-    if (incognitoMode) return LINUX_TAGS
+    if (incognitoMode) return getIncognitoTags(spreadsheetDisguise)
     if (isLoading || isStaleData) return []  // Clear tags during loading or when stale
     return propsTags || []
-  }, [incognitoMode, propsTags, isLoading, isStaleData])
+  }, [incognitoMode, propsTags, isLoading, isStaleData, spreadsheetDisguise])
 
   // Helper function to check if we have received data from the server
   const hasReceivedData = useCallback((data: unknown) => {
@@ -763,7 +768,7 @@ const FilterSidebarComponent = ({
   // Use fake trackers if in incognito mode or extract from torrentCounts
   // When loading or showing stale data, show empty data to prevent stale data from previous instance
   const trackers = useMemo(() => {
-    if (incognitoMode) return LINUX_TRACKERS
+    if (incognitoMode) return getIncognitoTrackers(spreadsheetDisguise)
     if (isLoading || isStaleData) return []  // Clear trackers during loading or when stale
 
     // Extract unique trackers from torrentCounts
@@ -774,7 +779,7 @@ const FilterSidebarComponent = ({
       .sort() : []
 
     return realTrackers
-  }, [incognitoMode, torrentCounts, isLoading, isStaleData])
+  }, [incognitoMode, torrentCounts, isLoading, isStaleData, spreadsheetDisguise])
 
   const trackerCustomizationMaps = useMemo(
     () => buildTrackerCustomizationMaps(trackerCustomizations),
@@ -1908,6 +1913,16 @@ const FilterSidebarComponent = ({
             onValueChange={setExpandedItems}
             className={viewMode === "dense" ? "space-y-1" : "space-y-2"}
           >
+            {/* Saved Views */}
+            <FilterViewsSection
+              selectedFilters={selectedFilters}
+              onApply={applyFilterChange}
+              hasActiveFilters={hasActiveFilters}
+              triggerClassName={accordionTriggerClass}
+              contentClassName={accordionContentClass}
+              itemClassName={filterItemClass}
+            />
+
             {/* Custom Filter */}
             {selectedFilters.expr && (
               <AccordionItem value="custom" className="border rounded-lg">
@@ -2159,9 +2174,7 @@ const FilterSidebarComponent = ({
                   {/* No results message for categories */}
                   {hasReceivedCategoriesData && debouncedCategorySearch && filteredCategories.length === 0 && (
                     <div className="text-xs text-muted-foreground px-2 py-3 text-center italic">
-                      {!showHiddenCategories && hiddenCategorySearchMatches > 0
-                        ? t("filterSidebar.allCategoriesEmpty")
-                        : t("filterSidebar.noCategoriesFound", { query: debouncedCategorySearch })}
+                      {!showHiddenCategories && hiddenCategorySearchMatches > 0? t("filterSidebar.allCategoriesEmpty"): t("filterSidebar.noCategoriesFound", { query: debouncedCategorySearch })}
                     </div>
                   )}
 
@@ -2571,9 +2584,7 @@ const FilterSidebarComponent = ({
                   {/* No results message for tags */}
                   {hasReceivedTagsData && debouncedTagSearch && filteredTags.length === 0 && (
                     <div className="text-xs text-muted-foreground px-2 py-3 text-center italic">
-                      {!showHiddenTags && hiddenTagSearchMatches > 0
-                        ? t("filterSidebar.allTagsEmpty")
-                        : t("filterSidebar.noTagsFound", { query: debouncedTagSearch })}
+                      {!showHiddenTags && hiddenTagSearchMatches > 0? t("filterSidebar.allTagsEmpty"): t("filterSidebar.noTagsFound", { query: debouncedTagSearch })}
                     </div>
                   )}
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/rs/zerolog"
 
@@ -290,10 +291,5 @@ func arrSeedExtractTagsFromJSON(raw json.RawMessage) []int {
 }
 
 func arrSeedContainsInt(slice []int, val int) bool {
-	for _, v := range slice {
-		if v == val {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, val)
 }

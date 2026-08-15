@@ -105,6 +105,7 @@ type SettingsFormState = {
   keepMonthly: number
   includeCategories: boolean
   includeTags: boolean
+  includeSavePaths: boolean
 }
 
 type SettingsToggleKey =
@@ -115,6 +116,7 @@ type SettingsToggleKey =
   | "monthlyEnabled"
   | "includeCategories"
   | "includeTags"
+  | "includeSavePaths"
 
 type SettingsNumericKey = "keepHourly" | "keepDaily" | "keepWeekly" | "keepMonthly"
 type ExcludedTorrentMeta = {
@@ -360,6 +362,7 @@ export function InstanceBackups() {
         keepMonthly: settings.keepMonthly,
         includeCategories: settings.includeCategories,
         includeTags: settings.includeTags,
+        includeSavePaths: settings.includeSavePaths,
       })
     }
   }, [settings])
@@ -427,9 +430,7 @@ export function InstanceBackups() {
         state: "ready",
         kind: activeRun.kind,
         timestamp: formatDateSafe(activeRun.startedAt ?? activeRun.requestedAt, formatDate),
-        status: activeRun.status === "running"
-          ? t("backups.summary.currentlyRunning")
-          : t("backups.summary.queuedStartSoon"),
+        status: activeRun.status === "running"? t("backups.summary.currentlyRunning"): t("backups.summary.queuedStartSoon"),
       }
     }
 
@@ -771,21 +772,9 @@ export function InstanceBackups() {
 
   // Show instance selector when no instance is selected
   if (!instanceId) {
-    const selectionHeading = instanceCapabilitiesPending
-      ? t("backups.selection.checkingHeading")
-      : hasSupportedInstances
-        ? t("backups.selection.selectHeading")
-        : hasInstances
-          ? t("backups.selection.noCompatibleHeading")
-          : t("backups.selection.connectHeading")
+    const selectionHeading = instanceCapabilitiesPending? t("backups.selection.checkingHeading"): hasSupportedInstances? t("backups.selection.selectHeading"): hasInstances? t("backups.selection.noCompatibleHeading"): t("backups.selection.connectHeading")
 
-    const selectionMessage = !hasInstances
-      ? t("backups.selection.noInstancesDescription")
-      : instanceCapabilitiesPending
-        ? t("backups.selection.checkingDescription")
-        : hasSupportedInstances
-          ? t("backups.selection.chooseDescription")
-          : t("backups.selection.noCompatibleDescription")
+    const selectionMessage = !hasInstances? t("backups.selection.noInstancesDescription"): instanceCapabilitiesPending? t("backups.selection.checkingDescription"): hasSupportedInstances? t("backups.selection.chooseDescription"): t("backups.selection.noCompatibleDescription")
 
     return (
       <TooltipProvider>
@@ -958,7 +947,7 @@ export function InstanceBackups() {
                         </p>
                       </div>
                     ) : (
-                      <p className="text-xs text-muted-foreground capitalize">{t("backups.summary.status", { status: lastRun.status })}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{t("backups.summary.status", { status: t(`backups.statusLabels.${lastRun.status}`, lastRun.status) })}</p>
                     )}
                   </div>
                 </div>
@@ -1033,6 +1022,12 @@ export function InstanceBackups() {
                     description={t("backups.settings.includeTagsDescription")}
                     checked={formState.includeTags}
                     onCheckedChange={handleToggle("includeTags")}
+                  />
+                  <SettingToggle
+                    label={t("backups.settings.includeSavePaths")}
+                    description={t("backups.settings.includeSavePathsDescription")}
+                    checked={formState.includeSavePaths}
+                    onCheckedChange={handleToggle("includeSavePaths")}
                   />
                 </div>
 
@@ -1132,12 +1127,10 @@ export function InstanceBackups() {
             <DialogHeader>
               <DialogTitle>{t("backups.restore.title")}</DialogTitle>
               <DialogDescription>
-                {restoreTargetRun
-                  ? t("backups.restore.runDescription", {
-                    id: restoreTargetRun.id,
-                    kind: runKindLabels[restoreTargetRun.kind],
-                  })
-                  : t("backups.restore.selectBackup")}
+                {restoreTargetRun? t("backups.restore.runDescription", {
+                  id: restoreTargetRun.id,
+                  kind: runKindLabels[restoreTargetRun.kind],
+                }): t("backups.restore.selectBackup")}
               </DialogDescription>
             </DialogHeader>
 
@@ -1808,7 +1801,7 @@ export function InstanceBackups() {
                               </p>
                             </div>
                           ) : (
-                            <Badge variant={statusVariants[run.status]} className="capitalize">{run.status}</Badge>
+                            <Badge variant={statusVariants[run.status]} className="capitalize">{t(`backups.statusLabels.${run.status}`, run.status)}</Badge>
                           )}
                         </TableCell>
                         <TableCell>{formatDateSafe(run.requestedAt, formatDate)}</TableCell>

@@ -82,14 +82,23 @@ Frontend-specific rules live in `web/AGENTS.md`. Read that file before editing `
 - DB schema changes need SQLite + Postgres migrations, matching model/store updates, same PR.
 - Open PRs: consolidate schema work to at most one new SQLite migration and one new Postgres migration; edit draft migrations before merge.
 - API contract changes must update `internal/web/swagger` and pass `make test-openapi`.
+- New `string_pool` FK columns need a leading index in BOTH the SQLite and Postgres migrations, plus an entry in `referencedStringsInsertQuery`. Neither engine auto-indexes FK child columns and the daily string_pool GC full-scans unindexed ones (discussion #2048). `TestStringPoolFKColumnsAreIndexed` enforces this on SQLite; the Postgres index is on you.
 - Keep diffs minimal in high-churn areas: `internal/services/crossseed`, `internal/qbittorrent`, `internal/models`.
 
 ## Commits / PRs
 
 - Conventional commits: `feat(scope):`, `fix(scope):`, etc.
 - Keep commits focused; split backend/frontend when practical.
+- Update PR branches by merging develop into them, never rebase/force-push. PRs are squash-merged, so rebase gains nothing and force-pushes break review history and contributors' local branches.
 - Never add AI advertising/attribution/co-author lines.
-- PRs need clear summary, testing checklist, and screenshots for visual UI changes.
+- Fill `.github/pull_request_template.md` into the PR body; `gh pr create --body` does not auto-fill it.
+- Never publish private tracker links or torrent names taken from a client. This covers PR and issue titles, bodies, and comments, commit messages, and `documentation/`.
+  - No tracker URL that carries a path, query, or key: torrent pages, announce URLs, passkeys, `.torrent` links. Bare hostnames and tracker names stay allowed; the code and docs use them.
+  - No release name copied word for word from a user report or a torrent client. Build an equivalent name: keep each token that matters, change the title and the group. Make sure the new name still causes the bug before you publish it.
+  - Naming a work in prose, or building a name from a real title and group tag, is allowed. The rule is about strings copied from someone's client, not about which words you use.
+  - Scrub reports from Discord or DMs the same way before you quote them. Keep the real string in notes outside the repo so the repro stays runnable; `docs/` is committed and counts as published.
+  - New test fixtures and code comments use names built by the rule above. Do not sweep the existing ones.
+  - Screenshots: capture from an instance you fill with synthetic torrents. If the bug shows only on a real library, blur the name, tracker, and save path columns.
 
 ## Final Report
 

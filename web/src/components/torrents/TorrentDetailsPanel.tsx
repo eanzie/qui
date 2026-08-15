@@ -20,6 +20,7 @@ import { useDateTimeFormatters } from "@/hooks/useDateTimeFormatters"
 import { useInstanceCapabilities } from "@/hooks/useInstanceCapabilities"
 import { useInstanceMetadata } from "@/hooks/useInstanceMetadata"
 import { usePersistedTabState } from "@/hooks/usePersistedTabState"
+import { scheduleTorrentListRefetches } from "@/hooks/useTorrentActions"
 import { api } from "@/lib/api"
 import { isHardlinkManaged, useLocalCrossSeedMatches } from "@/lib/cross-seed-utils"
 import { getLinuxCategory, getLinuxComment, getLinuxCreatedBy, getLinuxFileName, getLinuxHash, getLinuxIsoName, getLinuxSavePath, getLinuxTags, getLinuxTracker, useIncognitoMode } from "@/lib/incognito"
@@ -32,7 +33,6 @@ import { getTrackerStatusBadge } from "@/lib/tracker-utils"
 import { cn, copyTextToClipboard, formatBytes, formatDuration } from "@/lib/utils"
 import type { SortedPeersResponse, Torrent, TorrentFile, TorrentFilters, TorrentStreamPayload, TorrentTracker, TorrentPeer } from "@/types"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import "flag-icons/css/flag-icons.min.css"
 import { Ban, Copy, Loader2, Trash2, UserPlus, X } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -368,6 +368,29 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
     setFilePriorityMutation.mutate({ indices: [file.index], priority: desiredPriority, hash: torrent.hash })
   }, [setFilePriorityMutation, supportsFilePriority, torrent])
 
+  const handleToggleFileRange = useCallback((indices: number[], selected: boolean) => {
+    if (!torrent || !supportsFilePriority || !files || indices.length === 0) {
+      return
+    }
+
+    // Only touch files that actually need changing, mirroring handleSelectAllFiles
+    // and handleToggleFolderDownload. This preserves High/Maximum priority on
+    // already-selected files (a blanket priority:1 would downgrade them to Normal)
+    // and skips no-op churn for files already in the desired state.
+    const rangeSet = new Set(indices)
+    const targetIndices = files
+      .filter(file => rangeSet.has(file.index))
+      .filter(file => !pendingFileIndices.has(file.index))
+      .filter(file => selected ? file.priority === 0 : file.priority !== 0)
+      .map(file => file.index)
+
+    if (targetIndices.length === 0) {
+      return
+    }
+
+    setFilePriorityMutation.mutate({ indices: targetIndices, priority: selected ? 1 : 0, hash: torrent.hash })
+  }, [files, pendingFileIndices, setFilePriorityMutation, supportsFilePriority, torrent])
+
   const handleSelectAllFiles = useCallback(() => {
     if (!torrent || !supportsFilePriority || !files) {
       return
@@ -417,8 +440,42 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
     })
   }, [files, setFilePriorityMutation, supportsFilePriority, torrent])
 
+  const handleSetFilePriority = useCallback((file: TorrentFile, priority: number) => {
+    if (!torrent || !supportsFilePriority || file.priority === priority) {
+      return
+    }
+
+    setFilePriorityMutation.mutate({ indices: [file.index], priority, hash: torrent.hash })
+  }, [setFilePriorityMutation, supportsFilePriority, torrent])
+
+  const handleSetFolderPriority = useCallback((folderPath: string, priority: number) => {
+    if (!torrent || !supportsFilePriority || !files) {
+      return
+    }
+
+    // Apply to every descendant file that isn't already at the target priority.
+    const folderPrefix = folderPath + "/"
+    const indices = files
+      .filter(f => f.name.startsWith(folderPrefix))
+      .filter(f => f.priority !== priority)
+      .map(f => f.index)
+
+    if (indices.length === 0) {
+      return
+    }
+
+    setFilePriorityMutation.mutate({ indices, priority, hash: torrent.hash })
+  }, [files, setFilePriorityMutation, supportsFilePriority, torrent])
+
   // Fetch torrent peers with optimized refetch
   const isPeersTabActive = activeTab === "peers"
+
+  // flag-icons inlines 400 flags as data URIs, 73% of the boot stylesheet; load it with the tab.
+  useEffect(() => {
+    // offline PWA: the CSS is not precached, flags just render unstyled
+    if (isPeersTabActive) void import("flag-icons/css/flag-icons.min.css").catch(() => {})
+  }, [isPeersTabActive])
+
   const peersQueryKey = ["torrent-peers", instanceId, torrent?.hash] as const
 
   const { data: peersData, isLoading: loadingPeers } = useQuery<SortedPeersResponse>({
@@ -667,10 +724,9 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
         plural: torrentsToDelete.length > 1 ? "s" : "",
       }))
 
-      // Refresh all instances
-      for (const instId of byInstance.keys()) {
-        queryClient.invalidateQueries({ queryKey: ["torrents", instId] })
-      }
+      // An immediate refetch can race the backend's debounced post-delete sync
+      // and resurrect the deleted rows; go through the delayed backstop instead.
+      scheduleTorrentListRefetches(queryClient, deleteCrossSeedFiles ? 5000 : 2000)
 
       setSelectedCrossSeedTorrents(new Set())
       setShowDeleteCrossSeedDialog(false)
@@ -692,7 +748,9 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
       })
 
       toast.success(t("detailsPanel.toast.deletedTorrent", { name: torrent.name }))
-      queryClient.invalidateQueries({ queryKey: ["torrents", instanceId] })
+      // An immediate refetch can race the backend's debounced post-delete sync
+      // and resurrect the deleted row; go through the delayed backstop instead.
+      scheduleTorrentListRefetches(queryClient, deleteCurrentFiles ? 5000 : 2000)
       setShowDeleteCurrentDialog(false)
 
       // Close the details panel by clearing selection (parent component should handle this)
@@ -819,7 +877,7 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col overflow-hidden">
         <div className="border-b flex items-center">
           <div className="flex-1 overflow-x-auto scroll-smooth">
-            <TabsList className="w-full justify-start rounded-none h-8 bg-background px-4 sm:px-2 flex-nowrap">
+            <TabsList className="w-full justify-start rounded-none h-8 bg-background px-4 sm:px-2 flex-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               <TabsTrigger value="general" className="text-xs shrink-0">
                 {t("detailsPanel.tabs.general")}
               </TabsTrigger>
@@ -1562,8 +1620,12 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
                 pendingFileIndices={pendingFileIndices}
                 incognitoMode={incognitoMode}
                 torrentHash={torrent.hash}
+                savePath={properties?.save_path}
                 onToggleFile={handleToggleFileDownload}
+                onToggleFileRange={handleToggleFileRange}
                 onToggleFolder={handleToggleFolderDownload}
+                onSetFilePriority={handleSetFilePriority}
+                onSetFolderPriority={handleSetFolderPriority}
                 onRenameFile={handleRenameFileClick}
                 onRenameFolder={(folderPath) => { void handleRenameFolderDialogOpen(folderPath) }}
                 onDownloadFile={hasLocalFilesystemAccess ? handleDownloadFile : undefined}
@@ -1616,8 +1678,12 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
                       pendingFileIndices={pendingFileIndices}
                       incognitoMode={incognitoMode}
                       torrentHash={torrent.hash}
+                      savePath={properties?.save_path}
                       onToggleFile={handleToggleFileDownload}
+                      onToggleFileRange={handleToggleFileRange}
                       onToggleFolder={handleToggleFolderDownload}
+                      onSetFilePriority={handleSetFilePriority}
+                      onSetFolderPriority={handleSetFolderPriority}
                       onRenameFile={handleRenameFileClick}
                       onRenameFolder={(folderPath) => { void handleRenameFolderDialogOpen(folderPath) }}
                       onDownloadFile={hasLocalFilesystemAccess ? handleDownloadFile : undefined}
@@ -1763,9 +1829,9 @@ export const TorrentDetailsPanel = memo(function TorrentDetailsPanel({ instanceI
                           }
 
                           // Match type display
-                          const matchType = match.matchType as "infohash" | "content_path" | "save_path" | "name"
-                          const matchLabel = matchType === "infohash"? t("detailsPanel.crossSeed.infoHashMatch"): matchType === "content_path"? t("crossSeedTable.matchTypes.contentPath.label"): matchType === "save_path"? t("detailsPanel.crossSeed.savePathMatch"): t("crossSeedTable.matchTypes.name.label")
-                          const matchDescription = matchType === "infohash"? t("detailsPanel.crossSeed.infoHashDescription"): matchType === "content_path"? t("crossSeedTable.matchTypes.contentPath.description"): matchType === "save_path"? t("detailsPanel.crossSeed.savePathDescription"): t("crossSeedTable.matchTypes.name.description")
+                          const matchType = match.matchType as "infohash" | "content_path" | "save_path" | "hardlink" | "reflink" | "release" | "name"
+                          const matchLabel = matchType === "infohash"? t("detailsPanel.crossSeed.infoHashMatch"): matchType === "content_path"? t("crossSeedTable.matchTypes.contentPath.label"): matchType === "save_path"? t("detailsPanel.crossSeed.savePathMatch"): matchType === "hardlink"? t("crossSeedTable.matchTypes.hardlink.label"): matchType === "reflink"? t("crossSeedTable.matchTypes.reflink.label"): matchType === "release"? t("crossSeedTable.matchTypes.release.label"): t("crossSeedTable.matchTypes.name.label")
+                          const matchDescription = matchType === "infohash"? t("detailsPanel.crossSeed.infoHashDescription"): matchType === "content_path"? t("crossSeedTable.matchTypes.contentPath.description"): matchType === "save_path"? t("detailsPanel.crossSeed.savePathDescription"): matchType === "hardlink"? t("crossSeedTable.matchTypes.hardlink.description"): matchType === "reflink"? t("crossSeedTable.matchTypes.reflink.description"): matchType === "release"? t("crossSeedTable.matchTypes.release.description"): t("crossSeedTable.matchTypes.name.description")
 
                           return (
                             <div

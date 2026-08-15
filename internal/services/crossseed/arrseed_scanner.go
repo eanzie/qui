@@ -248,10 +248,7 @@ func (sc *arrSeedScanner) scanRadarrInstance(
 		// Batch in chunks of 200 to avoid URL length limits
 		const batchSize = 200
 		for i := 0; i < len(movieIDs); i += batchSize {
-			end := i + batchSize
-			if end > len(movieIDs) {
-				end = len(movieIDs)
-			}
+			end := min(i+batchSize, len(movieIDs))
 			movieFiles, mfErr := client.GetMovieFiles(ctx, movieIDs[i:end])
 			if mfErr != nil {
 				l.Warn().Err(mfErr).Int("batch", i/batchSize).Msg("arrseed: failed to fetch movie files batch, custom format scores will be 0 for this batch")

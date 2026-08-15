@@ -132,7 +132,8 @@
     "switchedToThemeVariation": "已切换到{{theme}}主题（{{variation}}）",
     "unableToVerifyLicense": "无法验证许可证",
     "licenseCheckFailed": "许可证检查失败，高级主题切换暂时不可用。",
-    "premiumThemeError": "这是高级主题。请前往设置 > 主题激活许可证。"
+    "premiumThemeError": "这是高级主题。请前往设置 > 主题激活许可证。",
+    "custom": "自定义"
   },
   "updateBanner": {
     "updateAvailable": "有可用更新",
@@ -161,6 +162,9 @@
       "default": "如果浏览器弹出提示，请接受以完成注册。"
     }
   },
+  "fieldHelp": {
+    "trigger": "更多信息"
+  },
   "numberInput": {
     "unlimited": "无限制",
     "useUnlimited": "（使用 -1 表示无限制）"
@@ -181,5 +185,14 @@
       "month_other": "{{count}} 个月",
       "year_other": "{{count}} 年"
     }
+  },
+  "support": {
+    "title": "支持 qui",
+    "description": "已经有主题了，还想再出一份力？qui 的一切已经属于你。订阅不会解锁功能，它资助的是开发这些功能所投入的时间。",
+    "perkPrefix": "赞助者可在 Discord 获得",
+    "perkSuffix": "身份组，以及我们永远的感谢。",
+    "yearly": "{{price}} / 年",
+    "monthly": "{{price}} / 月",
+    "notLicense": "高级主题是单独的一次性购买。"
   }
 }

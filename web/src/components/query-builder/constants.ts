@@ -29,8 +29,11 @@ export const CONDITION_FIELDS = {
   RLS_AUDIO: { label: "Audio (RLS)", type: "string" as const, description: "Parsed audio tags (e.g. DTS, TRUEHD, AAC)" },
   RLS_CHANNELS: { label: "Channels (RLS)", type: "string" as const, description: "Parsed audio channels (e.g. 5.1, 7.1)" },
   RLS_GROUP: { label: "Group (RLS)", type: "string" as const, description: "Parsed release group (e.g. NTb, FLUX, FraMeSToR)" },
+  RLS_YEAR: { label: "Year (RLS)", type: "integer" as const, description: "Year parsed from the torrent name (e.g. 2021). Best for movies and dated releases; most TV episodes (e.g. S14E05) have no year and never match any comparison operator (the NOT toggle inverts that, so it matches yearless releases)." },
   STATE: { label: "State", type: "state" as const, description: "Torrent status (matches sidebar filters)" },
   TRACKER: { label: "Tracker", type: "string" as const, description: "Primary tracker (URL, domain, or display name)" },
+  TRACKER_STATUS: { label: "Tracker status", type: "trackerStatus" as const, description: "Per-tracker announce status (matches if any tracker matches)" },
+  TRACKER_MESSAGE: { label: "Tracker message", type: "string" as const, description: "Per-tracker status message (matches if any tracker matches). Use \"nil\" for empty." },
   COMMENT: { label: "Comment", type: "string" as const, description: "Torrent comment" },
 
   // Size fields (bytes)
@@ -109,13 +112,14 @@ export const CONDITION_FIELDS = {
   SEEDING_ON_OTHER_INSTANCE: { label: "Cross-seed(s) Seeding on Other Instance", type: "boolean" as const, description: "A matching torrent is actively seeding on at least one other active instance" },
   EXISTS_ON_SAME_INSTANCE: { label: "Cross-seed(s) Exists on Same Instance", type: "boolean" as const, description: "A cross-seed (same content, different hash) exists on this instance" },
   SEEDING_ON_SAME_INSTANCE: { label: "Cross-seed(s) Seeding on Same Instance", type: "boolean" as const, description: "A cross-seed is actively seeding on this instance" },
+  CROSS_SEED_TAGS: { label: "Cross-seed Tags", type: "string" as const, description: "Tags across this torrent and its same-instance cross-seeds" },
 
   // Enum-like fields
   HARDLINK_SCOPE: { label: "Hardlink scope", type: "hardlinkScope" as const, description: "Where hardlinks for this torrent's files exist. Requires Local Filesystem Access." },
   HARDLINK_SCOPE_CROSS: { label: "Hardlink scope (cross-instance)", type: "hardlinkScope" as const, description: "Where hardlinks exist considering ALL instances. Requires Local Filesystem Access on all relevant instances." },
 } as const;
 
-export type FieldType = "string" | "state" | "bytes" | "duration" | "float" | "percentage" | "speed" | "integer" | "boolean" | "hardlinkScope";
+export type FieldType = "string" | "state" | "trackerStatus" | "bytes" | "duration" | "float" | "percentage" | "speed" | "integer" | "boolean" | "hardlinkScope";
 
 // Operators available per field type
 export const OPERATORS_BY_TYPE: Record<FieldType, { value: string; label: string }[]> = {
@@ -129,6 +133,10 @@ export const OPERATORS_BY_TYPE: Record<FieldType, { value: string; label: string
     { value: "MATCHES", label: "matches regex" },
   ],
   state: [
+    { value: "EQUAL", label: "is" },
+    { value: "NOT_EQUAL", label: "is not" },
+  ],
+  trackerStatus: [
     { value: "EQUAL", label: "is" },
     { value: "NOT_EQUAL", label: "is not" },
   ],
@@ -200,6 +208,7 @@ export const OPERATORS_BY_TYPE: Record<FieldType, { value: string; label: string
 export const HARDLINK_SCOPE_VALUES = [
   { value: "none", label: "None" },
   { value: "torrents_only", label: "Only other torrents" },
+  { value: "inside_qbittorrent", label: "Inside qBittorrent (even if also linked outside)" },
   { value: "outside_qbittorrent", label: "Outside qBittorrent (library/import)" },
 ];
 
@@ -243,7 +252,7 @@ export const FIELD_GROUPS = [
   },
   {
     label: "Release",
-    fields: ["CONTENT_TYPE", "EFFECTIVE_NAME", "RLS_SOURCE", "RLS_RESOLUTION", "RLS_CODEC", "RLS_HDR", "RLS_AUDIO", "RLS_CHANNELS", "RLS_GROUP"],
+    fields: ["CONTENT_TYPE", "EFFECTIVE_NAME", "RLS_SOURCE", "RLS_RESOLUTION", "RLS_CODEC", "RLS_HDR", "RLS_AUDIO", "RLS_CHANNELS", "RLS_GROUP", "RLS_YEAR"],
   },
   {
     label: "Grouping",
@@ -279,11 +288,11 @@ export const FIELD_GROUPS = [
   },
   {
     label: "Tracker",
-    fields: ["TRACKER", "TRACKERS", "TRACKERS_COUNT", "PRIVATE", "IS_UNREGISTERED", "COMMENT"],
+    fields: ["TRACKER", "TRACKERS", "TRACKERS_COUNT", "PRIVATE", "IS_UNREGISTERED", "TRACKER_STATUS", "TRACKER_MESSAGE", "COMMENT"],
   },
   {
     label: "Cross-Seed",
-    fields: ["EXISTS_ON_OTHER_INSTANCE", "SEEDING_ON_OTHER_INSTANCE", "EXISTS_ON_SAME_INSTANCE", "SEEDING_ON_SAME_INSTANCE"],
+    fields: ["EXISTS_ON_OTHER_INSTANCE", "SEEDING_ON_OTHER_INSTANCE", "EXISTS_ON_SAME_INSTANCE", "SEEDING_ON_SAME_INSTANCE", "CROSS_SEED_TAGS"],
   },
   {
     label: "Mode",
@@ -363,8 +372,21 @@ export const CAPABILITY_REASONS = {
   localFilesystemAccess: "Requires Local Filesystem Access",
 } as const;
 
+// "disabled" (status 0) is intentionally omitted: it only ever applies to qBittorrent's
+// DHT/PeX/LSD pseudo-trackers, which the evaluator skips, so it could never match a real tracker.
+export const TRACKER_STATUS_VALUES = [
+  { value: "not_contacted", label: "Not contacted" },
+  { value: "working", label: "Working" },
+  { value: "updating", label: "Updating" },
+  { value: "error", label: "Error" },
+  { value: "tracker_error", label: "Tracker error" },
+  { value: "unreachable", label: "Unreachable" },
+] as const;
+
 export const FIELD_REQUIREMENTS = {
   IS_UNREGISTERED: "trackerHealth",
+  TRACKER_STATUS: "trackerHealth",
+  TRACKER_MESSAGE: "trackerHealth",
   HAS_MISSING_FILES: "localFilesystemAccess",
   HARDLINK_SCOPE: "localFilesystemAccess",
   HARDLINK_SCOPE_CROSS: "localFilesystemAccess",
@@ -418,7 +440,7 @@ export function getTranslatedOperatorsForField(field: string, t: TFunction): { v
     if (!key) return op;
     // "is" / "is not" share keys with equals/notEquals for state/boolean types but have different labels
     const type = getFieldType(field);
-    if ((type === "state" || type === "boolean" || type === "hardlinkScope") && (op.value === "EQUAL" || op.value === "NOT_EQUAL")) {
+    if ((type === "state" || type === "trackerStatus" || type === "boolean" || type === "hardlinkScope") && (op.value === "EQUAL" || op.value === "NOT_EQUAL")) {
       return { value: op.value, label: t(`queryBuilder.operators.${op.value === "EQUAL" ? "is" : "isNot"}`, { defaultValue: op.label }) };
     }
     return { value: op.value, label: t(`queryBuilder.operators.${key}`, { defaultValue: op.label }) };
@@ -430,6 +452,14 @@ export function getTranslatedTorrentStates(t: TFunction): { value: string; label
   return TORRENT_STATES.map((state) => ({
     value: state.value,
     label: t(`queryBuilder.torrentStates.${state.value}`, { defaultValue: state.label }),
+  }));
+}
+
+/** Get translated tracker status values */
+export function getTranslatedTrackerStatuses(t: TFunction): { value: string; label: string }[] {
+  return TRACKER_STATUS_VALUES.map((status) => ({
+    value: status.value,
+    label: t(`queryBuilder.trackerStatuses.${status.value}`, { defaultValue: status.label }),
   }));
 }
 

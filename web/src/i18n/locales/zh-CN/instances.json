@@ -902,6 +902,7 @@
       "scanTruncated": "（扫描已截断，可能还有更多文件）",
       "viewPreview": "查看预览",
       "recentScans": "近期扫描",
+      "scannedPaths": "已扫描路径（{{total}}）",
       "zeroOrphans": "0 个孤立文件",
       "deletedStats": "已删除 {{deleted}} · {{size}}",
       "partialFailure": "部分失败 - 请查看近期扫描",
@@ -944,6 +945,12 @@
       "exportCSV": "导出 CSV",
       "close": "关闭",
       "deleteFiles": "删除文件",
+      "statusLabels": {
+        "pending": "等待中",
+        "deleted": "已删除",
+        "skipped": "已跳过",
+        "failed": "失败"
+      },
       "toast": {
         "deletionStarted": "删除已开始",
         "deletionDescription": "正在移除孤立文件",
@@ -979,7 +986,6 @@
       "autoCleanup": "自动清理",
       "autoCleanupLabel": "定时扫描自动清理",
       "autoCleanupTooltip": "启用后，定时扫描将自动删除孤立文件，无需手动确认。手动扫描将始终先显示预览。",
-      "autoCleanupDescription": "定时扫描完成后自动删除孤立文件",
       "autoDeleteWarningTitle": "自动删除将永久移除文件",
       "autoDeleteWarningBody": "被标记为孤立的文件将在无人工审核的情况下自动删除。如果目录扫描配置为常规模式，扫描目录中<span class=\"font-medium\">未被任何种子匹配的文件将被标记为孤立文件</span>并删除。",
       "autoDeleteWarningPaths": "请确保你的<span class=\"font-medium\">忽略路径</span>已正确配置，或使用硬链接/引用链接模式进行目录扫描。",
@@ -987,12 +993,10 @@
       "maxFilesThreshold": "最大文件阈值",
       "maxFilesThresholdTooltip": "安全限制：如果扫描发现的文件数超过此阈值，将跳过自动清理并要求人工审核。这可以捕获忽略路径配置错误等异常情况。",
       "files": "个文件",
-      "maxFilesThresholdDescription": "如果发现更多文件，将改为要求人工审核",
       "exclusions": "排除项",
       "ignorePaths": "忽略路径",
       "ignorePathsTooltip": "从扫描中排除的路径。这些目录中的文件永远不会被标记为孤立文件。每行输入一个路径。",
       "ignorePathsPlaceholder": "/downloads/preserve\n/downloads/manual\n/data/keep",
-      "ignorePathsDescription": "每行一个路径。路径按前缀匹配。",
       "saving": "保存中...",
       "saveChanges": "保存更改",
       "toast": {
@@ -1128,6 +1132,20 @@
       "enableMonitoring": "启用监控以开始跟踪停滞的种子。",
       "hashCopied": "哈希已复制",
       "copyHash": "复制哈希",
+      "outcomes": {
+        "succeeded": "成功",
+        "failed": "失败",
+        "skipped": "已跳过",
+        "started": "已开始"
+      },
+      "reasons": {
+        "debouncedCooldown": "在冷却窗口期内防抖",
+        "debouncedRetry": "在重试间隔窗口期内防抖",
+        "serviceNotStarted": "服务未启动",
+        "trackerHealthy": "Tracker 状态正常",
+        "jobSucceeded": "重新汇报任务成功",
+        "jobStarted_other": "重新汇报任务已开始 (最大重试次数 {{count}})"
+      },
       "form": {
         "instanceMissing": "实例缺失",
         "settingsSaved": "设置保存成功。",
@@ -1152,7 +1170,6 @@
         "maxRetries": "最大重试次数",
         "maxRetriesDescription": "每个种子的重试次数",
         "quickRetry": "快速重试",
-        "quickRetryDescription": "使用重试间隔作为冷却时间，而非默认的 2 分钟",
         "quickRetryTooltip": "使用重试间隔作为扫描之间的冷却时间，而非默认的 2 分钟。适用于注册新上传较慢的 Tracker。qui 会在 Tracker 更新期间始终等待，绝不会发送垃圾请求。",
         "scopeFiltering": "范围与过滤",
         "monitorAllStalled": "监控所有停滞的种子",
@@ -1346,8 +1363,7 @@
         "skipIfCrossSeedExists": "如果辅种存在于以下分类中则跳过",
         "aboutSkipping": "关于辅种存在时跳过",
         "skipHelp": "适用于 *arr 导入队列：如果至少有一个种子处于 *arr 导入队列中，则阻止自动化移动种子。",
-        "selectCategories": "选择分类...",
-        "skipDescription": "如果指向相同磁盘内容的另一个种子已在这些分类之一中，则跳过分类更改。"
+        "selectCategories": "选择分类..."
       },
       "externalProgram": {
         "program": "程序",
@@ -1611,6 +1627,13 @@
     "pageDescription": "管理实例的种子备份",
     "selectInstancePlaceholder": "选择实例",
     "loadingCapabilities": "正在加载实例功能...",
+    "statusLabels": {
+      "pending": "等待中",
+      "running": "运行中",
+      "success": "成功",
+      "failed": "失败",
+      "canceled": "已取消"
+    },
     "runKinds": {
       "manual": "手动",
       "hourly": "每小时",
@@ -1666,6 +1689,8 @@
       "includeCategoriesDescription": "在归档中按分类对种子进行分组",
       "includeTags": "包含标签",
       "includeTagsDescription": "在清单中存储种子标签",
+      "includeSavePaths": "包含保存路径",
+      "includeSavePathsDescription": "当种子的保存路径与其分类不同时进行记录，使已移动和交叉做种的种子能够恢复到正确的目录",
       "schedule": {
         "title": "自动频率",
         "description": "每小时、每天、每周和每月运行在上一次备份完成且间隔已过后开始。全部关闭则仅手动触发备份。",

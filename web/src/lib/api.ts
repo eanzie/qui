@@ -29,6 +29,7 @@ import type {
   CrossSeedAutomationStatus,
   CrossSeedBlocklistEntry,
   CrossSeedInstanceResult,
+  CrossSeedQueryDegradedReason,
   CrossSeedRun,
   CrossSeedSearchRun,
   CrossSeedSearchSettings,
@@ -45,10 +46,11 @@ import type {
   DirScanTriggerResponse,
   DirScanDirectoryUpdate,
   DirScanFile,
+  DirScanRequeueResponse,
   DirScanRun,
   DirScanRunInjection,
   DirScanSettings,
-  DirScanSettingsUpdate,
+  DirScanSettingsUpdate
 } from "@/types"
 import type {
   ArrSeedConfigCreate,
@@ -58,7 +60,7 @@ import type {
   ArrSeedProgress,
   ArrSeedRun,
   ArrSeedSettings,
-  ArrSeedSettingsUpdate,
+  ArrSeedSettingsUpdate
 } from "@/types/arrseed"
 import type {
   DiscoverJackettResponse,
@@ -68,6 +70,8 @@ import type {
   ExternalProgramExecute,
   ExternalProgramExecuteResponse,
   ExternalProgramUpdate,
+  FilterView,
+  FilterViewInput,
   IndexerActivityStatus,
   IndexerResponse,
   InstanceCapabilities,
@@ -79,6 +83,7 @@ import type {
   LocalCrossSeedMatch,
   LogExclusions,
   LogExclusionsInput,
+  LogFile,
   LogSettings,
   LogSettingsUpdate,
   MarkRSSAsReadRequest,
@@ -697,6 +702,7 @@ class ApiClient {
     keepMonthly: number
     includeCategories: boolean
     includeTags: boolean
+    includeSavePaths: boolean
   }): Promise<BackupSettings> {
     return this.request<BackupSettings>(`/instances/${instanceId}/backups/settings`, {
       method: "PUT",
@@ -827,7 +833,8 @@ class ApiClient {
       search?: string
       filters?: TorrentFilters
       preferCached?: boolean
-    }
+    },
+    signal?: AbortSignal
   ): Promise<TorrentResponse> {
     const searchParams = new URLSearchParams()
     if (params.page !== undefined) searchParams.set("page", params.page.toString())
@@ -839,7 +846,8 @@ class ApiClient {
     if (params.preferCached) searchParams.set("prefer", "stale")
 
     return this.request<TorrentResponse>(
-      `/instances/${instanceId}/torrents?${searchParams}`
+      `/instances/${instanceId}/torrents?${searchParams}`,
+      { signal }
     )
   }
 
@@ -930,7 +938,8 @@ class ApiClient {
       search?: string
       filters?: TorrentFilters
       instanceIds?: number[]
-    }
+    },
+    signal?: AbortSignal
   ): Promise<TorrentResponse> {
     const searchParams = new URLSearchParams()
     if (params.page !== undefined) searchParams.set("page", params.page.toString())
@@ -944,7 +953,8 @@ class ApiClient {
     }
 
     const response = await this.request<TorrentResponse>(
-      `/torrents/cross-instance?${searchParams}`
+      `/torrents/cross-instance?${searchParams}`,
+      { signal }
     )
 
     const normalizedCrossInstanceTorrents = normalizeCrossInstanceTorrents(
@@ -1297,6 +1307,8 @@ class ApiClient {
       source_torrent: RawTorrentInfo
       results?: RawSearchResult[]
       cache?: TorznabSearchCacheMetadata
+      partial?: boolean
+      query_degraded?: CrossSeedQueryDegradedReason
     }
 
     const response = await this.request<RawSearchResponse>(`/cross-seed/torrents/${instanceId}/${hash}/search`, {
@@ -1352,6 +1364,8 @@ class ApiClient {
         matchScore: result.match_score ?? 0,
       })),
       cache: response.cache,
+      partial: response.partial ?? undefined,
+      queryDegraded: response.query_degraded ?? undefined,
     }
   }
 
@@ -1541,6 +1555,8 @@ class ApiClient {
     indexerIds: number[]
     disableTorznab?: boolean
     cooldownMinutes: number
+    skipIndividualEpisodes?: boolean
+    maxAddedAgeDays?: number
   }): Promise<CrossSeedSearchRun> {
     return this.request<CrossSeedSearchRun>("/cross-seed/search/run", {
       method: "POST",
@@ -2009,6 +2025,14 @@ class ApiClient {
     return this.request("/license/refresh", { method: "POST" })
   }
 
+  // Custom themes (sideloaded CSS files; premium-gated server-side)
+  async getCustomThemes(): Promise<{
+    directory: string
+    themes: Array<{ id: string; filename: string; css: string }>
+  }> {
+    return this.request("/themes/custom")
+  }
+
   // Preferences endpoints
   async getInstancePreferences(instanceId: number): Promise<AppPreferences> {
     return this.request<AppPreferences>(`/instances/${instanceId}/preferences`)
@@ -2162,6 +2186,31 @@ class ApiClient {
     })
   }
 
+  // Filter Views endpoints
+  async listFilterViews(): Promise<FilterView[]> {
+    return this.request<FilterView[]>("/filter-views")
+  }
+
+  async createFilterView(data: FilterViewInput): Promise<FilterView> {
+    return this.request<FilterView>("/filter-views", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async updateFilterView(id: number, data: FilterViewInput): Promise<FilterView> {
+    return this.request<FilterView>(`/filter-views/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async deleteFilterView(id: number): Promise<void> {
+    return this.request(`/filter-views/${id}`, {
+      method: "DELETE",
+    })
+  }
+
   // Dashboard Settings endpoints
   async getDashboardSettings(): Promise<DashboardSettings> {
     return this.request<DashboardSettings>("/dashboard-settings")
@@ -2189,6 +2238,12 @@ class ApiClient {
   // Torznab Indexer endpoints
   async listTorznabIndexers(): Promise<TorznabIndexer[]> {
     return this.request<TorznabIndexer[]>("/torznab/indexers")
+  }
+
+  // Returns tracker domains derived from enabled indexers whose domain can be
+  // resolved reliably (native + Prowlarr backends; Jackett is omitted server-side).
+  async getIndexerTrackerDomains(): Promise<string[]> {
+    return this.request<string[]>("/torznab/indexers/tracker-domains")
   }
 
   async getTorznabIndexer(id: number): Promise<TorznabIndexer> {
@@ -2236,12 +2291,15 @@ class ApiClient {
     return this.request<SearchHistoryResponse>(`/torznab/search/history${params}`)
   }
 
-  async discoverJackettIndexers(baseUrl: string, apiKey: string, basicUsername?: string, basicPassword?: string): Promise<DiscoverJackettResponse> {
+  async discoverJackettIndexers(baseUrl: string, apiKey: string, basicUsername?: string, basicPassword?: string, sourceIndexerId?: number): Promise<DiscoverJackettResponse> {
     const user = basicUsername?.trim() ?? ""
     const payload: Record<string, unknown> = { base_url: baseUrl, api_key: apiKey }
     if (user) {
       payload.basic_username = user
       payload.basic_password = basicPassword ?? ""
+    }
+    if (sourceIndexerId !== undefined) {
+      payload.source_indexer_id = sourceIndexerId
     }
     return this.request<DiscoverJackettResponse>("/torznab/indexers/discover", {
       method: "POST",
@@ -2478,6 +2536,28 @@ class ApiClient {
     return `${API_BASE}/logs/stream?limit=${limit}`
   }
 
+  async getLogFiles(): Promise<LogFile[]> {
+    return this.request<LogFile[]>("/logs/files")
+  }
+
+  async downloadLogFile(filename: string): Promise<void> {
+    const response = await ssoSafeFetch(`${API_BASE}/logs/files/${encodeURIComponent(filename)}`, { method: "GET" })
+
+    if (!response.ok) {
+      throw new Error(`Failed to download log file: ${response.statusText}`)
+    }
+
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  }
+
   // Directory Scanner endpoints
   async getDirScanSettings(): Promise<DirScanSettings> {
     return this.request<DirScanSettings>("/dir-scan/settings")
@@ -2521,6 +2601,12 @@ class ApiClient {
 
   async resetDirScanFiles(directoryId: number): Promise<void> {
     return this.request(`/dir-scan/directories/${directoryId}/reset-files`, { method: "POST" })
+  }
+
+  async requeueDirScanNoMatch(directoryId: number): Promise<DirScanRequeueResponse> {
+    return this.request<DirScanRequeueResponse>(`/dir-scan/directories/${directoryId}/requeue-no-match`, {
+      method: "POST",
+    })
   }
 
   async triggerDirScan(directoryId: number): Promise<DirScanTriggerResponse> {

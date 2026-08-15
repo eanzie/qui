@@ -27,8 +27,11 @@ export type ConditionField =
   | "RLS_AUDIO"
   | "RLS_CHANNELS"
   | "RLS_GROUP"
+  | "RLS_YEAR"
   | "STATE"
   | "TRACKER"
+  | "TRACKER_STATUS"
+  | "TRACKER_MESSAGE"
   | "COMMENT"
   // Numeric fields (bytes)
   | "SIZE"
@@ -98,6 +101,7 @@ export type ConditionField =
   | "EXISTS_ON_OTHER_INSTANCE"
   | "SEEDING_ON_OTHER_INSTANCE"
   | "EXISTS_ON_SAME_INSTANCE"
+  | "CROSS_SEED_TAGS"
   | "SEEDING_ON_SAME_INSTANCE"
   // Enum-like fields
   | "HARDLINK_SCOPE"
@@ -424,8 +428,8 @@ export interface AutomationPreviewTorrent {
   isUnregistered?: boolean
   isCrossSeed?: boolean
   isHardlinkCopy?: boolean // Included via hardlink expansion (not ContentPath match)
-  hardlinkScope?: string // none, torrents_only, outside_qbittorrent
-  hardlinkCrossScope?: string // cross-instance: none, torrents_only, outside_qbittorrent
+  hardlinkScope?: string // none, torrents_only, outside_qbittorrent, both
+  hardlinkCrossScope?: string // cross-instance: none, torrents_only, outside_qbittorrent, both
   // Additional fields for dynamic columns
   numSeeds: number
   numComplete: number

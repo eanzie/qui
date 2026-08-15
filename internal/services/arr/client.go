@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -147,6 +148,30 @@ func (c *Client) ParseTitleLookupResult(ctx context.Context, title string) (*Ext
 		return c.parseSonarrResponse(ctx, resp.Body)
 	case models.ArrInstanceTypeRadarr:
 		return c.parseRadarrResponse(ctx, resp.Body)
+	default:
+		return nil, fmt.Errorf("unsupported instance type: %s", c.instanceType)
+	}
+}
+
+// LookupByTerm queries the ARR title-search endpoint (Radarr /api/v3/movie/lookup,
+// Sonarr /api/v3/series/lookup) and returns IDs/titles from the best-matching
+// candidate, or nil when no candidate matches term (and year, when known).
+func (c *Client) LookupByTerm(ctx context.Context, term string, year int) (*ExternalIDsLookupResult, error) {
+	params := url.Values{}
+	params.Set("term", term)
+	switch c.instanceType {
+	case models.ArrInstanceTypeRadarr:
+		var movies []RadarrMovie
+		if err := c.getJSON(ctx, "/api/v3/movie/lookup", params, &movies); err != nil {
+			return nil, err
+		}
+		return lookupResultFromRadarrMovie(selectRadarrLookupMatch(term, year, movies)), nil
+	case models.ArrInstanceTypeSonarr:
+		var series []SonarrSeries
+		if err := c.getJSON(ctx, "/api/v3/series/lookup", params, &series); err != nil {
+			return nil, err
+		}
+		return c.sonarrSeriesLookupResult(ctx, selectSonarrLookupMatch(term, year, series)), nil
 	default:
 		return nil, fmt.Errorf("unsupported instance type: %s", c.instanceType)
 	}
@@ -578,9 +603,7 @@ func (c *Client) UpdateSeriesFields(ctx context.Context, seriesID int, updates m
 		return fmt.Errorf("unmarshal series JSON: %w", err)
 	}
 
-	for k, v := range updates {
-		obj[k] = v
-	}
+	maps.Copy(obj, updates)
 
 	endpoint := fmt.Sprintf("/api/v3/series/%d", seriesID)
 	if err := c.putJSON(ctx, endpoint, obj); err != nil {
@@ -602,9 +625,7 @@ func (c *Client) UpdateMovieFields(ctx context.Context, movieID int, updates map
 		return fmt.Errorf("unmarshal movie JSON: %w", err)
 	}
 
-	for k, v := range updates {
-		obj[k] = v
-	}
+	maps.Copy(obj, updates)
 
 	endpoint := fmt.Sprintf("/api/v3/movie/%d", movieID)
 	if err := c.putJSON(ctx, endpoint, obj); err != nil {
@@ -616,9 +637,7 @@ func (c *Client) UpdateMovieFields(ctx context.Context, movieID int, updates map
 // SendCommand sends a command to the ARR instance via POST /api/v3/command.
 func (c *Client) SendCommand(ctx context.Context, name string, params map[string]any) (*CommandResponse, error) {
 	body := map[string]any{"name": name}
-	for k, v := range params {
-		body[k] = v
-	}
+	maps.Copy(body, params)
 	var result CommandResponse
 	if err := c.postJSON(ctx, "/api/v3/command", body, &result); err != nil {
 		return nil, fmt.Errorf("send command %s: %w", name, err)

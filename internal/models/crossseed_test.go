@@ -71,21 +71,23 @@ func TestCrossSeedStore_SettingsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, defaults.Enabled)
 	assert.Equal(t, 120, defaults.RunIntervalMinutes)
+	assert.False(t, defaults.RescueTitleMismatches)
 
 	category := "TV"
 
 	updated, err := store.UpsertSettings(ctx, &models.CrossSeedAutomationSettings{
-		Enabled:              true,
-		RunIntervalMinutes:   30,
-		StartPaused:          false,
-		Category:             &category,
-		RSSAutomationTags:    []string{"cross-seed", "automation"},
-		SeededSearchTags:     []string{"seeded"},
-		CompletionSearchTags: []string{"completion"},
-		WebhookTags:          []string{"webhook"},
-		TargetInstanceIDs:    []int{1, 2},
-		TargetIndexerIDs:     []int{11, 42},
-		MaxResultsPerRun:     25,
+		Enabled:               true,
+		RunIntervalMinutes:    30,
+		StartPaused:           false,
+		Category:              &category,
+		RSSAutomationTags:     []string{"cross-seed", "automation"},
+		SeededSearchTags:      []string{"seeded"},
+		CompletionSearchTags:  []string{"completion"},
+		WebhookTags:           []string{"webhook"},
+		TargetInstanceIDs:     []int{1, 2},
+		TargetIndexerIDs:      []int{11, 42},
+		MaxResultsPerRun:      25,
+		RescueTitleMismatches: true,
 	})
 	require.NoError(t, err)
 
@@ -101,6 +103,7 @@ func TestCrossSeedStore_SettingsRoundTrip(t *testing.T) {
 	assert.ElementsMatch(t, []int{1, 2}, updated.TargetInstanceIDs)
 	assert.ElementsMatch(t, []int{11, 42}, updated.TargetIndexerIDs)
 	assert.Equal(t, 25, updated.MaxResultsPerRun)
+	assert.True(t, updated.RescueTitleMismatches)
 
 	reloaded, err := store.GetSettings(ctx)
 	require.NoError(t, err)
@@ -339,4 +342,38 @@ func TestCrossSeedStore_FeedItems(t *testing.T) {
 	removed, err := store.PruneFeedItems(ctx, cutoff)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), removed)
+}
+
+// A rule stored before a rule could carry several categories decodes with none.
+// It must not reach the API, where a nil list marshals to null and breaks a
+// client that expects the array the schema promises.
+func TestCrossSeedStore_SettingsDropsLegacySingleCategoryRules(t *testing.T) {
+	db := setupCrossSeedTestDB(t)
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	store, err := models.NewCrossSeedStore(db, key)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	settings, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+	settings.CategoryMappingRules = []models.CategoryMappingRule{{Categories: []string{"ebooks"}, ContentType: "book"}}
+	_, err = store.UpsertSettings(ctx, settings)
+	require.NoError(t, err)
+
+	// Rewrite the column in the shape the previous release wrote.
+	_, err = db.ExecContext(ctx,
+		`UPDATE cross_seed_settings SET category_mapping_rules = ?`,
+		`[{"category":"ebooks","contentType":"book"},{"categories":["films"],"contentType":"movie"}]`)
+	require.NoError(t, err)
+
+	reloaded, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []models.CategoryMappingRule{{Categories: []string{"films"}, ContentType: "movie"}}, reloaded.CategoryMappingRules)
+
+	encoded, err := json.Marshal(reloaded.CategoryMappingRules)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "null", "a nil category list would reach the client as null")
 }

@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -416,6 +418,12 @@ func TestBuildTorrentSearchResultsKeepsDuplicateRejectedByContentPrefilter(t *te
 	require.Len(t, results, 1)
 	require.Equal(t, existing.Name, results[0].Title)
 	require.Equal(t, duplicateHash, results[0].InfoHashV1)
+
+	scored[0].class = searchCandidateClassTitleRescue
+	results, duplicateFiltered, err = svc.buildTorrentSearchResults(context.Background(), instanceID, sourceHash, scored, 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, duplicateFiltered)
+	require.Empty(t, results)
 }
 
 func TestContentFilteringWaitTimeoutDefault(t *testing.T) {
@@ -505,6 +513,107 @@ func TestFilterSearchResultsByLateContentFilterCompletedStateWithNoResultsReturn
 	require.Equal(t, map[int]string{1: "already seeded from Tracker One"}, snapshot.ExcludedIndexers)
 	require.Equal(t, []string{"Existing.Movie.2015.1080p.BluRay-GROUP"}, snapshot.ContentMatches)
 	require.Zero(t, dropped)
+}
+
+func TestSearchTorrentMatchesRefreshesLateFilterStatus(t *testing.T) {
+	const (
+		instanceID = 1
+		sourceHash = "0123456789abcdef0123456789abcdef01234567"
+		sourceName = "Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GROUP"
+	)
+
+	tests := []struct {
+		name        string
+		resultItems string
+		wantResults int
+	}{
+		{name: "zero results"},
+		{
+			name: "populated results",
+			resultItems: `<item>
+				<title>` + sourceName + `</title>
+				<guid>candidate-guid</guid>
+				<size>123</size>
+				<enclosure url="https://example.invalid/candidate.torrent" length="123" type="application/x-bittorrent" />
+			</item>`,
+			wantResults: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			filterCache := ttlcache.New(ttlcache.Options[string, *AsyncIndexerFilteringState]{})
+			cacheKey := asyncFilteringCacheKey(instanceID, sourceHash)
+			filterCache.Set(cacheKey, &AsyncIndexerFilteringState{
+				CapabilitiesCompleted: true,
+				ContentCompleted:      false,
+				CapabilityIndexers:    []int{1, 2},
+				FilteredIndexers:      []int{1, 2},
+			}, ttlcache.DefaultTTL)
+
+			lateState := &AsyncIndexerFilteringState{
+				CapabilitiesCompleted: true,
+				ContentCompleted:      true,
+				CapabilityIndexers:    []int{1, 2},
+				FilteredIndexers:      []int{1},
+				ExcludedIndexers:      map[int]string{2: "already seeded from Tracker Two"},
+				ContentMatches:        []string{"Existing.Show.S01E01.1080p.WEB-DL-GROUP"},
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				filterCache.Set(cacheKey, lateState, ttlcache.DefaultTTL)
+				w.Header().Set("Content-Type", "application/rss+xml")
+				if _, writeErr := fmt.Fprintf(w, `<rss version="2.0"><channel><title>Tracker One</title>%s</channel></rss>`, test.resultItems); writeErr != nil {
+					t.Errorf("write Torznab response: %v", writeErr)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			instance := &models.Instance{ID: instanceID, Name: "main"}
+			source := qbt.Torrent{
+				Hash:     sourceHash,
+				Name:     sourceName,
+				Size:     123,
+				Progress: 1,
+			}
+			service := &Service{
+				instanceStore: &fakeInstanceStore{instances: map[int]*models.Instance{instanceID: instance}},
+				jackettService: newJackettServiceWithIndexers([]*models.TorznabIndexer{
+					{
+						ID:             1,
+						Name:           "Tracker One",
+						BaseURL:        server.URL,
+						Backend:        models.TorznabBackendNative,
+						TimeoutSeconds: 5,
+						Enabled:        true,
+					},
+				}),
+				syncManager: newFakeSyncManager(instance, []qbt.Torrent{source}, map[string]qbt.TorrentFiles{
+					sourceHash: {{Name: sourceName + ".mkv", Size: source.Size}},
+				}),
+				asyncFilteringCache: filterCache,
+				releaseCache:        NewReleaseCache(),
+				stringNormalizer:    stringutils.NewDefaultNormalizer(),
+			}
+
+			response, _, _, err := service.searchTorrentMatches(
+				context.Background(),
+				instanceID,
+				sourceHash,
+				TorrentSearchOptions{
+					IndexerIDs:  []int{1},
+					SkipGazelle: true,
+				},
+				nil,
+			)
+			require.NoError(t, err)
+			require.Len(t, response.Results, test.wantResults)
+			require.Equal(t, lateState.CapabilityIndexers, response.SourceTorrent.AvailableIndexers)
+			require.Equal(t, lateState.FilteredIndexers, response.SourceTorrent.FilteredIndexers)
+			require.Equal(t, lateState.ExcludedIndexers, response.SourceTorrent.ExcludedIndexers)
+			require.Equal(t, lateState.ContentMatches, response.SourceTorrent.ContentMatches)
+			require.True(t, response.SourceTorrent.ContentFilteringCompleted)
+		})
+	}
 }
 
 func TestFilterSearchResultsByLateContentFilterDropsExcludedIndexers(t *testing.T) {
@@ -620,7 +729,7 @@ func TestApplyTorrentSearchResultsSkipsCachedSelectionWhenInfohashExists(t *test
 		InfoHashV1:  duplicateHash,
 		Size:        existing.Size,
 	}
-	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached}, 5)
+	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached})
 
 	resp, err := svc.ApplyTorrentSearchResults(context.Background(), instanceID, sourceHash, &ApplyTorrentSearchRequest{
 		Selections: []TorrentSearchSelection{
@@ -697,7 +806,7 @@ func TestApplyTorrentSearchResultsFailsCachedSelectionWhenRejectedInfohashExists
 		InfoHashV1:  duplicateHash,
 		Size:        existing.Size,
 	}
-	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached}, 5)
+	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached})
 
 	resp, err := svc.ApplyTorrentSearchResults(context.Background(), instanceID, sourceHash, &ApplyTorrentSearchRequest{
 		Selections: []TorrentSearchSelection{
@@ -775,7 +884,7 @@ func TestApplyTorrentSearchResultsSkipsCachedSelectionWhenRejectedInfohashExists
 		InfoHashV1:  duplicateHash,
 		Size:        existing.Size,
 	}
-	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached}, 5)
+	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached})
 
 	resp, err := svc.ApplyTorrentSearchResults(context.Background(), instanceID, sourceHash, &ApplyTorrentSearchRequest{
 		Selections: []TorrentSearchSelection{
@@ -950,7 +1059,7 @@ func TestApplyTorrentSearchResultsPropagatesCachedDuplicateContextError(t *testi
 		GUID:        "duplicate-guid",
 		InfoHashV1:  strings.Repeat("0", 40),
 	}
-	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached}, 5)
+	svc.cacheSearchResults(instanceID, sourceHash, []TorrentSearchResult{cached})
 
 	resp, err := svc.ApplyTorrentSearchResults(context.Background(), instanceID, sourceHash, &ApplyTorrentSearchRequest{
 		Selections: []TorrentSearchSelection{

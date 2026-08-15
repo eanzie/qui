@@ -6,14 +6,16 @@ package crossseed
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/anacrolix/torrent/bencode"
 	qbt "github.com/autobrr/go-qbittorrent"
+	"github.com/autobrr/go-torrent/bencode"
 	"github.com/stretchr/testify/require"
 
 	"github.com/autobrr/qui/pkg/stringutils"
@@ -28,11 +30,13 @@ import (
 )
 
 type spyARRLookupService struct {
-	title       string
-	contentType arr.ContentType
-	result      *arr.ExternalIDsResult
-	err         error
-	called      bool
+	title        string
+	contentType  arr.ContentType
+	result       *arr.ExternalIDsResult
+	seasonResult *arr.SeasonEpisodeTotalResult
+	err          error
+	called       bool
+	seasonCalls  int
 }
 
 func (s *spyARRLookupService) LookupExternalIDs(_ context.Context, title string, contentType arr.ContentType) (*arr.ExternalIDsResult, error) {
@@ -43,7 +47,8 @@ func (s *spyARRLookupService) LookupExternalIDs(_ context.Context, title string,
 }
 
 func (s *spyARRLookupService) LookupSeasonEpisodeTotal(context.Context, string, int) (*arr.SeasonEpisodeTotalResult, error) {
-	return nil, nil
+	s.seasonCalls++
+	return s.seasonResult, s.err
 }
 
 type failingEnabledIndexerStore struct {
@@ -51,7 +56,12 @@ type failingEnabledIndexerStore struct {
 	indexers []*models.TorznabIndexer
 }
 
-func (s *failingEnabledIndexerStore) Get(context.Context, int) (*models.TorznabIndexer, error) {
+func (s *failingEnabledIndexerStore) Get(_ context.Context, id int) (*models.TorznabIndexer, error) {
+	for _, indexer := range s.indexers {
+		if indexer != nil && indexer.ID == id {
+			return indexer, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -142,9 +152,24 @@ func TestLookupARRExternalIDsSkipsTypedNilARRService(t *testing.T) {
 	var arrService *arr.Service
 	svc := &Service{arrService: arrService}
 
-	got := svc.lookupARRExternalIDs(context.Background(), "Inception.2010", "movie")
+	got, degraded := svc.lookupARRExternalIDs(context.Background(), "Inception.2010", "movie")
 
 	require.Nil(t, got)
+	require.Empty(t, degraded)
+}
+
+func TestLookupARRExternalIDsNoInstancesIsNotDegraded(t *testing.T) {
+	// A (nil, nil) lookup result means no enabled ARR instance covers the
+	// content type — installs without ARR must not see a degradation banner
+	// on every search.
+	spy := &spyARRLookupService{}
+	svc := &Service{arrService: spy}
+
+	got, degraded := svc.lookupARRExternalIDs(context.Background(), "Inception.2010", "movie")
+
+	require.True(t, spy.called)
+	require.Nil(t, got)
+	require.Empty(t, degraded)
 }
 
 func TestAutomationTorrentSearchContext(t *testing.T) {
@@ -196,49 +221,6 @@ func TestEffectiveTorznabCrossSeedSearchLimit(t *testing.T) {
 	}
 }
 
-func TestSearchTolerancePercentUsesRunOverride(t *testing.T) {
-	svc := &Service{
-		automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
-			settings := models.DefaultCrossSeedAutomationSettings()
-			settings.SizeMismatchTolerancePercent = 5
-			return settings, nil
-		},
-	}
-
-	tests := []struct {
-		name string
-		opts TorrentSearchOptions
-		want float64
-	}{
-		{
-			name: "explicit zero",
-			opts: TorrentSearchOptions{
-				SizeMismatchTolerancePercent:    0,
-				SizeMismatchTolerancePercentSet: true,
-			},
-			want: 0,
-		},
-		{
-			name: "positive override without set flag",
-			opts: TorrentSearchOptions{
-				SizeMismatchTolerancePercent: 20,
-			},
-			want: 20,
-		},
-		{
-			name: "fallback settings",
-			opts: TorrentSearchOptions{},
-			want: 5,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.InDelta(t, tt.want, svc.searchTolerancePercent(context.Background(), tt.opts), 0.0001)
-		})
-	}
-}
-
 func TestLookupARRExternalIDsMapsContentType(t *testing.T) {
 	ids := &models.ExternalIDs{TMDbID: 27205, IMDbID: "tt1375666"}
 	tests := []struct {
@@ -248,6 +230,7 @@ func TestLookupARRExternalIDsMapsContentType(t *testing.T) {
 		lookupErr       error
 		wantResult      bool
 		wantCalled      bool
+		wantDegraded    string
 	}{
 		{
 			name:            "movie maps to Radarr",
@@ -287,6 +270,7 @@ func TestLookupARRExternalIDsMapsContentType(t *testing.T) {
 			wantContentType: arr.ContentTypeMovie,
 			lookupErr:       errors.New("lookup failed"),
 			wantCalled:      true,
+			wantDegraded:    QueryDegradedARRLookupFailed,
 		},
 	}
 
@@ -302,9 +286,10 @@ func TestLookupARRExternalIDsMapsContentType(t *testing.T) {
 			}
 			svc := &Service{arrService: spy}
 
-			got := svc.lookupARRExternalIDs(context.Background(), "Inception.2010", tt.contentType)
+			got, degraded := svc.lookupARRExternalIDs(context.Background(), "Inception.2010", tt.contentType)
 
 			require.Equal(t, tt.wantCalled, spy.called)
+			require.Equal(t, tt.wantDegraded, degraded)
 			if !tt.wantCalled {
 				require.Nil(t, got)
 				return
@@ -335,12 +320,13 @@ func TestLookupARRExternalIDsPreservesTitleOnlyResult(t *testing.T) {
 	}
 	svc := &Service{arrService: spy}
 
-	got := svc.lookupARRExternalIDs(context.Background(), "Sousou.no.Frieren.S01", "anime")
+	got, degraded := svc.lookupARRExternalIDs(context.Background(), "Sousou.no.Frieren.S01", "anime")
 
 	require.NotNil(t, got)
 	require.True(t, got.IDs.IsEmpty())
 	require.Equal(t, titles, got.Titles)
 	require.Equal(t, arr.ContentTypeAnime, spy.contentType)
+	require.Equal(t, QueryDegradedARRNoIDs, degraded)
 }
 
 func TestGazelleTargetsForSource(t *testing.T) {
@@ -588,9 +574,14 @@ func TestRefreshSearchQueueCountsCooldownEligibleTorrents(t *testing.T) {
 		stringNormalizer: stringutils.NewDefaultNormalizer(),
 	}
 
+	indexerStore, err := models.NewTorznabIndexerStore(db, key)
+	require.NoError(t, err)
+	indexer, err := indexerStore.Create(ctx, "Indexer", "http://indexer/a", "api-key", nil, nil, true, 0, 30)
+	require.NoError(t, err)
+
 	now := time.Now().UTC()
-	require.NoError(t, store.UpsertSearchHistory(ctx, instance.ID, "recent-hash", now.Add(-1*time.Hour)))
-	require.NoError(t, store.UpsertSearchHistory(ctx, instance.ID, "stale-hash", now.Add(-13*time.Hour)))
+	require.NoError(t, store.UpsertIndexerSearchHistory(ctx, instance.ID, "recent-hash", []int{indexer.ID}, now.Add(-1*time.Hour)))
+	require.NoError(t, store.UpsertIndexerSearchHistory(ctx, instance.ID, "stale-hash", []int{indexer.ID}, now.Add(-13*time.Hour)))
 
 	run, err := store.CreateSearchRun(ctx, &models.CrossSeedSearchRun{
 		InstanceID:      instance.ID,
@@ -610,6 +601,7 @@ func TestRefreshSearchQueueCountsCooldownEligibleTorrents(t *testing.T) {
 			InstanceID:      instance.ID,
 			CooldownMinutes: 720,
 		},
+		resolvedTorznabIndexerIDs: []int{indexer.ID},
 	}
 
 	require.NoError(t, service.refreshSearchQueue(ctx, state))
@@ -668,6 +660,7 @@ func TestRefreshSearchQueue_TorznabDisabledCountsAllSources(t *testing.T) {
 			InstanceID:     instance.ID,
 			DisableTorznab: true,
 		},
+		gazelleClients: &gazelleClientSet{byHost: map[string]*gazellemusic.Client{"redacted.sh": nil}},
 	}
 
 	require.NoError(t, service.refreshSearchQueue(ctx, state))
@@ -797,14 +790,13 @@ func TestPropagateDuplicateSearchHistory(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	service.propagateDuplicateSearchHistory(ctx, state, "rep-hash", now)
+	service.propagateDuplicateSearchHistory(ctx, state, "rep-hash", now, nil, true)
 
 	for _, hash := range []string{"dup-hash-a", "dup-hash-b"} {
 		last, found, err := store.GetSearchHistory(ctx, instance.ID, hash)
 		require.NoError(t, err)
 		require.True(t, found, "expected duplicate hash %s to be recorded", hash)
 		require.WithinDuration(t, now, last, time.Second)
-		require.True(t, state.skipCache[strings.ToLower(hash)])
 	}
 }
 
@@ -1577,6 +1569,9 @@ func TestSearchTorrentMatches_GazelleTargetHashSkipReturnsNoBackendWithoutTorzna
 	sourceHash := "223759985c562a644428312c8cd3585d04686847"
 	sourceHashNorm := strings.ToLower(sourceHash)
 
+	// Stub keeps a broken skip from reaching the live tracker.
+	stubGazelleMatchLookup(t)
+
 	svc := &Service{
 		instanceStore:    instanceStore,
 		automationStore:  store,
@@ -1726,6 +1721,9 @@ func TestSearchTorrentMatches_DisableTorznabAllowsGazellePrefilterOnlySkip(t *te
 		Size:     123,
 		Tracker:  "https://orpheus.network/announce",
 	}
+
+	// Stub keeps a broken skip from reaching the live tracker.
+	stubGazelleMatchLookup(t)
 
 	svc := &Service{
 		instanceStore:    instanceStore,
@@ -2386,8 +2384,30 @@ func TestSearchRunLoop_FilteredIndexersDoesNotSleepWithoutRemoteRequest(t *testi
 	require.False(t, found)
 }
 
+// gazelleTestServer stands in for the real Gazelle APIs so tests never send
+// requests to the live trackers.
+var gazelleTestServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "unexpected gazelle API call: "+r.URL.Path, http.StatusNotImplemented)
+}))
+
+// stubGazelleMatchLookup keeps a test off the real tracker APIs when it builds a
+// client through buildGazelleClientSet, which always points at the live hosts.
+// Callers must not be parallel: findGazelleMatch is a package variable.
+func stubGazelleMatchLookup(t *testing.T) {
+	t.Helper()
+	prevFindMatch := findGazelleMatch
+	findGazelleMatch = func(context.Context, *gazellemusic.Client, []byte, map[string]int64, int64) (*gazellemusic.Match, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		findGazelleMatch = prevFindMatch
+	})
+}
+
+// gazelleClientsForTest returns a client set keyed by the real OPS host, because
+// host matching uses that key, but the client itself talks to the test server.
 func gazelleClientsForTest() (*gazelleClientSet, error) {
-	client, err := gazellemusic.NewClient("https://orpheus.network", "ops-key")
+	client, err := gazellemusic.NewClient("orpheus.network", gazelleTestServer.URL, "ops-key")
 	if err != nil {
 		return nil, err
 	}

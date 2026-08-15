@@ -13,7 +13,7 @@ A web interface for qBittorrent. Manage multiple qBittorrent instances from a si
 - **Single Binary**: No dependencies, just download and run
 - **Multi-Instance Support**: Manage all your qBittorrent instances from one place
 - **Large Collections**: Handles thousands of torrents efficiently
-- **Themeable**: Multiple color themes available
+- **Themeable**: Multiple built-in color themes, plus sideloadable [custom themes](./features/custom-themes.md) (premium)
 - **Base URL Support**: Serve from a subdirectory (e.g., `/qui/`) for reverse proxy setups
 - **OIDC Single Sign-On**: Authenticate through your OpenID Connect provider
 - **External Programs**: Launch custom scripts from the torrent context menu
@@ -24,7 +24,7 @@ A web interface for qBittorrent. Manage multiple qBittorrent instances from a si
 - **Cross-Seed**: Automatically find and add matching torrents across trackers with autobrr webhook integration
 - **Reverse Proxy**: Transparent qBittorrent proxy for external apps like autobrr, Sonarr, and Radarr—no credential sharing needed
 - **Incognito Mode**: Disguise torrents as Linux ISOs for screen sharing and screenshots
-- **Multi-Language**: Interface available in English, German, French, and Simplified Chinese with automatic browser-language detection
+- **Multi-Language**: Interface available in English, German, French, Italian, Czech, Ukrainian, Korean, Brazilian Portuguese and Simplified Chinese with automatic browser-language detection
 
 ## Browser Extensions
 
@@ -35,7 +35,7 @@ Right-click any magnet or torrent link to add it directly to your qBittorrent in
 
 ## Languages
 
-qui is available in English, German, French, and Simplified Chinese. The interface detects your browser language on first load and remembers your choice after that.
+qui is available in English, German, French, Italian, Czech, Ukrainian, Korean, Brazilian Portuguese, and Simplified Chinese. The interface detects your browser language on first load and remembers your choice after that.
 
 To change it manually, open the user menu in the top-right corner and pick a language from the globe submenu.
 
@@ -45,7 +45,7 @@ Translations are community-contributed and we welcome more. To add or improve a 
 
 Get started in minutes:
 
-1. [Install qui](/docs/getting-started/installation)
+1. [Install qui](./getting-started/installation.md)
 2. Open your browser to http://localhost:7476
 3. Create your admin account
 4. Add your qBittorrent instance(s)

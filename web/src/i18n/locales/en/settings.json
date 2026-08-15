@@ -266,7 +266,6 @@
         "discord": "discord://token@id"
       },
       "enabled": "Enabled",
-      "enabledDescription": "Toggle delivery for this target.",
       "events": "Events",
       "selectAll": "Select all",
       "select": "Select",
@@ -407,6 +406,13 @@
       "jsonCopied": "JSON log entry copied",
       "rawCopied": "Raw log entry copied",
       "copyFailed": "Failed to copy log entry"
+    },
+    "files": {
+      "title": "Log files",
+      "downloadSrOnly": "Download {{filename}}",
+      "toasts": {
+        "downloadFailed": "Failed to download {{filename}}"
+      }
     }
   },
   "themes": {
@@ -446,7 +452,7 @@
       },
       "status": {
         "unlockTitle": "Unlock Premium Themes",
-        "unlockDescription": "Pay what you want (min $4.99) • Lifetime license • All themes",
+        "unlockDescription": "Pay what you want (min $9.99) • Lifetime license • All themes",
         "activeTitle": "Premium Access Active",
         "activeDescription": "You have access to all current and future premium themes",
         "activationRequiredTitle": "License Activation Required",
@@ -510,7 +516,7 @@
       },
       "paymentDialog": {
         "title": "Get Premium License",
-        "description": "Pay what you want (min $4.99) • Lifetime license • All themes",
+        "description": "Pay what you want (min $9.99) • Lifetime license • All themes",
         "steps": {
           "choosePaymentMethod": {
             "title": "Choose payment method",
@@ -552,6 +558,19 @@
         "refreshedAll": "All licenses refreshed successfully",
         "refreshFailed": "Failed to refresh licenses"
       }
+    },
+    "custom": {
+      "badge": "Custom",
+      "title": "Custom Themes",
+      "lockedTitle": "Custom themes are a premium feature",
+      "lockedDescription": "Unlock premium to sideload your own theme CSS files from a directory on disk.",
+      "unlockCta": "Unlock premium",
+      "directoryLabel": "Themes directory",
+      "refresh": "Refresh",
+      "detectedCount": "Themes found: {{total}}",
+      "parseErrorsTitle": "Could not parse these files:",
+      "noneFound": "No custom themes found. Drop a .css file into the themes directory and click Refresh.",
+      "loadError": "Couldn't load custom themes. Check the server logs and the themes directory permissions."
     }
   },
   "arrInstances": {
@@ -674,6 +693,27 @@
       "capsSynced": "Capabilities synced from backend",
       "failedToSyncCaps": "Failed to sync caps"
     },
+    "priorityLabels": {
+      "interactive": "Interactive",
+      "rss": "RSS",
+      "completion": "Completion",
+      "background": "Background"
+    },
+    "contentTypeLabels": {
+      "movie": "Movie",
+      "tv": "TV",
+      "tv_daily": "TV (Daily)",
+      "xxx": "XXX",
+      "music": "Music",
+      "audiobook": "Audiobook",
+      "book": "Book",
+      "comic": "Comic",
+      "magazine": "Magazine",
+      "education": "Education",
+      "app": "App",
+      "game": "Game",
+      "unknown": "Unknown"
+    },
     "page": {
       "summary": "{{enabled}} enabled, {{capabilities}} with capabilities",
       "description": "Manage Torznab indexers powered by Jackett, Prowlarr, or native tracker endpoints",
@@ -792,6 +832,14 @@
         "created": "{{count}} created",
         "updated": "{{count}} updated",
         "failed": "{{count}} failed"
+      },
+      "savedConnections": {
+        "title": "Saved connections",
+        "description": "Use a server you imported from before. The API key stays on the server.",
+        "manual": "Enter manually",
+        "storedKey": "The stored API key for this server is used.",
+        "indexerCount_one": "{{count}} indexer",
+        "indexerCount_other": "{{count}} indexers"
       }
     },
     "table": {

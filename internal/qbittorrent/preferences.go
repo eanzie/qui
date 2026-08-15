@@ -5,11 +5,13 @@ package qbittorrent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	qbt "github.com/autobrr/go-qbittorrent"
+	"github.com/rs/zerolog/log"
 )
 
 const appPreferencesCacheTTL = 30 * time.Second
@@ -35,14 +37,30 @@ func (c *Client) GetAppPreferences(ctx context.Context) (*qbt.AppPreferences, er
 	}
 
 	c.preferencesMu.RLock()
-	if c.preferencesCache != nil && time.Since(c.preferencesFetchedAt) < appPreferencesCacheTTL {
-		cached := cloneAppPreferences(c.preferencesCache)
-		c.preferencesMu.RUnlock()
-		return cached, nil
-	}
+	cached := cloneAppPreferences(c.preferencesCache)
+	fresh := c.preferencesCache != nil && time.Since(c.preferencesFetchedAt) < appPreferencesCacheTTL
 	c.preferencesMu.RUnlock()
 
-	return c.refreshAppPreferences(ctx)
+	if fresh {
+		return cached, nil
+	}
+
+	prefs, err := c.refreshAppPreferences(ctx)
+	if err != nil {
+		// Mirror GetAppInfo: a saturated qBittorrent WebUI times out even cheap
+		// calls, so serve the last known preferences instead of failing the
+		// torrent stream tick; only surface the error when nothing is cached.
+		if cached != nil {
+			log.Debug().
+				Err(err).
+				Int("instanceID", c.instanceID).
+				Msg("Serving stale qBittorrent app preferences after refresh failure")
+			return cached, nil
+		}
+		return nil, err
+	}
+
+	return prefs, nil
 }
 
 func (c *Client) refreshAppPreferences(ctx context.Context) (*qbt.AppPreferences, error) {
@@ -58,10 +76,32 @@ func (c *Client) refreshAppPreferences(ctx context.Context) (*qbt.AppPreferences
 
 	c.preferencesMu.Lock()
 	c.preferencesCache = cloned
+	c.preferencesJSON = nil
 	c.preferencesFetchedAt = time.Now()
 	c.preferencesMu.Unlock()
 
 	return cloneAppPreferences(cloned), nil
+}
+
+// cachedAppPreferencesJSON returns the cached preferences already rendered to
+// JSON, or nil when nothing is cached. The ~150-field struct reflects to the
+// same bytes on every list response between refreshes, so it is rendered once
+// per refresh instead of once per response.
+func (c *Client) cachedAppPreferencesJSON() (json.RawMessage, error) {
+	c.preferencesMu.Lock()
+	defer c.preferencesMu.Unlock()
+
+	if c.preferencesCache == nil {
+		return nil, nil
+	}
+	if c.preferencesJSON == nil {
+		data, err := json.Marshal(c.preferencesCache)
+		if err != nil {
+			return nil, err
+		}
+		c.preferencesJSON = data
+	}
+	return c.preferencesJSON, nil
 }
 
 // GetCachedAppPreferences returns the last cached app preferences without triggering a refresh.
@@ -76,6 +116,7 @@ func (c *Client) GetCachedAppPreferences() *qbt.AppPreferences {
 func (c *Client) InvalidateAppPreferencesCache() {
 	c.preferencesMu.Lock()
 	c.preferencesCache = nil
+	c.preferencesJSON = nil
 	c.preferencesFetchedAt = time.Time{}
 	c.preferencesMu.Unlock()
 }

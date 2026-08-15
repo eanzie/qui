@@ -22,6 +22,8 @@
       "tracker": "Tracker-Name",
       "uploaded": "Hochgeladen",
       "downloaded": "Heruntergeladen",
+      "downloadedSession": "Heruntergeladen (Sitzung)",
+      "uploadedSession": "Hochgeladen (Sitzung)",
       "ratio": "Ratio",
       "buffer": "Buffer",
       "count": "Torrents",
@@ -66,6 +68,11 @@
     "connectable": "Verbindbar",
     "portInfo": ". Port: {{port}}",
     "connectionStatus": "qBittorrent-Verbindungsstatus: {{status}}",
+    "streamStatus": {
+      "cached": "Zwischengespeicherter Dashboard-Snapshot wird während der Aktualisierung angezeigt",
+      "fallback": "Dashboard-Statistiken werden aktualisiert",
+      "error": "Stream-Problem; Fallback-Aktualisierung wird verwendet"
+    },
     "altSpeedDialog": {
       "enableTitle": "Alternative Geschwindigkeitsbegrenzungen aktivieren?",
       "disableTitle": "Alternative Geschwindigkeitsbegrenzungen deaktivieren?",
@@ -77,7 +84,6 @@
     }
   },
   "mobileOverview": {
-    "title": "Übersicht",
     "instances": "Instanzen",
     "connected": "Verbunden",
     "torrents": "Torrents",
@@ -102,6 +108,8 @@
     "tableHeaders": {
       "instance": "Instanz",
       "downloaded": "Heruntergeladen",
+      "downloadedSession": "Heruntergeladen (Sitzung)",
+      "uploadedSession": "Hochgeladen (Sitzung)",
       "uploaded": "Hochgeladen",
       "ratio": "Ratio",
       "peers": "Peers"
@@ -117,6 +125,8 @@
       "tracker": "Tracker",
       "uploaded": "Hochgeladen",
       "downloaded": "Heruntergeladen",
+      "downloadedSession": "Heruntergeladen (Sitzung)",
+      "uploadedSession": "Hochgeladen (Sitzung)",
       "ratio": "Ratio",
       "torrents": "Torrents",
       "size": "Größe",
@@ -126,6 +136,8 @@
       "tracker": "Tracker",
       "uploaded": "Hochgeladen",
       "downloaded": "Heruntergeladen",
+      "downloadedSession": "Heruntergeladen (Sitzung)",
+      "uploadedSession": "Hochgeladen (Sitzung)",
       "ratio": "Ratio",
       "buffer": "Buffer",
       "torrents": "Torrents",
@@ -139,6 +151,8 @@
     "mergeIntoGroup": "Zu Gruppe zusammenführen",
     "addToMerge": "Zum Zusammenführen hinzufügen",
     "rename": "Umbenennen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
     "pagination": {
       "range": "{{start}}-{{end}} von {{total}} Trackern",
       "previous": "Zurück",

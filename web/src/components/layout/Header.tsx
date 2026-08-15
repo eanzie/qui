@@ -5,6 +5,7 @@
 
 import { InstancePreferencesDialog } from "@/components/instances/preferences/InstancePreferencesDialog"
 import { UnifiedScopeDropdownSection } from "@/components/layout/UnifiedScopeDropdownSection"
+import { SpreadsheetRibbonTabs } from "@/components/spreadsheet/SpreadsheetRibbonTabs"
 import { AddTorrentDialog } from "@/components/torrents/AddTorrentDialog"
 import { TorrentCreationTasks } from "@/components/torrents/TorrentCreationTasks"
 import { TorrentCreatorDialog } from "@/components/torrents/TorrentCreatorDialog"
@@ -32,6 +33,7 @@ import { Input } from "@/components/ui/input"
 import { Logo } from "@/components/ui/Logo"
 import { NapsterLogo } from "@/components/ui/NapsterLogo"
 import { SwizzinLogo } from "@/components/ui/SwizzinLogo"
+import { SupportDialog } from "@/components/support/SupportDialog"
 import { ThemeToggle } from "@/components/ui/ThemeToggle"
 import {
   Tooltip,
@@ -55,13 +57,14 @@ import {
   isAllInstancesScope,
   normalizeUnifiedInstanceIds
 } from "@/lib/instances"
+import { useSpreadsheetDisguise } from "@/lib/spreadsheet-disguise"
 import { cn } from "@/lib/utils"
 import type { InstanceCapabilities, TorrentStreamPayload } from "@/types"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { navigateWithSearch } from "@/lib/router-search"
 import { changeLanguage, languageNames, supportedLanguages } from "@/i18n"
-import { Archive, Check, ChevronsUpDown, Cog, Download, FileEdit, FileText, FunnelPlus, FunnelX, GitBranch, Globe, HardDrive, Home, Info, ListTodo, Loader2, LogOut, Menu, Plus, Rss, Search, SearchCode, Server, Settings, X, Zap } from "lucide-react"
+import { Archive, Check, ChevronsUpDown, Cog, Download, FileEdit, FileText, FunnelPlus, FunnelX, GitBranch, Globe, HardDrive, Heart, Home, Info, ListTodo, Loader2, LogOut, Menu, Plus, Rss, Search, SearchCode, Server, Settings, X, Zap } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useHotkeys } from "react-hotkeys-hook"
 import { useTranslation } from "react-i18next"
@@ -132,6 +135,7 @@ export function Header({
   const navigate = useNavigate()
   const routeSearch = useSearch({ strict: false }) as { q?: string; modal?: string;[key: string]: unknown }
   const { state: layoutRouteState } = useLayoutRoute()
+  const spreadsheetDisguise = useSpreadsheetDisguise()
 
   // Get selection state from context
   const {
@@ -227,10 +231,12 @@ export function Header({
   const instanceName = isAllInstancesRoute? (hasMultipleActiveInstances ? t("header.unified") : (activeInstances[0]?.name ?? null)): (currentInstance?.name ?? null)
 
   // Keep local state in sync with URL when navigating between instances/routes
+  // or when another writer (the spreadsheet formula bar) changes q.
   useEffect(() => {
-    setSearchValue(routeSearch?.q || "")
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedInstanceId])
+    // Keep in-progress text; the debounce writes back a trimmed q.
+    const routeQuery = routeSearch?.q || ""
+    setSearchValue(prev => (prev.trim() === routeQuery ? prev : routeQuery))
+  }, [selectedInstanceId, routeSearch?.q])
 
   // Update URL search param after debounce
   useEffect(() => {
@@ -245,6 +251,7 @@ export function Header({
 
   const isGlobSearch = !!searchValue && /[*?[\]]/.test(searchValue)
   const [filterSidebarCollapsed, setFilterSidebarCollapsed] = usePersistedFilterSidebarState(false)
+  const [showSupport, setShowSupport] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const lastFilterToggleRef = useRef(0)
 
@@ -387,7 +394,9 @@ export function Header({
   const innerHeight = viewMode === "dense" ? "h-10 lg:h-auto" : "h-12 lg:h-auto"
   const smInnerHeight = viewMode === "dense" ? "sm:h-10 lg:h-auto" : "sm:h-12 lg:h-auto"
 
-  return (
+  // Assigned, not returned inline: the spreadsheet ribbon strip mounts as a
+  // sibling above the header without reindenting the whole header tree.
+  const headerElement = (
     <header className={cn("sticky top-0 z-50 hidden md:flex flex-wrap lg:flex-nowrap items-start lg:items-center justify-between sm:border-b bg-background pl-2 pr-4 md:pl-4 md:pr-4 lg:pl-0 lg:static py-2 lg:py-0", headerHeight)}>
       <div className={cn("hidden md:flex items-center gap-2 mr-2 order-1 lg:order-none", innerHeight)}>
         {children}
@@ -741,7 +750,21 @@ export function Header({
       )}
 
 
-      <div className={cn("grid grid-cols-[auto_auto] items-center gap-1 transition-all duration-300 ease-out sm:order-4 lg:order-none", smInnerHeight)}>
+      <div className={cn("grid grid-cols-[auto_auto_auto] items-center gap-1 transition-all duration-300 ease-out sm:order-4 lg:order-none", smInnerHeight)}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hover:bg-muted transition-colors"
+              aria-label={t("support.title")}
+              onClick={() => setShowSupport(true)}
+            >
+              <Heart className="h-4 w-4 fill-current text-red-500" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t("support.title")}</TooltipContent>
+        </Tooltip>
         <ThemeToggle />
         <div className={cn(
           "transition-all duration-300 ease-out overflow-hidden",
@@ -1030,6 +1053,15 @@ export function Header({
           />
         )
       })()}
+
+      <SupportDialog open={showSupport} onOpenChange={setShowSupport} />
     </header>
+  )
+
+  return (
+    <>
+      {spreadsheetDisguise && <SpreadsheetRibbonTabs />}
+      {headerElement}
+    </>
   )
 }

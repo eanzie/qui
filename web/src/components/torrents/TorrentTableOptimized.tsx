@@ -12,6 +12,7 @@ import { useEffectiveServerState } from "@/hooks/torrent-table/useEffectiveServe
 import { useFilterLifecycle } from "@/hooks/torrent-table/useFilterLifecycle"
 import { useTorrentSelection } from "@/hooks/torrent-table/useTorrentSelection"
 import { useTorrentSelectionDerivations } from "@/hooks/torrent-table/useTorrentSelectionDerivations"
+import { useTorrentTableArrowNavigation } from "@/hooks/torrent-table/useTorrentTableArrowNavigation"
 import { useTorrentTableColumns } from "@/hooks/torrent-table/useTorrentTableColumns"
 import { useTorrentTableFilterExpr } from "@/hooks/torrent-table/useTorrentTableFilterExpr"
 import { useTorrentTableNotifications } from "@/hooks/torrent-table/useTorrentTableNotifications"
@@ -30,20 +31,20 @@ import { TORRENT_ACTIONS, useTorrentActions } from "@/hooks/useTorrentActions"
 import { useTorrentExporter } from "@/hooks/useTorrentExporter"
 import { TORRENT_STREAM_POLL_INTERVAL_SECONDS, useTorrentsList } from "@/hooks/useTorrentsList"
 import { getBackendSortField } from "@/lib/torrent-table/backend-sort-field"
-import { getRowBackgroundClass } from "@/lib/torrent-table/row-display"
 import { resolveTrackerHealthSupport } from "@/lib/tracker-health-support"
 import { formatBytes } from "@/lib/utils"
 import {
-  flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getSortedRowModel,
-  useReactTable
+  useReactTable,
+  type Row
 } from "@tanstack/react-table"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { InstancePreferencesDialog } from "../instances/preferences/InstancePreferencesDialog"
-import { TorrentContextMenu } from "./TorrentContextMenu"
+import { type TableViewMode } from "./TorrentTableColumns"
 import { type TorrentSortOptionValue } from "./torrentSortOptions"
 
 import { Badge } from "@/components/ui/badge"
@@ -69,10 +70,13 @@ import { useInstanceMetadata } from "@/hooks/useInstanceMetadata"
 import { useInstancePreferences } from "@/hooks/useInstancePreferences.ts"
 import { useInstances } from "@/hooks/useInstances"
 import { api } from "@/lib/api"
+import { formatRelativeTime } from "@/lib/dateTimeUtils"
 import { useIncognitoMode } from "@/lib/incognito"
 import { isAllInstancesScope } from "@/lib/instances"
 import { resolveFooterSpeeds } from "@/lib/scoped-speeds"
 import { formatSpeedWithUnit, useSpeedUnits } from "@/lib/speedUnits"
+import { useSpreadsheetDisguise } from "@/lib/spreadsheet-disguise"
+import { resolveStreamFallbackStatus } from "@/lib/stream-status"
 import { cn } from "@/lib/utils"
 import type {
   Category,
@@ -104,13 +108,12 @@ import {
   Turtle,
   X
 } from "lucide-react"
-import { createPortal } from "react-dom"
 import { AddTorrentDialog, type AddTorrentDropPayload } from "./AddTorrentDialog"
 import { SelectAllHotkey } from "./SelectAllHotkey"
 import { TorrentDropZone } from "./TorrentDropZone"
 import { createColumns } from "./TorrentTableColumns"
-import { CompactRow } from "./table/CompactRow"
 import { TableColumnHeader } from "./table/TableColumnHeader"
+import { TorrentTableRow, type CompactRowSharedProps, type TorrentRowMenuProps } from "./table/TorrentTableRow"
 import { TorrentTableDialogs } from "./table/TorrentTableDialogs"
 
 const TABLE_ALLOWED_VIEW_MODES = ["normal", "dense", "compact"] as const
@@ -283,6 +286,10 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
 
   const [incognitoMode, setIncognitoMode] = useIncognitoMode()
   const { t } = useTranslation("torrents")
+  const [statusBarContainer, setStatusBarContainer] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    setStatusBarContainer(document.getElementById("qui-status-bar-container"))
+  }, [])
   const { exportTorrents, isExporting: isExportingTorrent } = useTorrentExporter({ instanceId, incognitoMode })
   const [speedUnit, setSpeedUnit] = useSpeedUnits()
   const { formatTimestamp } = useDateTimeFormatters()
@@ -292,6 +299,10 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
 
   // Desktop view mode state (separate from mobile view mode)
   const { viewMode: desktopViewMode, cycleViewMode } = usePersistedCompactViewState("normal", TABLE_ALLOWED_VIEW_MODES)
+
+  // Spreadsheet theme: row numbers down the left edge, with a blank corner cell
+  // in the header. Stacked (compact) rows have no column grid to number.
+  const showRowGutter = useSpreadsheetDisguise() && desktopViewMode !== "compact"
 
   const { trackerIcons, trackerCustomizationLookup } = useTrackerIconCache()
 
@@ -431,8 +442,17 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
   const activeSortOrder: "asc" | "desc" = sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc"
   const isAllInstancesView = instanceId <= 0
 
-  const effectiveIncludedCategories = filters?.expandedCategories ?? filters?.categories ?? []
-  const effectiveExcludedCategories = filters?.expandedExcludeCategories ?? filters?.excludeCategories ?? []
+  // Memoized so the `?? []` fallback cannot mint a fresh array per render:
+  // these feed fetchAllTorrentField, whose identity anchors the shared row
+  // menu bundle.
+  const effectiveIncludedCategories = useMemo(
+    () => filters?.expandedCategories ?? filters?.categories ?? [],
+    [filters]
+  )
+  const effectiveExcludedCategories = useMemo(
+    () => filters?.expandedExcludeCategories ?? filters?.excludeCategories ?? [],
+    [filters]
+  )
 
   const { isHiddenDelayed, isVisible } = useDelayedVisibility(3000)
   const isVisibilitySettled = isHiddenDelayed || isVisible
@@ -486,6 +506,10 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
     order: activeSortOrder,
   })
 
+  // When the stream drops but rows are already on screen, the data is stale but
+  // usable, so the fallback banner degrades to amber instead of a red error.
+  const hasTorrentRows = torrents.length > 0
+
   const derivedStreamPhase = useMemo<StreamPhase>(() => {
     if (streamRetrying || typeof streamNextRetryAt === "number") {
       return "reconnecting"
@@ -516,9 +540,7 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
     }
 
     const serverRetrySeconds =
-      typeof streamMeta?.retryInSeconds === "number" && streamMeta.retryInSeconds > 0
-        ? streamMeta.retryInSeconds
-        : null
+      typeof streamMeta?.retryInSeconds === "number" && streamMeta.retryInSeconds > 0 ? streamMeta.retryInSeconds : null
     const safeRetryAttempt =
       typeof streamRetryAttempt === "number" && streamRetryAttempt > 0 ? streamRetryAttempt : 1
     const hasClientRetryScheduled = typeof streamNextRetryAt === "number"
@@ -533,23 +555,40 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
         return {
           label: t("statusBar.streamStatus.reconnecting.label"),
           message: backendStreamError ?? t("statusBar.streamStatus.reconnecting.message"),
-          secondary: hasClientRetryScheduled
-            ? t("statusBar.streamStatus.reconnecting.retryQueued", { attempt: safeRetryAttempt })
-            : t("statusBar.streamStatus.reconnecting.pollingContinues"),
+          secondary: hasClientRetryScheduled ? t("statusBar.streamStatus.reconnecting.retryQueued", { attempt: safeRetryAttempt }) : t("statusBar.streamStatus.reconnecting.pollingContinues"),
           tone: "warning" as const,
           animate: true,
         }
-      case "fallback":
+      case "fallback": {
+        const plan = resolveStreamFallbackStatus({
+          hasData: hasTorrentRows,
+          hasLastSuccessfulSync: Boolean(streamMeta?.lastSuccessfulSync),
+        })
+        const retrySecondary = serverRetrySeconds && serverRetrySeconds > 0 ? t("statusBar.streamStatus.fallback.serverRetry", { seconds: serverRetrySeconds }) : t("statusBar.streamStatus.fallback.retrying")
+
+        if (plan.variant === "degraded") {
+          const staleAge = plan.showStaleAge ? formatRelativeTime(streamMeta?.lastSuccessfulSync) : null
+          let degradedSecondary = retrySecondary
+          if (staleAge) {
+            degradedSecondary = serverRetrySeconds && serverRetrySeconds > 0 ? t("statusBar.streamStatus.fallback.degraded.dataAgeRetry", { age: staleAge, seconds: serverRetrySeconds }) : t("statusBar.streamStatus.fallback.degraded.dataAge", { age: staleAge })
+          }
+          return {
+            label: t("statusBar.streamStatus.fallback.degraded.label"),
+            message: t("statusBar.streamStatus.fallback.degraded.message"),
+            secondary: degradedSecondary,
+            tone: plan.tone,
+            animate: false,
+          }
+        }
+
         return {
           label: t("statusBar.streamStatus.fallback.label"),
           message: backendStreamError ?? t("statusBar.streamStatus.fallback.message"),
-          secondary:
-            serverRetrySeconds && serverRetrySeconds > 0
-              ? t("statusBar.streamStatus.fallback.serverRetry", { seconds: serverRetrySeconds })
-              : t("statusBar.streamStatus.fallback.retrying"),
-          tone: "error" as const,
+          secondary: retrySecondary,
+          tone: plan.tone,
           animate: false,
         }
+      }
       case "healthy":
         return {
           label: "",
@@ -568,6 +607,7 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
         }
     }
   }, [
+    hasTorrentRows,
     isCrossSeedFiltering,
     stableStreamPhase,
     streamConnected,
@@ -783,8 +823,8 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
       ...(isCrossSeedFiltering && {
         columnFilters: columnFilters.map(filter => ({
           id: filter.columnId,
-          value: filter.value
-        }))
+          value: filter.value,
+        })),
       }),
     },
     onSortingChange: setSorting,
@@ -913,9 +953,7 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
   const isFirewalled = normalizedConnectionStatus === "firewalled"
   const ConnectionStatusIcon = isConnectable ? Globe : isFirewalled ? BrickWallFire : hasConnectionStatus ? Ban : Globe
   const listenPort = metadata?.preferences?.listen_port
-  const connectionStatusTooltip = hasConnectionStatus
-    ? `${isConnectable ? t("statusBar.connectionConnectable") : connectionStatusDisplay}${listenPort ? `. ${t("statusBar.connectionPort", { port: listenPort })}` : ""}`
-    : t("statusBar.connectionUnknown")
+  const connectionStatusTooltip = hasConnectionStatus ? `${isConnectable ? t("statusBar.connectionConnectable") : connectionStatusDisplay}${listenPort ? `. ${t("statusBar.connectionPort", { port: listenPort })}` : ""}` : t("statusBar.connectionUnknown")
   const connectionStatusIconClass = hasConnectionStatus ? isConnectable ? "text-green-500" : isFirewalled ? "text-amber-500" : "text-destructive" : "text-muted-foreground"
   const connectionStatusAriaLabel = hasConnectionStatus ? t("statusBar.connectionAriaLabel", { status: connectionStatusDisplay || formattedConnectionStatus }) : t("statusBar.connectionAriaLabelUnknown")
 
@@ -977,6 +1015,7 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
     virtualizer,
     virtualRows,
     safeLoadedRows,
+    loadMore,
     loadedRows,
     setLoadedRows,
     setIsLoadingMoreRows,
@@ -1041,6 +1080,22 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
     // hook; intentionally omitted to preserve the original effect's re-run timing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, effectiveSearch, instanceId, virtualizer, sortedTorrents.length, lastUserAction, resetSelectionState])
+
+  useTorrentTableArrowNavigation({
+    rows,
+    virtualizer,
+    safeLoadedRows,
+    loadMore,
+    isReadOnly,
+    selectedTorrent,
+    selectedRowIds,
+    lastSelectedIndexRef,
+    getSelectionIdentity,
+    setRowSelection,
+    setIsAllSelected,
+    setExcludedFromSelectAll,
+    onTorrentSelect,
+  })
 
   const { isMac, selectAllWithShortcut } = useTorrentTableHotkeys({
     sortedTorrents,
@@ -1111,6 +1166,169 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
     setDropPayload,
     onAddTorrentModalChange,
   })
+
+  // Latest-ref for the row interaction handlers: rows are memoized, so these
+  // handlers must keep one identity for the lifetime of the table while still
+  // reading current state at click time. Assigned during render, same pattern
+  // as leafColumnIdsRef above.
+  const rowInteraction = {
+    isReadOnly,
+    isAllSelected,
+    selectedRowIds,
+    selectedHashes,
+    onTorrentSelect,
+    handleRowSelection,
+    getSelectionIdentity,
+    setRowSelection,
+    setIsAllSelected,
+    setExcludedFromSelectAll,
+  }
+  const rowInteractionRef = useRef(rowInteraction)
+  rowInteractionRef.current = rowInteraction
+
+  const handleRowClick = useCallback((e: React.MouseEvent, row: Row<Torrent>, isSelected: boolean, isRowSelected: boolean) => {
+    const s = rowInteractionRef.current
+    // Don't select when clicking checkbox or its wrapper
+    const target = e.target as HTMLElement
+    if (target.closest("[data-slot=\"checkbox\"]") || target.closest("[role=\"checkbox\"]") || target.closest(".p-1.-m-1")) {
+      return
+    }
+    const torrent = row.original
+
+    if (s.isReadOnly) {
+      s.onTorrentSelect?.(isSelected ? null : torrent)
+      return
+    }
+
+    const selectionIdentity = s.getSelectionIdentity(torrent)
+    const allRows = table.getRowModel().rows
+    const currentIndex = allRows.findIndex(r => r.id === row.id)
+
+    // Handle shift-click for range selection - EXACTLY like checkbox
+    if (e.shiftKey) {
+      e.preventDefault() // Prevent text selection
+      if (lastSelectedIndexRef.current !== null) {
+        const start = Math.min(lastSelectedIndexRef.current, currentIndex)
+        const end = Math.max(lastSelectedIndexRef.current, currentIndex)
+        // Select range EXACTLY like checkbox does
+        for (let i = start; i <= end; i++) {
+          const targetRow = allRows[i]
+          if (targetRow) {
+            s.handleRowSelection(s.getSelectionIdentity(targetRow.original), true, targetRow.id)
+          }
+        }
+        // Don't update lastSelectedIndexRef on shift-click (keeps anchor stable)
+      } else {
+        // No anchor - just select this row
+        s.handleRowSelection(selectionIdentity, true, row.id)
+        lastSelectedIndexRef.current = currentIndex
+      }
+      return
+    }
+
+    // Ctrl/Cmd click - toggle single row EXACTLY like checkbox
+    if (e.ctrlKey || e.metaKey) {
+      s.handleRowSelection(selectionIdentity, !isRowSelected, row.id)
+      lastSelectedIndexRef.current = currentIndex
+      return
+    }
+
+    // Plain click - open details panel
+    // Re-clicking the currently focused row toggles both details and selection off.
+    if (isSelected && isRowSelected) {
+      if (s.isAllSelected) {
+        s.handleRowSelection(selectionIdentity, false, row.id)
+      } else {
+        s.setRowSelection(prev => {
+          if (!prev[row.id]) {
+            return prev
+          }
+
+          const next = { ...prev }
+          delete next[row.id]
+          return next
+        })
+
+        if (s.selectedRowIds.length <= 1) {
+          lastSelectedIndexRef.current = null
+        }
+      }
+
+      s.onTorrentSelect?.(null)
+      return
+    }
+
+    // If row is not selected, select only this torrent (replace selection).
+    if (!isRowSelected) {
+      s.setIsAllSelected(false)
+      s.setExcludedFromSelectAll(new Set())
+      s.setRowSelection({ [row.id]: true })
+      lastSelectedIndexRef.current = currentIndex
+    }
+    s.onTorrentSelect?.(torrent)
+  }, [table, lastSelectedIndexRef])
+
+  const handleRowContextMenu = useCallback((row: Row<Torrent>, isRowSelected: boolean) => {
+    const s = rowInteractionRef.current
+    if (s.isReadOnly) {
+      return
+    }
+    // Only select this row if not already selected and not part of a multi-selection
+    if (!isRowSelected && s.selectedHashes.length <= 1) {
+      s.setRowSelection({ [row.id]: true })
+    }
+  }, [])
+
+  // One context-menu props bundle shared by every row, memoized so the row memo
+  // compares a single reference. A member changing (selection, capabilities,
+  // pending state) re-renders the rows, which is exactly when menu content can
+  // differ.
+  const rowMenuProps = useMemo<TorrentRowMenuProps>(() => ({
+    instanceId,
+    readOnly: isReadOnly,
+    isAllSelected,
+    selectedHashes,
+    selectedTorrents,
+    effectiveSelectionCount,
+    onTorrentSelect,
+    onAction: runAction,
+    onPrepareDelete: prepareDeleteAction,
+    onPrepareTags: prepareTagsAction,
+    onPrepareComment: prepareCommentAction,
+    onPrepareCategory: prepareCategoryAction,
+    onPrepareCreateCategory: prepareCreateCategoryAction,
+    onPrepareShareLimit: prepareShareLimitAction,
+    onPrepareSpeedLimits: prepareSpeedLimitAction,
+    onPrepareLocation: prepareLocationAction,
+    onPrepareRenameTorrent: prepareRenameTorrentAction,
+    onPrepareRecheck: prepareRecheckAction,
+    onPrepareReannounce: prepareReannounceAction,
+    onPrepareTmm: prepareTmmAction,
+    availableCategories,
+    onSetCategory: handleSetCategoryDirect,
+    isPending,
+    onExport: handleExportWrapper,
+    isExporting: isExportingTorrent,
+    capabilities,
+    useSubcategories: allowSubcategories,
+    canCrossSeedSearch,
+    onCrossSeedSearch,
+    isCrossSeedSearching,
+    onFilterChange,
+    onFetchAllField: fetchAllTorrentField,
+  }), [instanceId, isReadOnly, isAllSelected, selectedHashes, selectedTorrents, effectiveSelectionCount, onTorrentSelect, runAction, prepareDeleteAction, prepareTagsAction, prepareCommentAction, prepareCategoryAction, prepareCreateCategoryAction, prepareShareLimitAction, prepareSpeedLimitAction, prepareLocationAction, prepareRenameTorrentAction, prepareRecheckAction, prepareReannounceAction, prepareTmmAction, availableCategories, handleSetCategoryDirect, isPending, handleExportWrapper, isExportingTorrent, capabilities, allowSubcategories, canCrossSeedSearch, onCrossSeedSearch, isCrossSeedSearching, onFilterChange, fetchAllTorrentField])
+
+  const showCompactCheckbox = table.getColumn("select")?.getIsVisible() !== false
+  const compactRowProps = useMemo<CompactRowSharedProps>(() => ({
+    showCheckbox: showCompactCheckbox,
+    incognitoMode,
+    speedUnit,
+    supportsTrackerHealth,
+    trackerIcons,
+    trackerCustomizationLookup,
+    onCheckboxPointerDown: handleCompactCheckboxPointerDown,
+    onCheckboxChange: handleCompactCheckboxChange,
+  }), [showCompactCheckbox, incognitoMode, speedUnit, supportsTrackerHealth, trackerIcons, trackerCustomizationLookup, handleCompactCheckboxPointerDown, handleCompactCheckboxChange])
 
   return (
     <>
@@ -1349,6 +1567,7 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
                 setColumnFilters={setColumnFilters}
                 minTableWidth={minTableWidth}
                 viewMode={desktopViewMode}
+                showRowGutter={showRowGutter}
               />
 
               {/* Body */}
@@ -1376,336 +1595,32 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
                   const row = rows[virtualRow.index]
                   if (!row || !row.original) return null
                   const torrent = row.original
-                  const selectionIdentity = getSelectionIdentity(torrent)
                   const selectedInstanceID = (selectedTorrent as Partial<CrossInstanceTorrent> | null)?.instanceId ?? instanceId
                   const rowInstanceID = (torrent as Partial<CrossInstanceTorrent>).instanceId ?? instanceId
                   const isSelected = selectedTorrent?.hash === torrent.hash && selectedInstanceID === rowInstanceID
-                  const isRowSelected = isAllSelected ? !excludedFromSelectAll.has(selectionIdentity) : row.getIsSelected()
+                  const isRowSelected = isAllSelected ? !excludedFromSelectAll.has(getSelectionIdentity(torrent)) : row.getIsSelected()
 
-                  // Render compact view for compact mode
-                  if (desktopViewMode === "compact") {
-                    return (
-                      <TorrentContextMenu
-                        key={row.id}
-                        instanceId={instanceId}
-                        readOnly={isReadOnly}
-                        torrent={torrent}
-                        isSelected={isRowSelected}
-                        isAllSelected={isAllSelected}
-                        selectedHashes={selectedHashes}
-                        selectedTorrents={selectedTorrents}
-                        effectiveSelectionCount={effectiveSelectionCount}
-                        onTorrentSelect={onTorrentSelect}
-                        onAction={runAction}
-                        onPrepareDelete={prepareDeleteAction}
-                        onPrepareTags={prepareTagsAction}
-                        onPrepareComment={prepareCommentAction}
-                        onPrepareCategory={prepareCategoryAction}
-                        onPrepareCreateCategory={prepareCreateCategoryAction}
-                        onPrepareShareLimit={prepareShareLimitAction}
-                        onPrepareSpeedLimits={prepareSpeedLimitAction}
-                        onPrepareLocation={prepareLocationAction}
-                        onPrepareRenameTorrent={prepareRenameTorrentAction}
-                        onPrepareRecheck={prepareRecheckAction}
-                        onPrepareReannounce={prepareReannounceAction}
-                        onPrepareTmm={prepareTmmAction}
-                        availableCategories={availableCategories}
-                        onSetCategory={handleSetCategoryDirect}
-                        isPending={isPending}
-                        onExport={handleExportWrapper}
-                        isExporting={isExportingTorrent}
-                        capabilities={capabilities}
-                        useSubcategories={allowSubcategories}
-                        canCrossSeedSearch={canCrossSeedSearch}
-                        onCrossSeedSearch={onCrossSeedSearch}
-                        isCrossSeedSearching={isCrossSeedSearching}
-                        onFilterChange={onFilterChange}
-                        onFetchAllField={fetchAllTorrentField}
-                      >
-                        <CompactRow
-                          torrent={torrent}
-                          rowId={row.id}
-                          rowIndex={virtualRow.index}
-                          isSelected={isSelected}
-                          isRowSelected={isRowSelected}
-                          showCheckbox={table.getColumn("select")?.getIsVisible() !== false}
-                          onClick={(e) => {
-                            const target = e.target as HTMLElement
-                            const isCheckboxElement = target.closest("[data-slot=\"checkbox\"]") || target.closest("[role=\"checkbox\"]")
-                            if (isCheckboxElement) {
-                              return
-                            }
-
-                            if (isReadOnly) {
-                              if (isSelected) {
-                                onTorrentSelect?.(null)
-                              } else {
-                                onTorrentSelect?.(torrent)
-                              }
-                              return
-                            }
-
-                            // Handle shift-click for range selection
-                            if (e.shiftKey) {
-                              e.preventDefault()
-                              const allRows = table.getRowModel().rows
-                              const currentIndex = allRows.findIndex(r => r.id === row.id)
-                              if (lastSelectedIndexRef.current !== null) {
-                                const start = Math.min(lastSelectedIndexRef.current, currentIndex)
-                                const end = Math.max(lastSelectedIndexRef.current, currentIndex)
-                                for (let i = start; i <= end; i++) {
-                                  const targetRow = allRows[i]
-                                  if (targetRow) {
-                                    handleRowSelection(getSelectionIdentity(targetRow.original), true, targetRow.id)
-                                  }
-                                }
-                              } else {
-                                handleRowSelection(selectionIdentity, true, row.id)
-                                lastSelectedIndexRef.current = currentIndex
-                              }
-                            } else if (e.ctrlKey || e.metaKey) {
-                              const allRows = table.getRowModel().rows
-                              const currentIndex = allRows.findIndex(r => r.id === row.id)
-                              handleRowSelection(selectionIdentity, !isRowSelected, row.id)
-                              lastSelectedIndexRef.current = currentIndex
-                            } else {
-                              // Plain click - open details panel
-                              // Re-clicking the currently focused row toggles both details and selection off.
-                              if (isSelected && isRowSelected) {
-                                if (isAllSelected) {
-                                  handleRowSelection(selectionIdentity, false, row.id)
-                                } else {
-                                  setRowSelection(prev => {
-                                    if (!prev[row.id]) {
-                                      return prev
-                                    }
-
-                                    const next = { ...prev }
-                                    delete next[row.id]
-                                    return next
-                                  })
-
-                                  if (selectedRowIds.length <= 1) {
-                                    lastSelectedIndexRef.current = null
-                                  }
-                                }
-
-                                onTorrentSelect?.(null)
-                                return
-                              }
-
-                              // If row is not selected, select only this torrent (replace selection).
-                              if (!isRowSelected) {
-                                const allRows = table.getRowModel().rows
-                                const currentIndex = allRows.findIndex(r => r.id === row.id)
-                                setIsAllSelected(false)
-                                setExcludedFromSelectAll(new Set())
-                                setRowSelection({ [row.id]: true })
-                                lastSelectedIndexRef.current = currentIndex
-                              }
-                              onTorrentSelect?.(torrent)
-                            }
-                          }}
-                          onContextMenu={() => {
-                            if (isReadOnly) {
-                              return
-                            }
-                            if (!isRowSelected && selectedHashes.length <= 1) {
-                              setRowSelection({ [row.id]: true })
-                            }
-                          }}
-                          incognitoMode={incognitoMode}
-                          speedUnit={speedUnit}
-                          supportsTrackerHealth={supportsTrackerHealth}
-                          trackerIcons={trackerIcons}
-                          trackerCustomizationLookup={trackerCustomizationLookup}
-                          onCheckboxPointerDown={handleCompactCheckboxPointerDown}
-                          onCheckboxChange={handleCompactCheckboxChange}
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            height: `${virtualRow.size}px`,
-                            transform: `translateY(${virtualRow.start}px)`,
-                          }}
-                        />
-                      </TorrentContextMenu>
-                    )
-                  }
-
-                  // Use memoized minTableWidth for normal table view
                   return (
-                    <TorrentContextMenu
+                    <TorrentTableRow
                       key={row.id}
-                      instanceId={instanceId}
-                      readOnly={isReadOnly}
-                      torrent={torrent}
-                      isSelected={isRowSelected}
-                      isAllSelected={isAllSelected}
-                      selectedHashes={selectedHashes}
-                      selectedTorrents={selectedTorrents}
-                      effectiveSelectionCount={effectiveSelectionCount}
-                      onTorrentSelect={onTorrentSelect}
-                      onAction={runAction}
-                      onPrepareDelete={prepareDeleteAction}
-                      onPrepareTags={prepareTagsAction}
-                      onPrepareComment={prepareCommentAction}
-                      onPrepareCategory={prepareCategoryAction}
-                      onPrepareCreateCategory={prepareCreateCategoryAction}
-                      onPrepareShareLimit={prepareShareLimitAction}
-                      onPrepareSpeedLimits={prepareSpeedLimitAction}
-                      onPrepareLocation={prepareLocationAction}
-                      onPrepareRenameTorrent={prepareRenameTorrentAction}
-                      onPrepareRecheck={prepareRecheckAction}
-                      onPrepareReannounce={prepareReannounceAction}
-                      onPrepareTmm={prepareTmmAction}
-                      availableCategories={availableCategories}
-                      onSetCategory={handleSetCategoryDirect}
-                      isPending={isPending}
-                      onExport={handleExportWrapper}
-                      isExporting={isExportingTorrent}
-                      capabilities={capabilities}
-                      useSubcategories={allowSubcategories}
-                      canCrossSeedSearch={canCrossSeedSearch}
-                      onCrossSeedSearch={onCrossSeedSearch}
-                      isCrossSeedSearching={isCrossSeedSearching}
-                      onFilterChange={onFilterChange}
-                      onFetchAllField={fetchAllTorrentField}
-                    >
-                      <div
-                        className={`flex cursor-pointer hover:bg-accent/40 ${getRowBackgroundClass(isRowSelected, isSelected, virtualRow.index)}`}
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          left: 0,
-                          minWidth: `${minTableWidth}px`,
-                          height: `${virtualRow.size}px`,
-                          transform: `translateY(${virtualRow.start}px)`,
-                        }}
-                        onClick={(e) => {
-                          // Don't select when clicking checkbox or its wrapper
-                          const target = e.target as HTMLElement
-                          const isCheckbox = target.closest("[data-slot=\"checkbox\"]") || target.closest("[role=\"checkbox\"]") || target.closest(".p-1.-m-1")
-                          if (!isCheckbox) {
-                            if (isReadOnly) {
-                              if (isSelected) {
-                                onTorrentSelect?.(null)
-                              } else {
-                                onTorrentSelect?.(torrent)
-                              }
-                              return
-                            }
-
-                            // Handle shift-click for range selection - EXACTLY like checkbox
-                            if (e.shiftKey) {
-                              e.preventDefault() // Prevent text selection
-
-                              const allRows = table.getRowModel().rows
-                              const currentIndex = allRows.findIndex(r => r.id === row.id)
-
-                              if (lastSelectedIndexRef.current !== null) {
-                                const start = Math.min(lastSelectedIndexRef.current, currentIndex)
-                                const end = Math.max(lastSelectedIndexRef.current, currentIndex)
-
-                                // Select range EXACTLY like checkbox does
-                                for (let i = start; i <= end; i++) {
-                                  const targetRow = allRows[i]
-                                  if (targetRow) {
-                                    handleRowSelection(getSelectionIdentity(targetRow.original), true, targetRow.id)
-                                  }
-                                }
-                              } else {
-                                // No anchor - just select this row
-                                handleRowSelection(selectionIdentity, true, row.id)
-                                lastSelectedIndexRef.current = currentIndex
-                              }
-
-                              // Don't update lastSelectedIndexRef on shift-click (keeps anchor stable)
-                            } else if (e.ctrlKey || e.metaKey) {
-                              // Ctrl/Cmd click - toggle single row EXACTLY like checkbox
-                              const allRows = table.getRowModel().rows
-                              const currentIndex = allRows.findIndex(r => r.id === row.id)
-
-                              handleRowSelection(selectionIdentity, !isRowSelected, row.id)
-                              lastSelectedIndexRef.current = currentIndex
-                            } else {
-                              // Plain click - open details panel
-                              // Re-clicking the currently focused row toggles both details and selection off.
-                              if (isSelected && isRowSelected) {
-                                if (isAllSelected) {
-                                  handleRowSelection(selectionIdentity, false, row.id)
-                                } else {
-                                  setRowSelection(prev => {
-                                    if (!prev[row.id]) {
-                                      return prev
-                                    }
-
-                                    const next = { ...prev }
-                                    delete next[row.id]
-                                    return next
-                                  })
-
-                                  if (selectedRowIds.length <= 1) {
-                                    lastSelectedIndexRef.current = null
-                                  }
-                                }
-
-                                onTorrentSelect?.(null)
-                                return
-                              }
-
-                              // If row is not selected, select only this torrent (replace selection).
-                              if (!isRowSelected) {
-                                const allRows = table.getRowModel().rows
-                                const currentIndex = allRows.findIndex(r => r.id === row.id)
-                                setIsAllSelected(false)
-                                setExcludedFromSelectAll(new Set())
-                                setRowSelection({ [row.id]: true })
-                                lastSelectedIndexRef.current = currentIndex
-                              }
-                              onTorrentSelect?.(torrent)
-                            }
-                          }
-                        }}
-                        onContextMenu={() => {
-                          if (isReadOnly) {
-                            return
-                          }
-                          // Only select this row if not already selected and not part of a multi-selection
-                          if (!isRowSelected && selectedHashes.length <= 1) {
-                            setRowSelection({ [row.id]: true })
-                          }
-                        }}
-                      >
-                        {row.getVisibleCells().map(cell => {
-                          // Compact columns (tracker_icon, status_icon) use px-0 to match header
-                          const isCompactColumn = cell.column.id === "tracker_icon" || cell.column.id === "status_icon"
-                          const isSelectColumn = cell.column.id === "select"
-                          return (
-                            <div
-                              key={cell.id}
-                              data-torrent-column-measure={cell.column.id}
-                              style={{
-                                width: cell.column.getSize(),
-                                flexShrink: 0,
-                              }}
-                              className={cn(
-                                "flex items-center overflow-hidden min-w-0",
-                                // Select and compact columns are centered to match header
-                                (isSelectColumn || isCompactColumn) && "justify-center",
-                                isCompactColumn? (desktopViewMode === "dense" ? "px-0 py-0.5" : "px-0 py-2"): (desktopViewMode === "dense" ? "px-2 py-0.5" : "px-3 py-2")
-                              )}
-                            >
-                              {flexRender(
-                                cell.column.columnDef.cell,
-                                cell.getContext()
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </TorrentContextMenu>
+                      row={row}
+                      virtualIndex={virtualRow.index}
+                      virtualStart={virtualRow.start}
+                      virtualSize={virtualRow.size}
+                      isSelected={isSelected}
+                      isRowSelected={isRowSelected}
+                      desktopViewMode={desktopViewMode as TableViewMode}
+                      minTableWidth={minTableWidth}
+                      showRowGutter={showRowGutter}
+                      columns={columns}
+                      columnSizing={columnSizing}
+                      columnVisibility={columnVisibility}
+                      columnOrder={columnOrder}
+                      menu={rowMenuProps}
+                      compact={compactRowProps}
+                      onRowClick={handleRowClick}
+                      onRowContextMenu={handleRowContextMenu}
+                    />
                   )
                 })}
               </div>
@@ -1713,13 +1628,37 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
           </TorrentDropZone>
 
           {/* Status bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 border-t flex-shrink-0 select-none">
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              {/* Compact SSE status */}
-              {hasStreamStatusDetails ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1.5 cursor-default text-[11px]">
+          {(() => {
+            const statusBarContent = (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 border-t flex-shrink-0 select-none">
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  {/* Compact SSE status */}
+                  {hasStreamStatusDetails ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 cursor-default text-[11px]">
+                          <span
+                            className={cn(
+                              "h-1.5 w-1.5 rounded-full transition",
+                              streamToneStyles.dotClass,
+                              streamStatus.animate && "animate-pulse"
+                            )}
+                          />
+                          {hasStreamStatusLabel && (
+                            <span className={cn("opacity-80", streamToneStyles.textClass)}>{streamStatus.label}</span>
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">
+                        <div className="space-y-1">
+                          {hasStreamStatusLabel && <p className="font-medium">{streamStatus.label}</p>}
+                          {streamStatus.message && <p>{streamStatus.message}</p>}
+                          {streamStatus.secondary && <p className="text-muted-foreground">{streamStatus.secondary}</p>}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <div className="flex items-center cursor-default text-[11px]">
                       <span
                         className={cn(
                           "h-1.5 w-1.5 rounded-full transition",
@@ -1727,237 +1666,220 @@ export const TorrentTableOptimized = memo(function TorrentTableOptimized({
                           streamStatus.animate && "animate-pulse"
                         )}
                       />
-                      {hasStreamStatusLabel && (
-                        <span className={cn("opacity-80", streamToneStyles.textClass)}>{streamStatus.label}</span>
-                      )}
                     </div>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-xs">
-                    <div className="space-y-1">
-                      {hasStreamStatusLabel && <p className="font-medium">{streamStatus.label}</p>}
-                      {streamStatus.message && <p>{streamStatus.message}</p>}
-                      {streamStatus.secondary && <p className="text-muted-foreground">{streamStatus.secondary}</p>}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <div className="flex items-center cursor-default text-[11px]">
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full transition",
-                      streamToneStyles.dotClass,
-                      streamStatus.animate && "animate-pulse"
-                    )}
-                  />
-                </div>
-              )}
-              <div>
-                {effectiveSelectionCount > 0 ? (
-                  <>
-                    <span>
-                      {isAllSelected && excludedFromSelectAll.size === 0 ? t("statusBar.allSelected") : t("statusBar.selected", { count: effectiveSelectionCount })}
-                      {selectedTotalSize > 0 && <> • {selectedFormattedSize}</>}
-                    </span>
-                    {/* Keyboard shortcuts helper - only show on desktop */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="hidden sm:inline-block ml-2 text-xs opacity-70 cursor-help">
-                          {t("statusBar.selectionShortcuts")}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <div className="text-xs">
-                          <div>{t("statusBar.shiftClick")}</div>
-                          <div>{t("statusBar.ctrlClick", { modifier: isMac ? "Cmd" : "Ctrl" })}</div>
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </>
-                ) : (
-                  <>
-                    {/* Show special loading message when fetching without cache (cold load) */}
-                    {isLoading && !isCachedData && !isStaleData && torrents.length === 0 ? (
+                  )}
+                  <div>
+                    {effectiveSelectionCount > 0 ? (
                       <>
-                        <Loader2 className="h-3 w-3 animate-spin inline mr-1"/>
-                        {t("statusBar.loadingTorrents")}
+                        <span>
+                          {isAllSelected && excludedFromSelectAll.size === 0 ? t("statusBar.allSelected") : t("statusBar.selected", { count: effectiveSelectionCount })}
+                          {selectedTotalSize > 0 && <> • {selectedFormattedSize}</>}
+                        </span>
+                        {/* Keyboard shortcuts helper - only show on desktop */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="hidden sm:inline-block ml-2 text-xs opacity-70 cursor-help">
+                              {t("statusBar.selectionShortcuts")}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="text-xs">
+                              <div>{t("statusBar.shiftClick")}</div>
+                              <div>{t("statusBar.ctrlClick", { modifier: isMac ? "Cmd" : "Ctrl" })}</div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
                       </>
-                    ) : totalCount === 0 ? (
-                      emptyStateMessage
                     ) : (
                       <>
-                        {hasLoadedAll ? (
-                          t("statusBar.torrentCount", { count: torrents.length })
-                        ) : isLoadingMore ? (
-                          t("statusBar.loadingMore")
+                        {/* Show special loading message when fetching without cache (cold load) */}
+                        {isLoading && !isCachedData && !isStaleData && torrents.length === 0 ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin inline mr-1"/>
+                            {t("statusBar.loadingTorrents")}
+                          </>
+                        ) : totalCount === 0 ? (
+                          emptyStateMessage
                         ) : (
-                          t("statusBar.torrentsLoaded", { loaded: torrents.length, total: totalCount })
+                          <>
+                            {hasLoadedAll ? (
+                              t("statusBar.torrentCount", { count: torrents.length })
+                            ) : isLoadingMore ? (
+                              t("statusBar.loadingMore")
+                            ) : (
+                              t("statusBar.torrentsLoaded", { loaded: torrents.length, total: totalCount })
+                            )}
+                            {hasLoadedAll && safeLoadedRows < rows.length && ` ${t("statusBar.scrollForMore")}`}
+                          </>
                         )}
-                        {hasLoadedAll && safeLoadedRows < rows.length && ` ${t("statusBar.scrollForMore")}`}
                       </>
                     )}
-                  </>
-                )}
-              </div>
-            </div>
+                  </div>
+                </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-              <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
-                <ChevronDown className="h-3 w-3 text-muted-foreground"/>
-                <span className="font-medium">{formatSpeedWithUnit(footerSpeeds.downloadSpeed, speedUnit)}</span>
-                <ChevronUp className="h-3 w-3 text-muted-foreground"/>
-                <span className="font-medium">{formatSpeedWithUnit(footerSpeeds.uploadSpeed, speedUnit)}</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                  <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
+                    <ChevronDown className="h-3 w-3 text-muted-foreground"/>
+                    <span className="font-medium">{formatSpeedWithUnit(footerSpeeds.downloadSpeed, speedUnit)}</span>
+                    <span className="font-medium">({formatBytes(footerSpeeds.downloadData)})</span>
+                    <ChevronUp className="h-3 w-3 text-muted-foreground"/>
+                    <span className="font-medium">{formatSpeedWithUnit(footerSpeeds.uploadSpeed, speedUnit)}</span>
+                    <span className="font-medium">({formatBytes(footerSpeeds.uploadData)})</span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSpeedUnit(speedUnit === "bytes" ? "bits" : "bytes")}
+                          className="h-6 px-2 text-xs text-muted-foreground hover:text-accent-foreground"
+                        >
+                          <ArrowUpDown className="h-3 w-3" />
+                          <span>{speedUnit === "bytes" ? "MiB/s" : "Mbps"}</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {speedUnit === "bytes" ? t("statusBar.switchToBits") : t("statusBar.switchToBytes")}
+                      </TooltipContent>
+                    </Tooltip>
+                    {/* Alternative speed limits are per-instance; the aggregate scope has
+                        no single instance to toggle (and no serverState to read status from). */}
+                    {!isAllInstancesView && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void handleToggleAltSpeedLimits()}
+                            disabled={isTogglingAltSpeed}
+                            aria-pressed={isAltSpeedKnown ? altSpeedEnabled : undefined}
+                            aria-label={altSpeedAriaLabel}
+                            className={cn(
+                              "h-6 w-6 text-muted-foreground hover:text-accent-foreground",
+                              "disabled:opacity-60 disabled:cursor-not-allowed"
+                            )}
+                          >
+                            {isTogglingAltSpeed ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <AltSpeedIcon className={cn("h-3 w-3", altSpeedIconClass)} />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{altSpeedTooltip}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {instance?.reannounceSettings?.enabled && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void navigate({
+                                to: "/instances/$instanceId",
+                                params: { instanceId: String(instanceId) },
+                                search: { tab: "reannounce" },
+                              })
+                            }}
+                            className="h-6 w-6 text-muted-foreground hover:text-accent-foreground"
+                          >
+                            <RefreshCcw className="h-4 w-4 text-green-500" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("statusBar.reannounceEnabled")}</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setSpeedUnit(speedUnit === "bytes" ? "bits" : "bytes")}
-                      className="h-6 px-2 text-xs text-muted-foreground hover:text-accent-foreground"
-                    >
-                      <ArrowUpDown className="h-3 w-3" />
-                      <span>{speedUnit === "bytes" ? "MiB/s" : "Mbps"}</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {speedUnit === "bytes" ? t("statusBar.switchToBits") : t("statusBar.switchToBytes")}
-                  </TooltipContent>
-                </Tooltip>
-                {/* Alternative speed limits are per-instance; the aggregate scope has
-                    no single instance to toggle (and no serverState to read status from). */}
-                {!isAllInstancesView && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => void handleToggleAltSpeedLimits()}
-                        disabled={isTogglingAltSpeed}
-                        aria-pressed={isAltSpeedKnown ? altSpeedEnabled : undefined}
-                        aria-label={altSpeedAriaLabel}
-                        className={cn(
-                          "h-6 w-6 text-muted-foreground hover:text-accent-foreground",
-                          "disabled:opacity-60 disabled:cursor-not-allowed"
-                        )}
-                      >
-                        {isTogglingAltSpeed ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <AltSpeedIcon className={cn("h-3 w-3", altSpeedIconClass)} />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{altSpeedTooltip}</TooltipContent>
-                  </Tooltip>
-                )}
-                {instance?.reannounceSettings?.enabled && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void navigate({
-                            to: "/instances/$instanceId",
-                            params: { instanceId: String(instanceId) },
-                            search: { tab: "reannounce" },
-                          })
-                        }}
-                        className="h-6 w-6 text-muted-foreground hover:text-accent-foreground"
-                      >
-                        <RefreshCcw className="h-4 w-4 text-green-500" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("statusBar.reannounceEnabled")}</TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-              <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={cycleViewMode}
-                  className={cn(
-                    "h-6 px-2 text-xs hover:text-accent-foreground",
-                    "text-muted-foreground"
-                  )}
-                >
-                  {desktopViewMode === "normal" ? (
-                    <TableIcon className="h-3 w-3" />
-                  ) : desktopViewMode === "dense" ? (
-                    <Rows3 className="h-3 w-3" />
-                  ) : (
-                    <LayoutGrid className="h-3 w-3" />
-                  )}
-                  <span className="hidden sm:inline">
-                    {desktopViewMode === "normal" ? t("statusBar.viewModes.table") : desktopViewMode === "dense" ? t("statusBar.viewModes.dense") : t("statusBar.viewModes.stacked")}
-                  </span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIncognitoMode(!incognitoMode)}
-                  className={cn(
-                    "h-6 px-2 text-xs hover:text-accent-foreground",
-                    incognitoMode ? "text-foreground" : "text-muted-foreground"
-                  )}
-                >
-                  {incognitoMode ? (
-                    <EyeOff className="h-3 w-3" />
-                  ) : (
-                    <Eye className="h-3 w-3" />
-                  )}
-                  <span className="hidden sm:inline">
-                    {incognitoMode ? t("statusBar.incognitoOn") : t("statusBar.incognitoOff")}
-                  </span>
-                </Button>
-              </div>
-              {effectiveServerState?.free_space_on_disk !== undefined && (
-                <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="flex items-center h-6 px-2 text-xs text-muted-foreground">
-                        <HardDrive  aria-hidden="true" className="h-3 w-3 mr-1"/>
-                        <span className="ml-auto font-medium truncate">{formatBytes(effectiveServerState.free_space_on_disk)}</span>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("statusBar.freeSpace")}</TooltipContent>
-                  </Tooltip>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <ExternalIPAddress
-                  address={effectiveServerState?.last_external_address_v4}
-                  incognitoMode={incognitoMode}
-                  label="IPv4"
-                />
-                <ExternalIPAddress
-                  address={effectiveServerState?.last_external_address_v6}
-                  incognitoMode={incognitoMode}
-                  label="IPv6"
-                />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      tabIndex={0}
-                      aria-label={connectionStatusAriaLabel}
+                      onClick={cycleViewMode}
                       className={cn(
-                        "inline-flex h-6 w-6 items-center justify-center rounded-md border border-transparent",
-                        "text-muted-foreground",
-                        connectionStatusIconClass
+                        "h-6 px-2 text-xs hover:text-accent-foreground",
+                        "text-muted-foreground"
                       )}
                     >
-                      <ConnectionStatusIcon className="h-3 w-3" aria-hidden="true"/>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-[220px]">
-                    <p>{connectionStatusTooltip}</p>
-                  </TooltipContent>
-                </Tooltip>
+                      {desktopViewMode === "normal" ? (
+                        <TableIcon className="h-3 w-3" />
+                      ) : desktopViewMode === "dense" ? (
+                        <Rows3 className="h-3 w-3" />
+                      ) : (
+                        <LayoutGrid className="h-3 w-3" />
+                      )}
+                      <span className="hidden sm:inline">
+                        {desktopViewMode === "normal" ? t("statusBar.viewModes.table") : desktopViewMode === "dense" ? t("statusBar.viewModes.dense") : t("statusBar.viewModes.stacked")}
+                      </span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIncognitoMode(!incognitoMode)}
+                      className={cn(
+                        "h-6 px-2 text-xs hover:text-accent-foreground",
+                        incognitoMode ? "text-foreground" : "text-muted-foreground"
+                      )}
+                    >
+                      {incognitoMode ? (
+                        <EyeOff className="h-3 w-3" />
+                      ) : (
+                        <Eye className="h-3 w-3" />
+                      )}
+                      <span className="hidden sm:inline">
+                        {incognitoMode ? t("statusBar.incognitoOn") : t("statusBar.incognitoOff")}
+                      </span>
+                    </Button>
+                  </div>
+                  {effectiveServerState?.free_space_on_disk !== undefined && (
+                    <div className="flex items-center gap-2 pr-2 border-r last:border-r-0 last:pr-0">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="flex items-center h-6 px-2 text-xs text-muted-foreground">
+                            <HardDrive  aria-hidden="true" className="h-3 w-3 mr-1"/>
+                            <span className="ml-auto font-medium truncate">{formatBytes(effectiveServerState.free_space_on_disk)}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{t("statusBar.freeSpace")}</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <ExternalIPAddress
+                      address={effectiveServerState?.last_external_address_v4}
+                      incognitoMode={incognitoMode}
+                      label="IPv4"
+                    />
+                    <ExternalIPAddress
+                      address={effectiveServerState?.last_external_address_v6}
+                      incognitoMode={incognitoMode}
+                      label="IPv6"
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          aria-label={connectionStatusAriaLabel}
+                          className={cn(
+                            "inline-flex h-6 w-6 items-center justify-center rounded-md border border-transparent",
+                            "text-muted-foreground",
+                            connectionStatusIconClass
+                          )}
+                        >
+                          <ConnectionStatusIcon className="h-3 w-3" aria-hidden="true"/>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[220px]">
+                        <p>{connectionStatusTooltip}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )
+            return statusBarContainer ? createPortal(statusBarContent, statusBarContainer) : statusBarContent
+          })()}
         </div>
 
         <TorrentTableDialogs

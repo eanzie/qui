@@ -38,7 +38,7 @@ import type {
   CrossSeedTorrentSearchResponse,
   Torrent
 } from "@/types"
-import { ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw, SlidersHorizontal } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw, SlidersHorizontal } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -89,9 +89,17 @@ export interface CrossSeedDialogProps {
   onStartPausedChange: (value: boolean) => void
   hasSearched: boolean
   cacheMetadata?: CrossSeedTorrentSearchResponse["cache"] | null
+  partial?: boolean
+  queryDegraded?: string
   canForceRefresh?: boolean
   refreshCooldownLabel?: string
   onForceRefresh?: () => void
+}
+
+// Backend TorrentSearchResponse.query_degraded values; unknown values render nothing.
+const queryDegradedMessageKeys: Record<string, string> = {
+  arr_lookup_failed: "crossSeedDialog.arrLookupFailed",
+  arr_no_ids: "crossSeedDialog.arrNoIds",
 }
 
 const CrossSeedDialogComponent = ({
@@ -130,11 +138,13 @@ const CrossSeedDialogComponent = ({
   onStartPausedChange,
   hasSearched,
   cacheMetadata,
+  partial,
+  queryDegraded,
   canForceRefresh,
   refreshCooldownLabel,
   onForceRefresh,
 }: CrossSeedDialogProps) => {
-  const { t } = useTranslation("torrents")
+  const { t } = useTranslation(["torrents", "settings", "crossseed"])
   const excludedIndexerEntries = useMemo(() => {
     if (!sourceTorrent?.excludedIndexers) {
       return []
@@ -213,7 +223,7 @@ const CrossSeedDialogComponent = ({
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                 {sourceTorrent?.contentType && (
                   <Badge variant="secondary" className="h-5 text-xs font-normal capitalize">
-                    {sourceTorrent.contentType}
+                    {t(`crossseed:dirScan.contentTypeLabels.${sourceTorrent.contentType}`, sourceTorrent.contentType)}
                   </Badge>
                 )}
                 {sourceTorrent?.category && <span>{t("crossSeedDialog.category", { category: sourceTorrent.category })}</span>}
@@ -248,6 +258,18 @@ const CrossSeedDialogComponent = ({
                   )}
                 </div>
               )}
+            </div>
+          )}
+          {partial && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-yellow-500">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>{t("crossSeedDialog.partialResults")}</span>
+            </div>
+          )}
+          {queryDegraded && queryDegradedMessageKeys[queryDegraded] && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-yellow-500">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>{t(queryDegradedMessageKeys[queryDegraded])}</span>
             </div>
           )}
         </DialogHeader>
@@ -592,7 +614,7 @@ function formatCrossSeedPublishDate(value: string): string {
 function getInstanceStatusDisplay(
   t: ReturnType<typeof useTranslation<"torrents">>["t"],
   status: string,
-  success: boolean,
+  success: boolean
 ): { text: string; variant: "default" | "success" | "warning" | "destructive" } {
   switch (status) {
     case "added":

@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/rs/zerolog"
 
 	"github.com/autobrr/qui/internal/models"
@@ -242,7 +242,8 @@ func (inj *arrSeedInjector) tryInject(
 
 	// Create hardlinks
 	l.Info().Msg("arrseed: creating hardlinks")
-	if err := hardlinktree.Create(plan); err != nil {
+	created, err := hardlinktree.Create(plan)
+	if err != nil {
 		l.Warn().Err(err).Msg("arrseed: failed to create hardlinks")
 		return &ArrSeedInjectResult{ErrorMessage: fmt.Sprintf("create hardlinks: %v", err)}, err
 	}
@@ -270,7 +271,7 @@ func (inj *arrSeedInjector) tryInject(
 	// Add the torrent to qBittorrent
 	if _, err := inj.svc.syncManager.AddTorrent(ctx, config.TargetQbitInstanceID, torrentBytes, options); err != nil {
 		l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to add torrent to qBit, rolling back hardlinks")
-		if rollbackErr := hardlinktree.Rollback(plan); rollbackErr != nil {
+		if rollbackErr := created.Rollback(); rollbackErr != nil {
 			l.Warn().Err(rollbackErr).Str("rootDir", plan.RootDir).Msg("arrseed: failed to rollback hardlink tree")
 		}
 		return &ArrSeedInjectResult{ErrorMessage: fmt.Sprintf("add torrent: %v", err)}, err
@@ -290,7 +291,7 @@ func (inj *arrSeedInjector) tryInject(
 			// completes and verifies the hardlinked files, regardless of how many
 			// files are still missing.
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume after recheck completes")
-			if qErr := inj.svc.queueRecheckResumeWithThreshold(ctx, config.TargetQbitInstanceID, parsed.InfoHash, 0.01); qErr != nil {
+			if qErr := inj.svc.queueRecheckResumeWithThreshold(config.TargetQbitInstanceID, parsed.InfoHash, 0.01); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume for partial upgrade")
 			}
 		}
@@ -300,8 +301,8 @@ func (inj *arrSeedInjector) tryInject(
 			l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to trigger recheck")
 		} else {
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume")
-			resumeThreshold := arrseedResumeThreshold(ctx, inj.svc)
-			if qErr := inj.svc.queueRecheckResumeWithThreshold(ctx, config.TargetQbitInstanceID, parsed.InfoHash, resumeThreshold); qErr != nil {
+			resumeThreshold := coverageThresholdFromTolerance(defaultSizeMismatchTolerancePercent)
+			if qErr := inj.svc.queueRecheckResumeWithThreshold(config.TargetQbitInstanceID, parsed.InfoHash, resumeThreshold); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume")
 			}
 		}
@@ -540,17 +541,6 @@ func arrSeedBuildAddOptions(category string, injOpts *arrSeedInjectionOptions, s
 	}
 
 	return options
-}
-
-// arrseedResumeThreshold computes the resume threshold for arrseed-injected
-// torrents from the configured size mismatch tolerance, falling back to a
-// 5% default when settings are unavailable.
-func arrseedResumeThreshold(ctx context.Context, svc *Service) float64 {
-	tolerancePercent := 5.0
-	if settings, err := svc.GetAutomationSettings(ctx); err == nil && settings != nil {
-		tolerancePercent = settings.SizeMismatchTolerancePercent
-	}
-	return clampedResumeThresholdFromTolerance(tolerancePercent)
 }
 
 // arrSeedExtractEpisodeID extracts a normalized episode identifier (e.g. "e02")

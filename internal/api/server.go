@@ -79,6 +79,7 @@ type Server struct {
 	automationService                *automations.Service
 	trackerCustomizationStore        *models.TrackerCustomizationStore
 	dashboardSettingsStore           *models.DashboardSettingsStore
+	filterViewStore                  *models.FilterViewStore
 	logExclusionsStore               *models.LogExclusionsStore
 	notificationTargetStore          *models.NotificationTargetStore
 	notificationService              *notifications.Service
@@ -120,6 +121,7 @@ type Dependencies struct {
 	AutomationService                *automations.Service
 	TrackerCustomizationStore        *models.TrackerCustomizationStore
 	DashboardSettingsStore           *models.DashboardSettingsStore
+	FilterViewStore                  *models.FilterViewStore
 	LogExclusionsStore               *models.LogExclusionsStore
 	NotificationTargetStore          *models.NotificationTargetStore
 	NotificationService              *notifications.Service
@@ -185,6 +187,7 @@ func NewServer(deps *Dependencies) *Server {
 		automationService:                deps.AutomationService,
 		trackerCustomizationStore:        deps.TrackerCustomizationStore,
 		dashboardSettingsStore:           deps.DashboardSettingsStore,
+		filterViewStore:                  deps.FilterViewStore,
 		logExclusionsStore:               deps.LogExclusionsStore,
 		notificationTargetStore:          deps.NotificationTargetStore,
 		notificationService:              deps.NotificationService,
@@ -344,13 +347,14 @@ func (s *Server) Handler() (*chi.Mux, error) {
 	clientAPIKeysHandler := handlers.NewClientAPIKeysHandler(s.clientAPIKeyStore, s.instanceStore, s.config.Config.BaseURL)
 	externalProgramsHandler := handlers.NewExternalProgramsHandler(s.externalProgramStore, s.externalProgramService, s.clientPool, s.automationStore)
 	arrHandler := handlers.NewArrHandler(s.arrInstanceStore, s.arrService)
-	versionHandler := handlers.NewVersionHandler(s.updateService)
+	versionHandler := handlers.NewVersionHandler(s.updateService, s.version)
 	applicationHandler := handlers.NewApplicationHandler(s.config, s.started)
 	qbittorrentInfoHandler := handlers.NewQBittorrentInfoHandler(s.clientPool)
 	backupsHandler := handlers.NewBackupsHandler(s.backupService)
 	trackerIconHandler := handlers.NewTrackerIconHandler(s.trackerIconService)
 	proxyHandler := proxy.NewHandler(s.clientPool, s.clientAPIKeyStore, s.instanceStore, s.syncManager, s.reannounceCache, s.reannounceService, s.config.Config.BaseURL)
 	licenseHandler := handlers.NewLicenseHandler(s.licenseService)
+	themesHandler := handlers.NewThemesHandler(s.config, s.licenseService)
 	crossSeedHandler := handlers.NewCrossSeedHandler(
 		s.crossSeedService,
 		s.instanceCrossSeedCompletionStore,
@@ -371,6 +375,7 @@ func (s *Server) Handler() (*chi.Mux, error) {
 	rssHandler := handlers.NewRSSHandler(s.syncManager)
 	rssSSEHandler := handlers.NewRSSSSEHandler(s.syncManager)
 	dashboardSettingsHandler := handlers.NewDashboardSettingsHandler(s.dashboardSettingsStore)
+	filterViewHandler := handlers.NewFilterViewHandler(s.filterViewStore)
 	logExclusionsHandler := handlers.NewLogExclusionsHandler(s.logExclusionsStore)
 	logsHandler := handlers.NewLogsHandler(s.config)
 	notificationsHandler := handlers.NewNotificationsHandler(s.notificationTargetStore, s.notificationService)
@@ -430,6 +435,9 @@ func (s *Server) Handler() (*chi.Mux, error) {
 			r.Put("/auth/change-password", authHandler.ChangePassword)
 
 			r.Route("/license", licenseHandler.Routes)
+
+			// Sideloaded custom themes (premium-gated inside the handler)
+			r.Get("/themes/custom", themesHandler.ListCustomThemes)
 
 			// Jackett routes (if configured)
 			if jackettHandler != nil {
@@ -493,6 +501,14 @@ func (s *Server) Handler() (*chi.Mux, error) {
 			r.Get("/dashboard-settings", dashboardSettingsHandler.Get)
 			r.Put("/dashboard-settings", dashboardSettingsHandler.Update)
 
+			// Saved filter views (named TorrentFilters snapshots)
+			r.Route("/filter-views", func(r chi.Router) {
+				r.Get("/", filterViewHandler.List)
+				r.Post("/", filterViewHandler.Create)
+				r.Put("/{id}", filterViewHandler.Update)
+				r.Delete("/{id}", filterViewHandler.Delete)
+			})
+
 			// Log exclusions (muted log message patterns)
 			r.Get("/log-exclusions", logExclusionsHandler.Get)
 			r.Put("/log-exclusions", logExclusionsHandler.Update)
@@ -500,7 +516,8 @@ func (s *Server) Handler() (*chi.Mux, error) {
 			// Log settings and streaming
 			logsHandler.Routes(r)
 
-			// Version endpoint for update checks
+			// Version endpoints (current running version + update checks)
+			r.Get("/version", versionHandler.GetVersion)
 			r.Get("/version/latest", versionHandler.GetLatestVersion)
 			r.Get("/application/info", applicationHandler.GetInfo)
 
@@ -659,6 +676,7 @@ func (s *Server) Handler() (*chi.Mux, error) {
 							r.Patch("/", dirScanHandler.UpdateDirectory)
 							r.Delete("/", dirScanHandler.DeleteDirectory)
 							r.Post("/reset-files", dirScanHandler.ResetFiles)
+							r.Post("/requeue-no-match", dirScanHandler.RequeueNoMatch)
 							r.Post("/scan", dirScanHandler.TriggerScan)
 							r.Delete("/scan", dirScanHandler.CancelScan)
 							r.Get("/status", dirScanHandler.GetStatus)
@@ -701,8 +719,9 @@ func (s *Server) Handler() (*chi.Mux, error) {
 		})
 	})
 
-	// Proxy routes (outside of /api and not requiring authentication)
-	proxyHandler.Routes(r)
+	// Proxy routes (outside of /api and not requiring authentication).
+	// Wrapped so proxy traffic gets the same status and latency record as /api.
+	proxyHandler.Routes(r.With(middleware.Logger(s.logger)))
 
 	swaggerHandler, err := swagger.NewHandler(s.config.Config.BaseURL)
 	if err != nil {

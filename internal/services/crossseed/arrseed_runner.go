@@ -374,13 +374,13 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 		StartPaused:                  csSettings.StartPaused,
 		Tags:                         csSettings.ArrSeedTags,
 		EnableSeasonPackUpgrade:      settings.EnableSeasonPackUpgrade,
-		SizeMismatchTolerancePercent: csSettings.SizeMismatchTolerancePercent,
+		SizeMismatchTolerancePercent: defaultSizeMismatchTolerancePercent,
 	}
 
 	l.Info().
 		Int("searchDelay", settings.SearchDelaySeconds).
 		Int("maxItemsPerRun", settings.MaxItemsPerRun).
-		Float64("sizeTolerance", csSettings.SizeMismatchTolerancePercent).
+		Float64("sizeTolerance", injOpts.SizeMismatchTolerancePercent).
 		Bool("startPaused", injOpts.StartPaused).
 		Strs("tags", injOpts.Tags).
 		Msg("arrseed: settings loaded")
@@ -780,11 +780,9 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 						Str("hash", injectResult.TorrentHash).
 						Int("unmatched", injectResult.UnmatchedCount).
 						Msg("arrseed: partial upgrade injected, starting download monitor")
-					r.monitorWg.Add(1)
-					go func() {
-						defer r.monitorWg.Done()
+					r.monitorWg.Go(func() {
 						r.monitorPartialUpgrade(config.TargetQbitInstanceID, injectResult.TorrentHash, arrClient, mediaItem, config)
-					}()
+					})
 				} else {
 					r.postSeedExecutor.execute(ctx, arrClient, mediaItem, config, &l)
 				}

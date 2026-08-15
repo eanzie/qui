@@ -32,7 +32,7 @@ func newFailDeleteStore() *failDeleteStore {
 	// Encode minimal session data with a future deadline.
 	data, err := scs.GobCodec{}.Encode(
 		time.Now().Add(time.Hour),
-		map[string]interface{}{},
+		map[string]any{},
 	)
 	if err != nil {
 		panic("failed to encode test session data: " + err.Error())
