@@ -40,6 +40,7 @@
     "auto": "Automatické",
     "scan": "Hledání",
     "dirScan": "Hledání v adresářích",
+    "arrScan": "Hledání v Arr",
     "rules": "Pravidla",
     "blocklist": "Blokované"
   },
@@ -361,7 +362,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Tagy pro balíky celých sezón",
       "selectSeasonPackTags": "Vybrat tagy...",
-      "tagSeasonPack": "season-pack"
+      "tagSeasonPack": "season-pack",
+      "arrScanTags": "Tagy pro hledání v Arr",
+      "selectArrScanTags": "Vybrat tagy pro seedování z Arr",
+      "arrScanTagsDescription": "Tagy, které se vztahují na torrenty přidávané přes seedování z Arr (křížové sdílení Sonarr/Radarr).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Chování po vložení",
@@ -744,6 +749,166 @@
       "running": "BĚŽÍ",
       "partial": "ČÁSTEČNĚ",
       "pending": "ČEKÁ"
+    }
+  },
+  "arrScan": {
+    "title": "Hledání v Arr",
+    "description": "Prohledejte své knihovny Sonarr a Radarr a najděte na svých indexerech shody pro křížové sdílení.",
+    "settings": "Nastavení",
+    "enabled": "Povoleno",
+    "disabled": "Vypnuto",
+    "instanceConfigs": "Konfigurace instancí",
+    "instanceConfigsDescription": "Nastavte křížové sdílení pro každou instanci Sonarr/Radarr",
+    "addConfig": "Přidat konfiguraci",
+    "noConfigs": "Zatím žádné konfigurace. Přidejte jednu a začněte křížově sdílet ze svých knihoven Arr.",
+    "settingsDialog": {
+      "title": "Nastavení hledání v Arr",
+      "description": "Globální nastavení pro hledání v Arr.",
+      "searchDelayLabel": "Prodleva mezi hledáními (sekundy)",
+      "searchDelayHelp": "Prodleva mezi hledáními na indexerech, aby nedošlo k omezení rychlosti",
+      "maxItemsLabel": "Maximální počet položek na spuštění",
+      "maxItemsHelp": "0 = neomezeno",
+      "sharedSettingsNote": "Velikost tolerance, spuštění v pozastaveném stavu a tagy se nastavují v Pravidlech křížového sdílení a jsou sdílené všemi režimy křížového sdílení.",
+      "qualityGateLabel": "Kvalitativní práh",
+      "highScoreOnlyLabel": "Pouze vysoké skóre",
+      "highScoreOnlyHelp": "Zpracovávat pouze položky se skóre vlastního formátu nad mezní hodnotou profilu kvality.",
+      "contentTypesLabel": "Typy obsahu",
+      "individualEpisodesLabel": "Jednotlivé epizody",
+      "individualEpisodesHelp": "Zpracovávat jednotlivé soubory epizod ze sezón s epizodami od různých release skupin.",
+      "individualEpisodesDisabledHelp": "Vypnuto, dokud je zapnuto vylepšování balíků sezón.",
+      "seasonPackUpgradeLabel": "Vylepšování balíků sezón",
+      "enableSeasonPackUpgradeLabel": "Povolit vylepšování balíků sezón",
+      "seasonPackUpgradeHelp": "Když je zapnuto, vloží se i částečné balíky sezón a qBittorrent stáhne chybějící epizody jako vylepšení. Po dokončení stahování Sonarr nové soubory naimportuje.",
+      "cancel": "Zrušit",
+      "save": "Uložit"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "vypnuto",
+      "target": "Cíl: {{name}}",
+      "categorySuffix": " | Kategorie: {{category}}",
+      "lastScan": "Poslední sken: {{time}}",
+      "startTooltip": "Spustit skenování",
+      "stopTooltip": "Zastavit (dokončit aktuální položku)",
+      "killTooltip": "Ukončit (zastavit okamžitě)",
+      "editTooltip": "Upravit",
+      "deleteTooltip": "Odstranit"
+    },
+    "details": {
+      "arrDockerPath": "Cesta Arr v Dockeru:",
+      "hostDataPath": "Cesta k datům na hostiteli:",
+      "torrentSavePath": "Cesta pro uložení torrentů:",
+      "scanInterval": "Interval skenování:",
+      "scanIntervalValue": "{{minutes}} minut",
+      "unmonitorAfterSeed": "Zrušit sledování po seedování:",
+      "tagAfterSeed": "Tag po seedování:",
+      "notSet": "(nenastaveno)",
+      "none": "(žádné)",
+      "yes": "Ano",
+      "no": "Ne"
+    },
+    "progress": {
+      "completed": "{{processed}} prohledáno, {{added}} přidáno",
+      "stopping": "Zastavování... {{processed}}/{{total}}",
+      "running": "{{phase}}: {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Položky:",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Resetovat",
+      "recentRuns": "Nedávná spuštění",
+      "runSummary": "{{scanned}} prohledáno, {{matched}} shod, {{added}} přidáno"
+    },
+    "deleteDialog": {
+      "title": "Odstranit konfiguraci",
+      "description": "Toto odstraní konfiguraci pro \"{{name}}\" a veškerou související historii skenování i položky.",
+      "cancel": "Zrušit",
+      "delete": "Odstranit"
+    },
+    "configDialog": {
+      "addTitle": "Přidat konfiguraci hledání v Arr",
+      "addDescription": "Nastavte křížové sdílení pro instanci Sonarr nebo Radarr",
+      "editTitle": "Upravit konfiguraci",
+      "editDescription": "Aktualizujte nastavení pro {{name}}",
+      "arrInstanceLabel": "Instance Arr",
+      "selectArrInstance": "Vybrat instanci Arr",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "Cílová instance qBittorrent",
+      "selectTargetInstance": "Vybrat instanci qBittorrent",
+      "categoryLabel": "Kategorie",
+      "categoryPlaceholder": "např. TV.cross nebo MOVIES.cross",
+      "arrDockerPathLabel": "Cesta Arr v Dockeru",
+      "arrDockerPathHelp": "Předpona cesty tak, jak ji vidí kontejner Arr (např. /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Cesta k datům na hostiteli",
+      "hostDataPathHelp": "Odpovídající cesta v hostitelském systému (např. /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Cesta pro uložení torrentů",
+      "torrentSavePathHelp": "Kam se mají ukládat hardlinky a data torrentů (např. /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Interval skenování (minut)",
+      "unmonitorAfterSeedLabel": "Zrušit sledování po seedování",
+      "unmonitorAfterSeedHelp": "Po úspěšném křížovém sdílení zrušit sledování seriálu/filmu v Sonarr/Radarr",
+      "tagAfterSeedLabel": "Tag po seedování",
+      "tagAfterSeedHelp": "Po úspěšném křížovém sdílení přidat tento tag k seriálu/filmu v Sonarr/Radarr",
+      "tagAfterSeedPlaceholder": "např. cross-seeded",
+      "cancel": "Zrušit",
+      "createButton": "Vytvořit",
+      "saveButton": "Uložit"
+    },
+    "toast": {
+      "enabled": "Hledání v Arr zapnuto",
+      "disabled": "Hledání v Arr vypnuto",
+      "settingsUpdateFailed": "Selhala aktualizace nastavení",
+      "settingsSaved": "Nastavení uložena",
+      "settingsSaveFailed": "Selhalo uložení nastavení",
+      "scanStarted": "Skenování spuštěno",
+      "scanStartFailed": "Selhalo spuštění skenování: {{error}}",
+      "scanCompleted": "Skenování dokončeno: {{count}} přidáno",
+      "scanFailed": "Skenování selhalo",
+      "scanStopping": "Zastavování po dokončení aktuální položky...",
+      "scanStopFailed": "Selhalo zastavení skenování",
+      "scanKilled": "Skenování ukončeno",
+      "scanKillFailed": "Selhalo ukončení skenování",
+      "selectInstances": "Vyberte prosím instanci Arr i cílovou instanci qBittorrent",
+      "configCreated": "Konfigurace vytvořena",
+      "configCreateFailed": "Selhalo vytvoření konfigurace",
+      "configUpdated": "Konfigurace aktualizována",
+      "configUpdateFailed": "Selhala aktualizace konfigurace",
+      "configDeleted": "Konfigurace odstraněna",
+      "configDeleteFailed": "Selhalo odstranění konfigurace",
+      "itemsReset": "Položky resetovány pro nové skenování",
+      "itemsResetFailed": "Selhalo resetování položek"
+    },
+    "runStatusLabels": {
+      "running": "Běží",
+      "stopping": "Zastavování",
+      "completed": "Dokončeno",
+      "failed": "Selhalo",
+      "cancelled": "Zrušeno"
+    },
+    "itemStatusLabels": {
+      "pending": "čeká",
+      "searched": "prohledáno",
+      "matched": "shoda",
+      "seeded": "seedováno",
+      "no_match": "bez shody",
+      "error": "chyba"
+    },
+    "phaseLabels": {
+      "scanning": "skenování",
+      "searching": "hledání"
+    },
+    "triggeredByLabels": {
+      "manual": "ručně",
+      "schedule": "plánovaně"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "sonarr",
+      "radarr": "radarr",
+      "unknown": "neznámý"
     }
   }
 }

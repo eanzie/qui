@@ -40,6 +40,7 @@
     "auto": "Auto",
     "scan": "Buscar",
     "dirScan": "Scanner Dir",
+    "arrScan": "Scanner Arr",
     "rules": "Regras",
     "blocklist": "Lista de Bloqueios"
   },
@@ -357,7 +358,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Tags de pacote de temporada",
       "selectSeasonPackTags": "Selecionar tags...",
-      "tagSeasonPack": "pacote-temporada"
+      "tagSeasonPack": "pacote-temporada",
+      "arrScanTags": "Tags do Scanner Arr",
+      "selectArrScanTags": "Selecione tags para o ARR seed",
+      "arrScanTagsDescription": "Tags aplicadas a torrents adicionados via ARR seed (cross-seeding com Sonarr/Radarr).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Comportamento Pós-Injeção",
@@ -738,6 +743,166 @@
       "running": "EXECUTANDO",
       "partial": "PARCIAL",
       "pending": "PENDENTE"
+    }
+  },
+  "arrScan": {
+    "title": "Scanner Arr",
+    "description": "Varra suas bibliotecas do Sonarr e do Radarr para encontrar correspondências de cross-seed nos seus indexadores.",
+    "settings": "Configurações",
+    "enabled": "Ativado",
+    "disabled": "Desativado",
+    "instanceConfigs": "Configurações de Instância",
+    "instanceConfigsDescription": "Configure o cross-seeding para cada instância do Sonarr/Radarr",
+    "addConfig": "Adicionar Configuração",
+    "noConfigs": "Nenhuma configuração ainda. Adicione uma para começar o cross-seeding a partir das suas bibliotecas Arr.",
+    "settingsDialog": {
+      "title": "Configurações do Scanner Arr",
+      "description": "Configure as opções globais do Scanner Arr.",
+      "searchDelayLabel": "Atraso de Busca (segundos)",
+      "searchDelayHelp": "Atraso entre as buscas nos indexadores para evitar limites de taxa",
+      "maxItemsLabel": "Máx. de Itens por Execução",
+      "maxItemsHelp": "0 = ilimitado",
+      "sharedSettingsNote": "A tolerância de tamanho, o início pausado e as tags são configurados em Regras Cross-Seed e compartilhados por todos os modos de cross-seed.",
+      "qualityGateLabel": "Filtro de Qualidade",
+      "highScoreOnlyLabel": "Apenas Pontuação Alta",
+      "highScoreOnlyHelp": "Processa apenas itens com pontuação de formato personalizado acima do corte do perfil de qualidade.",
+      "contentTypesLabel": "Tipos de Conteúdo",
+      "individualEpisodesLabel": "Episódios Avulsos",
+      "individualEpisodesHelp": "Processa arquivos de episódios avulsos de temporadas com grupos de lançamento mistos.",
+      "individualEpisodesDisabledHelp": "Desativado enquanto a Atualização de Pacote de Temporada estiver ligada.",
+      "seasonPackUpgradeLabel": "Atualização de Pacote de Temporada",
+      "enableSeasonPackUpgradeLabel": "Ativar Atualização de Pacote de Temporada",
+      "seasonPackUpgradeHelp": "Quando ativado, pacotes de temporada parciais serão injetados e o qBittorrent baixará os episódios ausentes como atualizações. Após a conclusão do download, o Sonarr importará os novos arquivos.",
+      "cancel": "Cancelar",
+      "save": "Salvar"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "desativado",
+      "target": "Alvo: {{name}}",
+      "categorySuffix": " | Categoria: {{category}}",
+      "lastScan": "Última varredura: {{time}}",
+      "startTooltip": "Iniciar Varredura",
+      "stopTooltip": "Parar (concluir o item atual)",
+      "killTooltip": "Encerrar (parar imediatamente)",
+      "editTooltip": "Editar",
+      "deleteTooltip": "Excluir"
+    },
+    "details": {
+      "arrDockerPath": "Caminho Docker do Arr:",
+      "hostDataPath": "Caminho de Dados no Host:",
+      "torrentSavePath": "Caminho de Salvamento dos Torrents:",
+      "scanInterval": "Intervalo de Varredura:",
+      "scanIntervalValue": "{{minutes}} minutos",
+      "unmonitorAfterSeed": "Desmonitorar Após Semear:",
+      "tagAfterSeed": "Tag Após Semear:",
+      "notSet": "(não definido)",
+      "none": "(nenhuma)",
+      "yes": "Sim",
+      "no": "Não"
+    },
+    "progress": {
+      "completed": "{{processed}} varridos, {{added}} adicionados",
+      "stopping": "Parando... {{processed}}/{{total}}",
+      "running": "{{phase}}: {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Itens:",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Redefinir",
+      "recentRuns": "Execuções Recentes",
+      "runSummary": "{{scanned}} varridos, {{matched}} correspondidos, {{added}} adicionados"
+    },
+    "deleteDialog": {
+      "title": "Excluir Configuração",
+      "description": "Isto excluirá a configuração de \"{{name}}\" e todo o histórico de varreduras e itens associados.",
+      "cancel": "Cancelar",
+      "delete": "Excluir"
+    },
+    "configDialog": {
+      "addTitle": "Adicionar Configuração do Scanner Arr",
+      "addDescription": "Configure o cross-seeding para uma instância do Sonarr ou Radarr",
+      "editTitle": "Editar Configuração",
+      "editDescription": "Atualize as configurações de {{name}}",
+      "arrInstanceLabel": "Instância Arr",
+      "selectArrInstance": "Selecione uma instância Arr",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "Instância Alvo do qBittorrent",
+      "selectTargetInstance": "Selecione uma instância do qBittorrent",
+      "categoryLabel": "Categoria",
+      "categoryPlaceholder": "ex: TV.cross ou MOVIES.cross",
+      "arrDockerPathLabel": "Caminho Docker do Arr",
+      "arrDockerPathHelp": "O prefixo de caminho como visto dentro do contêiner do Arr (ex: /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Caminho de Dados no Host",
+      "hostDataPathHelp": "O caminho correspondente no sistema host (ex: /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Caminho de Salvamento dos Torrents",
+      "torrentSavePathHelp": "Onde os hardlinks e os dados dos torrents devem ser salvos (ex: /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Intervalo de Varredura (minutos)",
+      "unmonitorAfterSeedLabel": "Desmonitorar após semear",
+      "unmonitorAfterSeedHelp": "Desmonitora a série/filme no Sonarr/Radarr após um cross-seed bem-sucedido",
+      "tagAfterSeedLabel": "Tag após semear",
+      "tagAfterSeedHelp": "Adiciona esta tag à série/filme no Sonarr/Radarr após um cross-seed bem-sucedido",
+      "tagAfterSeedPlaceholder": "ex: cross-seeded",
+      "cancel": "Cancelar",
+      "createButton": "Criar",
+      "saveButton": "Salvar"
+    },
+    "toast": {
+      "enabled": "Scanner Arr ativado",
+      "disabled": "Scanner Arr desativado",
+      "settingsUpdateFailed": "Falha ao atualizar configurações",
+      "settingsSaved": "Configurações salvas",
+      "settingsSaveFailed": "Falha ao salvar configurações",
+      "scanStarted": "Varredura iniciada",
+      "scanStartFailed": "Falha ao iniciar a varredura: {{error}}",
+      "scanCompleted": "Varredura concluída: {{count}} adicionados",
+      "scanFailed": "A varredura falhou",
+      "scanStopping": "Parando após o item atual...",
+      "scanStopFailed": "Falha ao parar a varredura",
+      "scanKilled": "Varredura encerrada",
+      "scanKillFailed": "Falha ao encerrar a varredura",
+      "selectInstances": "Selecione uma instância Arr e uma instância alvo do qBittorrent",
+      "configCreated": "Configuração criada",
+      "configCreateFailed": "Falha ao criar a configuração",
+      "configUpdated": "Configuração atualizada",
+      "configUpdateFailed": "Falha ao atualizar a configuração",
+      "configDeleted": "Configuração excluída",
+      "configDeleteFailed": "Falha ao excluir a configuração",
+      "itemsReset": "Itens redefinidos para nova varredura",
+      "itemsResetFailed": "Falha ao redefinir os itens"
+    },
+    "runStatusLabels": {
+      "running": "Executando",
+      "stopping": "Parando",
+      "completed": "Concluída",
+      "failed": "Falhou",
+      "cancelled": "Cancelada"
+    },
+    "itemStatusLabels": {
+      "pending": "pendentes",
+      "searched": "buscados",
+      "matched": "correspondidos",
+      "seeded": "semeados",
+      "no_match": "sem correspondência",
+      "error": "erros"
+    },
+    "phaseLabels": {
+      "scanning": "varrendo",
+      "searching": "buscando"
+    },
+    "triggeredByLabels": {
+      "manual": "manual",
+      "schedule": "agendado"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "sonarr",
+      "radarr": "radarr",
+      "unknown": "desconhecido"
     }
   }
 }

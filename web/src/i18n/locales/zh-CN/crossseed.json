@@ -40,6 +40,7 @@
     "auto": "自动",
     "scan": "扫描",
     "dirScan": "目录扫描",
+    "arrScan": "Arr 扫描",
     "rules": "规则",
     "blocklist": "屏蔽列表"
   },
@@ -355,7 +356,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "季度包标签",
       "selectSeasonPackTags": "选择标签…",
-      "tagSeasonPack": "season-pack"
+      "tagSeasonPack": "season-pack",
+      "arrScanTags": "Arr 扫描",
+      "selectArrScanTags": "选择 ARR 做种的标签",
+      "arrScanTagsDescription": "通过 ARR 做种（Sonarr/Radarr 辅种）添加的种子所应用的标签。",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "注入后行为",
@@ -728,6 +733,166 @@
       "running": "运行中",
       "partial": "部分成功",
       "pending": "等待中"
+    }
+  },
+  "arrScan": {
+    "title": "Arr 扫描",
+    "description": "扫描你的 Sonarr 和 Radarr 媒体库，在你的索引器上查找辅种匹配。",
+    "settings": "设置",
+    "enabled": "已启用",
+    "disabled": "已禁用",
+    "instanceConfigs": "实例配置",
+    "instanceConfigsDescription": "为每个 Sonarr/Radarr 实例配置辅种",
+    "addConfig": "添加配置",
+    "noConfigs": "尚无配置。添加一个以开始从你的 Arr 媒体库辅种。",
+    "settingsDialog": {
+      "title": "Arr 扫描设置",
+      "description": "配置 Arr 扫描的全局设置。",
+      "searchDelayLabel": "搜索延迟（秒）",
+      "searchDelayHelp": "索引器搜索之间的延迟，用于避免触发限速",
+      "maxItemsLabel": "每次运行最大项目数",
+      "maxItemsHelp": "0 = 无限制",
+      "sharedSettingsNote": "大小容差、以暂停状态添加和标签在辅种规则中配置，并在所有辅种模式间共享。",
+      "qualityGateLabel": "质量门槛",
+      "highScoreOnlyLabel": "仅限高分",
+      "highScoreOnlyHelp": "仅处理自定义格式评分高于质量配置文件截止值的项目。",
+      "contentTypesLabel": "内容类型",
+      "individualEpisodesLabel": "单集",
+      "individualEpisodesHelp": "处理来自混合发布组季度的单集文件。",
+      "individualEpisodesDisabledHelp": "启用季度包升级时此项被禁用。",
+      "seasonPackUpgradeLabel": "季度包升级",
+      "enableSeasonPackUpgradeLabel": "启用季度包升级",
+      "seasonPackUpgradeHelp": "启用后，将注入部分季度包，qBittorrent 会以升级方式下载缺失的单集。下载完成后，Sonarr 将导入新文件。",
+      "cancel": "取消",
+      "save": "保存"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr 实例 #{{id}}",
+      "qbitInstanceFallback": "qBit 实例 #{{id}}",
+      "disabledBadge": "已禁用",
+      "target": "目标：{{name}}",
+      "categorySuffix": " | 分类：{{category}}",
+      "lastScan": "上次扫描：{{time}}",
+      "startTooltip": "开始扫描",
+      "stopTooltip": "停止（完成当前项目后）",
+      "killTooltip": "强制终止（立即停止）",
+      "editTooltip": "编辑",
+      "deleteTooltip": "删除"
+    },
+    "details": {
+      "arrDockerPath": "Arr Docker 路径：",
+      "hostDataPath": "宿主机数据路径：",
+      "torrentSavePath": "种子保存路径：",
+      "scanInterval": "扫描间隔：",
+      "scanIntervalValue": "{{minutes}} 分钟",
+      "unmonitorAfterSeed": "做种后取消监控：",
+      "tagAfterSeed": "做种后添加标签：",
+      "notSet": "（未设置）",
+      "none": "（无）",
+      "yes": "是",
+      "no": "否"
+    },
+    "progress": {
+      "completed": "已扫描 {{processed}} 个，已添加 {{added}} 个",
+      "stopping": "正在停止... {{processed}}/{{total}}",
+      "running": "{{phase}}：{{processed}}/{{total}}",
+      "addedSuffix": "（+{{added}}）"
+    },
+    "history": {
+      "items": "项目：",
+      "itemStatusCount": "{{count}} 个{{status}}",
+      "reset": "重置",
+      "recentRuns": "最近的运行",
+      "runSummary": "已扫描 {{scanned}} 个，已匹配 {{matched}} 个，已添加 {{added}} 个"
+    },
+    "deleteDialog": {
+      "title": "删除配置",
+      "description": "这将删除“{{name}}”的配置以及所有关联的扫描历史和项目。",
+      "cancel": "取消",
+      "delete": "删除"
+    },
+    "configDialog": {
+      "addTitle": "添加 Arr 扫描配置",
+      "addDescription": "为 Sonarr 或 Radarr 实例配置辅种",
+      "editTitle": "编辑配置",
+      "editDescription": "更新 {{name}} 的设置",
+      "arrInstanceLabel": "Arr 实例",
+      "selectArrInstance": "选择一个 Arr 实例",
+      "arrInstanceOption": "{{name}}（{{type}}）",
+      "targetInstanceLabel": "目标 qBittorrent 实例",
+      "selectTargetInstance": "选择一个 qBittorrent 实例",
+      "categoryLabel": "分类",
+      "categoryPlaceholder": "例如 TV.cross 或 MOVIES.cross",
+      "arrDockerPathLabel": "Arr Docker 路径",
+      "arrDockerPathHelp": "在 Arr 容器内看到的路径前缀（例如 /mnt/media/tv）",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "宿主机数据路径",
+      "hostDataPathHelp": "宿主机系统上对应的路径（例如 /mnt/media/tv/data）",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "种子保存路径",
+      "torrentSavePathHelp": "硬链接和种子数据的保存位置（例如 /mnt/media/tv/torrents）",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "扫描间隔（分钟）",
+      "unmonitorAfterSeedLabel": "做种后取消监控",
+      "unmonitorAfterSeedHelp": "辅种成功后，在 Sonarr/Radarr 中取消监控该剧集/电影",
+      "tagAfterSeedLabel": "做种后添加标签",
+      "tagAfterSeedHelp": "辅种成功后，在 Sonarr/Radarr 中为该剧集/电影添加此标签",
+      "tagAfterSeedPlaceholder": "例如 cross-seeded",
+      "cancel": "取消",
+      "createButton": "创建",
+      "saveButton": "保存"
+    },
+    "toast": {
+      "enabled": "Arr 扫描已启用",
+      "disabled": "Arr 扫描已禁用",
+      "settingsUpdateFailed": "更新设置失败",
+      "settingsSaved": "设置已保存",
+      "settingsSaveFailed": "保存设置失败",
+      "scanStarted": "扫描已开始",
+      "scanStartFailed": "启动扫描失败：{{error}}",
+      "scanCompleted": "扫描完成：已添加 {{count}} 个",
+      "scanFailed": "扫描失败",
+      "scanStopping": "将在当前项目完成后停止...",
+      "scanStopFailed": "停止扫描失败",
+      "scanKilled": "扫描已强制终止",
+      "scanKillFailed": "强制终止扫描失败",
+      "selectInstances": "请同时选择一个 Arr 实例和一个目标 qBittorrent 实例",
+      "configCreated": "配置已创建",
+      "configCreateFailed": "创建配置失败",
+      "configUpdated": "配置已更新",
+      "configUpdateFailed": "更新配置失败",
+      "configDeleted": "配置已删除",
+      "configDeleteFailed": "删除配置失败",
+      "itemsReset": "项目已重置以便重新扫描",
+      "itemsResetFailed": "重置项目失败"
+    },
+    "runStatusLabels": {
+      "running": "运行中",
+      "stopping": "正在停止",
+      "completed": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "itemStatusLabels": {
+      "pending": "待处理",
+      "searched": "已搜索",
+      "matched": "已匹配",
+      "seeded": "已做种",
+      "no_match": "无匹配",
+      "error": "错误"
+    },
+    "phaseLabels": {
+      "scanning": "扫描中",
+      "searching": "搜索中"
+    },
+    "triggeredByLabels": {
+      "manual": "手动",
+      "schedule": "定时"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "Sonarr",
+      "radarr": "Radarr",
+      "unknown": "未知"
     }
   }
 }

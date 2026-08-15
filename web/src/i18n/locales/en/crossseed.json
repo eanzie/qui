@@ -358,7 +358,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Season pack tags",
       "selectSeasonPackTags": "Select tags...",
-      "tagSeasonPack": "season-pack"
+      "tagSeasonPack": "season-pack",
+      "arrScanTags": "Arr Scan",
+      "selectArrScanTags": "Select tags for ARR seed",
+      "arrScanTagsDescription": "Tags applied to torrents added via ARR seed (Sonarr/Radarr cross-seeding).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Post-injection behavior",
@@ -739,6 +743,166 @@
       "running": "RUNNING",
       "partial": "PARTIAL",
       "pending": "PENDING"
+    }
+  },
+  "arrScan": {
+    "title": "Arr Scan",
+    "description": "Scan your Sonarr and Radarr libraries to find cross-seed matches on your indexers.",
+    "settings": "Settings",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "instanceConfigs": "Instance Configurations",
+    "instanceConfigsDescription": "Configure cross-seeding for each Sonarr/Radarr instance",
+    "addConfig": "Add Config",
+    "noConfigs": "No configurations yet. Add one to start cross-seeding from your Arr libraries.",
+    "settingsDialog": {
+      "title": "Arr Scan Settings",
+      "description": "Configure global settings for Arr Scan.",
+      "searchDelayLabel": "Search Delay (seconds)",
+      "searchDelayHelp": "Delay between indexer searches to avoid rate limiting",
+      "maxItemsLabel": "Max Items Per Run",
+      "maxItemsHelp": "0 = unlimited",
+      "sharedSettingsNote": "Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.",
+      "qualityGateLabel": "Quality Gate",
+      "highScoreOnlyLabel": "High Score Only",
+      "highScoreOnlyHelp": "Only process items with custom format score above the quality profile cutoff.",
+      "contentTypesLabel": "Content Types",
+      "individualEpisodesLabel": "Individual Episodes",
+      "individualEpisodesHelp": "Process individual episode files from mixed release group seasons.",
+      "individualEpisodesDisabledHelp": "Disabled while Season Pack Upgrade is on.",
+      "seasonPackUpgradeLabel": "Season Pack Upgrade",
+      "enableSeasonPackUpgradeLabel": "Enable Season Pack Upgrade",
+      "seasonPackUpgradeHelp": "When enabled, partial season packs will be injected and qBittorrent will download missing episodes as upgrades. After download completes, Sonarr will import the new files.",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "disabled",
+      "target": "Target: {{name}}",
+      "categorySuffix": " | Category: {{category}}",
+      "lastScan": "Last scan: {{time}}",
+      "startTooltip": "Start Scan",
+      "stopTooltip": "Stop (finish current item)",
+      "killTooltip": "Kill (stop immediately)",
+      "editTooltip": "Edit",
+      "deleteTooltip": "Delete"
+    },
+    "details": {
+      "arrDockerPath": "Arr Docker Path:",
+      "hostDataPath": "Host Data Path:",
+      "torrentSavePath": "Torrent Save Path:",
+      "scanInterval": "Scan Interval:",
+      "scanIntervalValue": "{{minutes}} minutes",
+      "unmonitorAfterSeed": "Unmonitor After Seed:",
+      "tagAfterSeed": "Tag After Seed:",
+      "notSet": "(not set)",
+      "none": "(none)",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "progress": {
+      "completed": "{{processed}} scanned, {{added}} added",
+      "stopping": "Stopping... {{processed}}/{{total}}",
+      "running": "{{phase}}: {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Items:",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Reset",
+      "recentRuns": "Recent Runs",
+      "runSummary": "{{scanned}} scanned, {{matched}} matched, {{added}} added"
+    },
+    "deleteDialog": {
+      "title": "Delete Configuration",
+      "description": "This will delete the configuration for \"{{name}}\" and all associated scan history and items.",
+      "cancel": "Cancel",
+      "delete": "Delete"
+    },
+    "configDialog": {
+      "addTitle": "Add Arr Scan Configuration",
+      "addDescription": "Configure cross-seeding for a Sonarr or Radarr instance",
+      "editTitle": "Edit Configuration",
+      "editDescription": "Update settings for {{name}}",
+      "arrInstanceLabel": "Arr Instance",
+      "selectArrInstance": "Select an Arr instance",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "Target qBittorrent Instance",
+      "selectTargetInstance": "Select a qBittorrent instance",
+      "categoryLabel": "Category",
+      "categoryPlaceholder": "e.g., TV.cross or MOVIES.cross",
+      "arrDockerPathLabel": "Arr Docker Path",
+      "arrDockerPathHelp": "The path prefix as seen inside the Arr container (e.g., /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Host Data Path",
+      "hostDataPathHelp": "The matching path on the host system (e.g., /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Torrent Save Path",
+      "torrentSavePathHelp": "Where hardlinks and torrent data should be saved (e.g., /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Scan Interval (minutes)",
+      "unmonitorAfterSeedLabel": "Unmonitor after seed",
+      "unmonitorAfterSeedHelp": "Unmonitor the series/movie in Sonarr/Radarr after a successful cross-seed",
+      "tagAfterSeedLabel": "Tag after seed",
+      "tagAfterSeedHelp": "Add this tag to the series/movie in Sonarr/Radarr after a successful cross-seed",
+      "tagAfterSeedPlaceholder": "e.g., cross-seeded",
+      "cancel": "Cancel",
+      "createButton": "Create",
+      "saveButton": "Save"
+    },
+    "toast": {
+      "enabled": "Arr Scan enabled",
+      "disabled": "Arr Scan disabled",
+      "settingsUpdateFailed": "Failed to update settings",
+      "settingsSaved": "Settings saved",
+      "settingsSaveFailed": "Failed to save settings",
+      "scanStarted": "Scan started",
+      "scanStartFailed": "Failed to start scan: {{error}}",
+      "scanCompleted": "Scan completed: {{count}} added",
+      "scanFailed": "Scan failed",
+      "scanStopping": "Stopping after current item...",
+      "scanStopFailed": "Failed to stop scan",
+      "scanKilled": "Scan killed",
+      "scanKillFailed": "Failed to kill scan",
+      "selectInstances": "Please select both an Arr instance and a target qBittorrent instance",
+      "configCreated": "Config created",
+      "configCreateFailed": "Failed to create config",
+      "configUpdated": "Config updated",
+      "configUpdateFailed": "Failed to update config",
+      "configDeleted": "Config deleted",
+      "configDeleteFailed": "Failed to delete config",
+      "itemsReset": "Items reset for re-scanning",
+      "itemsResetFailed": "Failed to reset items"
+    },
+    "runStatusLabels": {
+      "running": "Running",
+      "stopping": "Stopping",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "itemStatusLabels": {
+      "pending": "pending",
+      "searched": "searched",
+      "matched": "matched",
+      "seeded": "seeded",
+      "no_match": "no match",
+      "error": "errors"
+    },
+    "phaseLabels": {
+      "scanning": "scanning",
+      "searching": "searching"
+    },
+    "triggeredByLabels": {
+      "manual": "manual",
+      "schedule": "schedule"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "sonarr",
+      "radarr": "radarr",
+      "unknown": "unknown"
     }
   }
 }

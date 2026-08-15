@@ -3385,19 +3385,19 @@ export function CrossSeedPage({ activeTab, onTabChange }: CrossSeedPageProps) {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Arr Scan</Label>
+                    <Label className="text-sm font-medium">{t("rules.tagging.arrScanTags")}</Label>
                     <MultiSelect
                       options={[
-                        { label: "cross-seed", value: "cross-seed" },
-                        { label: "arr-seed", value: "arr-seed" },
+                        { label: t("rules.tagging.tagCrossSeed"), value: "cross-seed" },
+                        { label: t("rules.tagging.tagArrSeed"), value: "arr-seed" },
                       ]}
                       selected={globalSettings.arrSeedTags}
                       onChange={values => setGlobalSettings(prev => ({ ...prev, arrSeedTags: normalizeStringList(values) }))}
-                      placeholder="Select tags for ARR seed"
+                      placeholder={t("rules.tagging.selectArrScanTags")}
                       creatable
                       onCreateOption={value => setGlobalSettings(prev => ({ ...prev, arrSeedTags: normalizeStringList([...prev.arrSeedTags, value]) }))}
                     />
-                    <p className="text-xs text-muted-foreground">Tags applied to torrents added via ARR seed (Sonarr/Radarr cross-seeding).</p>
+                    <p className="text-xs text-muted-foreground">{t("rules.tagging.arrScanTagsDescription")}</p>
                   </div>
                 </div>
 

@@ -40,6 +40,7 @@
     "auto": "Auto",
     "scan": "Analyse",
     "dirScan": "Analyse de répertoires",
+    "arrScan": "Analyse Arr",
     "rules": "Règles",
     "blocklist": "Liste de blocage"
   },
@@ -357,7 +358,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Tags de pack de saison",
       "selectSeasonPackTags": "Sélectionnez les tags...",
-      "tagSeasonPack": "pack-saison"
+      "tagSeasonPack": "pack-saison",
+      "arrScanTags": "Analyse Arr",
+      "selectArrScanTags": "Sélectionnez les tags pour le seed ARR",
+      "arrScanTagsDescription": "Tags appliqués aux torrents ajoutés via le seed ARR (cross-seeding Sonarr/Radarr).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Comportement post-injection",
@@ -738,6 +743,166 @@
       "running": "EN COURS",
       "partial": "PARTIEL",
       "pending": "EN ATTENTE"
+    }
+  },
+  "arrScan": {
+    "title": "Analyse Arr",
+    "description": "Analysez vos bibliothèques Sonarr et Radarr pour trouver des correspondances cross-seed sur vos indexeurs.",
+    "settings": "Paramètres",
+    "enabled": "Activé",
+    "disabled": "Désactivé",
+    "instanceConfigs": "Configurations des instances",
+    "instanceConfigsDescription": "Configurez le cross-seeding pour chaque instance Sonarr/Radarr",
+    "addConfig": "Ajouter une configuration",
+    "noConfigs": "Aucune configuration pour le moment. Ajoutez-en une pour commencer le cross-seeding depuis vos bibliothèques Arr.",
+    "settingsDialog": {
+      "title": "Paramètres de l'analyse Arr",
+      "description": "Configurez les paramètres globaux de l'analyse Arr.",
+      "searchDelayLabel": "Délai de recherche (secondes)",
+      "searchDelayHelp": "Délai entre les recherches sur les indexeurs pour éviter la limitation de débit",
+      "maxItemsLabel": "Éléments max par exécution",
+      "maxItemsHelp": "0 = illimité",
+      "sharedSettingsNote": "La tolérance de taille, le démarrage en pause et les tags se configurent dans les Règles de Cross-Seed et sont partagés par tous les modes de cross-seed.",
+      "qualityGateLabel": "Seuil de qualité",
+      "highScoreOnlyLabel": "Score élevé uniquement",
+      "highScoreOnlyHelp": "Ne traiter que les éléments dont le score de format personnalisé dépasse le seuil du profil de qualité.",
+      "contentTypesLabel": "Types de contenu",
+      "individualEpisodesLabel": "Épisodes individuels",
+      "individualEpisodesHelp": "Traiter les fichiers d'épisodes individuels provenant de saisons composées de plusieurs groupes de release.",
+      "individualEpisodesDisabledHelp": "Désactivé tant que la mise à niveau des packs de saison est activée.",
+      "seasonPackUpgradeLabel": "Mise à niveau des packs de saison",
+      "enableSeasonPackUpgradeLabel": "Activer la mise à niveau des packs de saison",
+      "seasonPackUpgradeHelp": "Lorsque cette option est activée, les packs de saison partiels sont injectés et qBittorrent télécharge les épisodes manquants en guise de mise à niveau. Une fois le téléchargement terminé, Sonarr importe les nouveaux fichiers.",
+      "cancel": "Annuler",
+      "save": "Sauvegarder"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "désactivé",
+      "target": "Cible : {{name}}",
+      "categorySuffix": " | Catégorie : {{category}}",
+      "lastScan": "Dernière analyse : {{time}}",
+      "startTooltip": "Démarrer l'analyse",
+      "stopTooltip": "Arrêter (terminer l'élément en cours)",
+      "killTooltip": "Interrompre (arrêt immédiat)",
+      "editTooltip": "Modifier",
+      "deleteTooltip": "Supprimer"
+    },
+    "details": {
+      "arrDockerPath": "Chemin Docker Arr :",
+      "hostDataPath": "Chemin des données sur l'hôte :",
+      "torrentSavePath": "Chemin de sauvegarde des torrents :",
+      "scanInterval": "Intervalle d'analyse :",
+      "scanIntervalValue": "{{minutes}} minutes",
+      "unmonitorAfterSeed": "Ne plus surveiller après le seed :",
+      "tagAfterSeed": "Tag après le seed :",
+      "notSet": "(non défini)",
+      "none": "(aucun)",
+      "yes": "Oui",
+      "no": "Non"
+    },
+    "progress": {
+      "completed": "{{processed}} analysé(s), {{added}} ajouté(s)",
+      "stopping": "Arrêt en cours... {{processed}}/{{total}}",
+      "running": "{{phase}} : {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Éléments :",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Réinitialiser",
+      "recentRuns": "Exécutions récentes",
+      "runSummary": "{{scanned}} analysé(s), {{matched}} correspondance(s), {{added}} ajouté(s)"
+    },
+    "deleteDialog": {
+      "title": "Supprimer la configuration",
+      "description": "Cela supprimera la configuration de « {{name}} » ainsi que tout l'historique d'analyse et les éléments associés.",
+      "cancel": "Annuler",
+      "delete": "Supprimer"
+    },
+    "configDialog": {
+      "addTitle": "Ajouter une configuration d'analyse Arr",
+      "addDescription": "Configurez le cross-seeding pour une instance Sonarr ou Radarr",
+      "editTitle": "Modifier la configuration",
+      "editDescription": "Mettre à jour les paramètres de {{name}}",
+      "arrInstanceLabel": "Instance Arr",
+      "selectArrInstance": "Sélectionnez une instance Arr",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "Instance qBittorrent cible",
+      "selectTargetInstance": "Sélectionnez une instance qBittorrent",
+      "categoryLabel": "Catégorie",
+      "categoryPlaceholder": "ex. TV.cross ou MOVIES.cross",
+      "arrDockerPathLabel": "Chemin Docker Arr",
+      "arrDockerPathHelp": "Le préfixe de chemin tel qu'il apparaît à l'intérieur du conteneur Arr (ex. /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Chemin des données sur l'hôte",
+      "hostDataPathHelp": "Le chemin correspondant sur le système hôte (ex. /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Chemin de sauvegarde des torrents",
+      "torrentSavePathHelp": "Emplacement où les hardlinks et les données des torrents doivent être enregistrés (ex. /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Intervalle d'analyse (minutes)",
+      "unmonitorAfterSeedLabel": "Ne plus surveiller après le seed",
+      "unmonitorAfterSeedHelp": "Ne plus surveiller la série ou le film dans Sonarr/Radarr après un cross-seed réussi",
+      "tagAfterSeedLabel": "Tag après le seed",
+      "tagAfterSeedHelp": "Ajouter ce tag à la série ou au film dans Sonarr/Radarr après un cross-seed réussi",
+      "tagAfterSeedPlaceholder": "ex. cross-seeded",
+      "cancel": "Annuler",
+      "createButton": "Créer",
+      "saveButton": "Sauvegarder"
+    },
+    "toast": {
+      "enabled": "Analyse Arr activée",
+      "disabled": "Analyse Arr désactivée",
+      "settingsUpdateFailed": "Échec de la mise à jour des paramètres",
+      "settingsSaved": "Paramètres sauvegardés",
+      "settingsSaveFailed": "Échec de la sauvegarde des paramètres",
+      "scanStarted": "Analyse démarrée",
+      "scanStartFailed": "Échec du démarrage de l'analyse : {{error}}",
+      "scanCompleted": "Analyse terminée : {{count}} ajouté(s)",
+      "scanFailed": "Échec de l'analyse",
+      "scanStopping": "Arrêt après l'élément en cours...",
+      "scanStopFailed": "Échec de l'arrêt de l'analyse",
+      "scanKilled": "Analyse interrompue",
+      "scanKillFailed": "Échec de l'interruption de l'analyse",
+      "selectInstances": "Veuillez sélectionner à la fois une instance Arr et une instance qBittorrent cible",
+      "configCreated": "Configuration créée",
+      "configCreateFailed": "Échec de la création de la configuration",
+      "configUpdated": "Configuration mise à jour",
+      "configUpdateFailed": "Échec de la mise à jour de la configuration",
+      "configDeleted": "Configuration supprimée",
+      "configDeleteFailed": "Échec de la suppression de la configuration",
+      "itemsReset": "Éléments réinitialisés pour une nouvelle analyse",
+      "itemsResetFailed": "Échec de la réinitialisation des éléments"
+    },
+    "runStatusLabels": {
+      "running": "En cours",
+      "stopping": "Arrêt en cours",
+      "completed": "Terminé",
+      "failed": "Échec",
+      "cancelled": "Annulé"
+    },
+    "itemStatusLabels": {
+      "pending": "en attente",
+      "searched": "recherché(s)",
+      "matched": "correspondance(s)",
+      "seeded": "seedé(s)",
+      "no_match": "sans correspondance",
+      "error": "erreur(s)"
+    },
+    "phaseLabels": {
+      "scanning": "analyse",
+      "searching": "recherche"
+    },
+    "triggeredByLabels": {
+      "manual": "manuel",
+      "schedule": "planifié"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "Sonarr",
+      "radarr": "Radarr",
+      "unknown": "inconnu"
     }
   }
 }

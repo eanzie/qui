@@ -40,6 +40,7 @@
     "auto": "Auto",
     "scan": "Scan",
     "dirScan": "Dir Scan",
+    "arrScan": "Arr Scan",
     "rules": "Regeln",
     "blocklist": "Blocklist"
   },
@@ -357,7 +358,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Season-Pack-Tags",
       "selectSeasonPackTags": "Tags auswählen …",
-      "tagSeasonPack": "season-pack"
+      "tagSeasonPack": "season-pack",
+      "arrScanTags": "Arr Scan",
+      "selectArrScanTags": "Tags für ARR-Seed auswählen",
+      "arrScanTagsDescription": "Tags, die Torrents zugewiesen werden, die per ARR-Seed hinzugefügt wurden (Cross-Seeding über Sonarr/Radarr).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Verhalten nach der Injektion",
@@ -738,6 +743,166 @@
       "running": "LÄUFT",
       "partial": "TEILWEISE",
       "pending": "AUSSTEHEND"
+    }
+  },
+  "arrScan": {
+    "title": "Arr Scan",
+    "description": "Durchsuche deine Sonarr- und Radarr-Bibliotheken nach Cross-Seed-Treffern auf deinen Indexern.",
+    "settings": "Einstellungen",
+    "enabled": "Aktiviert",
+    "disabled": "Deaktiviert",
+    "instanceConfigs": "Instanz-Konfigurationen",
+    "instanceConfigsDescription": "Konfiguriere das Cross-Seeding für jede Sonarr-/Radarr-Instanz",
+    "addConfig": "Konfiguration hinzufügen",
+    "noConfigs": "Noch keine Konfigurationen. Füge eine hinzu, um mit dem Cross-Seeding aus deinen Arr-Bibliotheken zu beginnen.",
+    "settingsDialog": {
+      "title": "Arr-Scan-Einstellungen",
+      "description": "Konfiguriere die globalen Einstellungen für Arr Scan.",
+      "searchDelayLabel": "Suchverzögerung (Sekunden)",
+      "searchDelayHelp": "Verzögerung zwischen Indexer-Suchen, um Rate-Limits zu vermeiden",
+      "maxItemsLabel": "Max. Einträge pro Durchlauf",
+      "maxItemsHelp": "0 = unbegrenzt",
+      "sharedSettingsNote": "Größentoleranz, „pausiert starten“ und Tags werden in den Cross-Seed-Regeln konfiguriert und gelten für alle Cross-Seed-Modi gemeinsam.",
+      "qualityGateLabel": "Qualitätsschwelle",
+      "highScoreOnlyLabel": "Nur hohe Punktzahl",
+      "highScoreOnlyHelp": "Nur Einträge verarbeiten, deren Custom-Format-Punktzahl über dem Cutoff des Qualitätsprofils liegt.",
+      "contentTypesLabel": "Inhaltstypen",
+      "individualEpisodesLabel": "Einzelepisoden",
+      "individualEpisodesHelp": "Einzelne Episodendateien aus Staffeln mit gemischten Release-Gruppen verarbeiten.",
+      "individualEpisodesDisabledHelp": "Deaktiviert, solange das Season-Pack-Upgrade aktiv ist.",
+      "seasonPackUpgradeLabel": "Season-Pack-Upgrade",
+      "enableSeasonPackUpgradeLabel": "Season-Pack-Upgrade aktivieren",
+      "seasonPackUpgradeHelp": "Wenn aktiviert, werden unvollständige Season Packs injiziert und qBittorrent lädt die fehlenden Episoden als Upgrade herunter. Nach Abschluss des Downloads importiert Sonarr die neuen Dateien.",
+      "cancel": "Abbrechen",
+      "save": "Speichern"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "deaktiviert",
+      "target": "Ziel: {{name}}",
+      "categorySuffix": " | Kategorie: {{category}}",
+      "lastScan": "Letzter Scan: {{time}}",
+      "startTooltip": "Scan starten",
+      "stopTooltip": "Stoppen (aktuellen Eintrag abschließen)",
+      "killTooltip": "Kill (sofort stoppen)",
+      "editTooltip": "Bearbeiten",
+      "deleteTooltip": "Löschen"
+    },
+    "details": {
+      "arrDockerPath": "Arr-Docker-Pfad:",
+      "hostDataPath": "Host-Datenpfad:",
+      "torrentSavePath": "Torrent-Speicherpfad:",
+      "scanInterval": "Scan-Intervall:",
+      "scanIntervalValue": "{{minutes}} Minuten",
+      "unmonitorAfterSeed": "Überwachung nach dem Seeden aufheben:",
+      "tagAfterSeed": "Tag nach dem Seeden:",
+      "notSet": "(nicht gesetzt)",
+      "none": "(keine)",
+      "yes": "Ja",
+      "no": "Nein"
+    },
+    "progress": {
+      "completed": "{{processed}} gescannt, {{added}} hinzugefügt",
+      "stopping": "Wird gestoppt... {{processed}}/{{total}}",
+      "running": "{{phase}}: {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Einträge:",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Zurücksetzen",
+      "recentRuns": "Letzte Durchläufe",
+      "runSummary": "{{scanned}} gescannt, {{matched}} gematcht, {{added}} hinzugefügt"
+    },
+    "deleteDialog": {
+      "title": "Konfiguration löschen",
+      "description": "Dadurch werden die Konfiguration für \"{{name}}\" sowie der zugehörige Scan-Verlauf und alle Einträge gelöscht.",
+      "cancel": "Abbrechen",
+      "delete": "Löschen"
+    },
+    "configDialog": {
+      "addTitle": "Arr-Scan-Konfiguration hinzufügen",
+      "addDescription": "Konfiguriere das Cross-Seeding für eine Sonarr- oder Radarr-Instanz",
+      "editTitle": "Konfiguration bearbeiten",
+      "editDescription": "Einstellungen für {{name}} aktualisieren",
+      "arrInstanceLabel": "Arr-Instanz",
+      "selectArrInstance": "Arr-Instanz auswählen",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "qBittorrent-Ziel-Instanz",
+      "selectTargetInstance": "qBittorrent-Instanz auswählen",
+      "categoryLabel": "Kategorie",
+      "categoryPlaceholder": "z. B. TV.cross oder MOVIES.cross",
+      "arrDockerPathLabel": "Arr-Docker-Pfad",
+      "arrDockerPathHelp": "Das Pfadpräfix, wie es innerhalb des Arr-Containers sichtbar ist (z. B. /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Host-Datenpfad",
+      "hostDataPathHelp": "Der zugehörige Pfad auf dem Host-System (z. B. /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Torrent-Speicherpfad",
+      "torrentSavePathHelp": "Wo Hardlinks und Torrent-Daten gespeichert werden sollen (z. B. /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Scan-Intervall (Minuten)",
+      "unmonitorAfterSeedLabel": "Überwachung nach dem Seeden aufheben",
+      "unmonitorAfterSeedHelp": "Die Überwachung der Serie/des Films in Sonarr/Radarr nach einem erfolgreichen Cross-Seed aufheben",
+      "tagAfterSeedLabel": "Tag nach dem Seeden",
+      "tagAfterSeedHelp": "Diesen Tag der Serie/dem Film in Sonarr/Radarr nach einem erfolgreichen Cross-Seed hinzufügen",
+      "tagAfterSeedPlaceholder": "z. B. cross-seeded",
+      "cancel": "Abbrechen",
+      "createButton": "Erstellen",
+      "saveButton": "Speichern"
+    },
+    "toast": {
+      "enabled": "Arr Scan aktiviert",
+      "disabled": "Arr Scan deaktiviert",
+      "settingsUpdateFailed": "Einstellungen konnten nicht aktualisiert werden",
+      "settingsSaved": "Einstellungen gespeichert",
+      "settingsSaveFailed": "Einstellungen konnten nicht gespeichert werden",
+      "scanStarted": "Scan gestartet",
+      "scanStartFailed": "Scan konnte nicht gestartet werden: {{error}}",
+      "scanCompleted": "Scan abgeschlossen: {{count}} hinzugefügt",
+      "scanFailed": "Scan fehlgeschlagen",
+      "scanStopping": "Wird nach dem aktuellen Eintrag gestoppt...",
+      "scanStopFailed": "Scan konnte nicht gestoppt werden",
+      "scanKilled": "Scan sofort beendet",
+      "scanKillFailed": "Scan konnte nicht sofort beendet werden",
+      "selectInstances": "Bitte wähle sowohl eine Arr-Instanz als auch eine qBittorrent-Ziel-Instanz aus",
+      "configCreated": "Konfiguration erstellt",
+      "configCreateFailed": "Konfiguration konnte nicht erstellt werden",
+      "configUpdated": "Konfiguration aktualisiert",
+      "configUpdateFailed": "Konfiguration konnte nicht aktualisiert werden",
+      "configDeleted": "Konfiguration gelöscht",
+      "configDeleteFailed": "Konfiguration konnte nicht gelöscht werden",
+      "itemsReset": "Einträge für den erneuten Scan zurückgesetzt",
+      "itemsResetFailed": "Einträge konnten nicht zurückgesetzt werden"
+    },
+    "runStatusLabels": {
+      "running": "Läuft",
+      "stopping": "Wird gestoppt",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen"
+    },
+    "itemStatusLabels": {
+      "pending": "ausstehend",
+      "searched": "durchsucht",
+      "matched": "gematcht",
+      "seeded": "geseedet",
+      "no_match": "ohne Treffer",
+      "error": "fehlerhaft"
+    },
+    "phaseLabels": {
+      "scanning": "Scannen",
+      "searching": "Suchen"
+    },
+    "triggeredByLabels": {
+      "manual": "manuell",
+      "schedule": "geplant"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "Sonarr",
+      "radarr": "Radarr",
+      "unknown": "unbekannt"
     }
   }
 }

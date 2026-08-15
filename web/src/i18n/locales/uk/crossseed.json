@@ -40,6 +40,7 @@
     "auto": "Авто",
     "scan": "Сканування",
     "dirScan": "Сканування директорій",
+    "arrScan": "Сканування Arr",
     "rules": "Правила",
     "blocklist": "Чорний список"
   },
@@ -361,7 +362,11 @@
       "tagAutobrr": "autobrr",
       "seasonPackTags": "Теги сезонних паків",
       "selectSeasonPackTags": "Вибрати теги...",
-      "tagSeasonPack": "season-pack"
+      "tagSeasonPack": "season-pack",
+      "arrScanTags": "Сканування Arr",
+      "selectArrScanTags": "Вибрати теги для ARR seed",
+      "arrScanTagsDescription": "Теги, що застосовуються до торентів, доданих через ARR seed (крос-сідинг Sonarr/Radarr).",
+      "tagArrSeed": "arr-seed"
     },
     "postInjection": {
       "title": "Поведінка після ін'єкції",
@@ -758,6 +763,166 @@
       "running": "ВИКОНУЄТЬСЯ",
       "partial": "ЧАСТКОВО",
       "pending": "ОЧІКУЄ"
+    }
+  },
+  "arrScan": {
+    "title": "Сканування Arr",
+    "description": "Скануйте бібліотеки Sonarr і Radarr, щоб знайти крос-сід збіги на ваших індексаторах.",
+    "settings": "Налаштування",
+    "enabled": "Увімкнено",
+    "disabled": "Вимкнено",
+    "instanceConfigs": "Конфігурації екземплярів",
+    "instanceConfigsDescription": "Налаштуйте крос-сідинг для кожного екземпляра Sonarr/Radarr",
+    "addConfig": "Додати конфігурацію",
+    "noConfigs": "Конфігурацій ще немає. Додайте одну, щоб почати крос-сідинг з ваших бібліотек Arr.",
+    "settingsDialog": {
+      "title": "Налаштування сканування Arr",
+      "description": "Налаштуйте глобальні параметри сканування Arr.",
+      "searchDelayLabel": "Затримка пошуку (секунди)",
+      "searchDelayHelp": "Затримка між пошуками на індексаторах, щоб уникнути обмеження частоти запитів",
+      "maxItemsLabel": "Максимум елементів за запуск",
+      "maxItemsHelp": "0 = без обмежень",
+      "sharedSettingsNote": "Допуск розміру, запуск на паузі та теги налаштовуються в Правилах Cross-Seed і є спільними для всіх режимів крос-сіду.",
+      "qualityGateLabel": "Контроль якості",
+      "highScoreOnlyLabel": "Лише високий бал",
+      "highScoreOnlyHelp": "Обробляти лише елементи з балом користувацького формату вище порогу профілю якості.",
+      "contentTypesLabel": "Типи вмісту",
+      "individualEpisodesLabel": "Окремі епізоди",
+      "individualEpisodesHelp": "Обробляти файли окремих епізодів із сезонів зі змішаними реліз-групами.",
+      "individualEpisodesDisabledHelp": "Вимкнено, доки увімкнено оновлення сезонних паків.",
+      "seasonPackUpgradeLabel": "Оновлення сезонних паків",
+      "enableSeasonPackUpgradeLabel": "Увімкнути оновлення сезонних паків",
+      "seasonPackUpgradeHelp": "Коли увімкнено, часткові сезонні паки будуть ін'єктовані, а qBittorrent завантажить відсутні епізоди як оновлення. Після завершення завантаження Sonarr імпортує нові файли.",
+      "cancel": "Скасувати",
+      "save": "Зберегти"
+    },
+    "config": {
+      "arrInstanceFallback": "Arr #{{id}}",
+      "qbitInstanceFallback": "qBit #{{id}}",
+      "disabledBadge": "вимкнено",
+      "target": "Ціль: {{name}}",
+      "categorySuffix": " | Категорія: {{category}}",
+      "lastScan": "Останнє сканування: {{time}}",
+      "startTooltip": "Почати сканування",
+      "stopTooltip": "Зупинити (завершити поточний елемент)",
+      "killTooltip": "Примусово зупинити (негайно)",
+      "editTooltip": "Редагувати",
+      "deleteTooltip": "Видалити"
+    },
+    "details": {
+      "arrDockerPath": "Шлях Docker Arr:",
+      "hostDataPath": "Шлях до даних на хості:",
+      "torrentSavePath": "Шлях збереження торента:",
+      "scanInterval": "Інтервал сканування:",
+      "scanIntervalValue": "{{minutes}} хвилин",
+      "unmonitorAfterSeed": "Зняти з моніторингу після сідингу:",
+      "tagAfterSeed": "Тег після сідингу:",
+      "notSet": "(не задано)",
+      "none": "(немає)",
+      "yes": "Так",
+      "no": "Ні"
+    },
+    "progress": {
+      "completed": "{{processed}} проскановано, {{added}} додано",
+      "stopping": "Зупинка... {{processed}}/{{total}}",
+      "running": "{{phase}}: {{processed}}/{{total}}",
+      "addedSuffix": " (+{{added}})"
+    },
+    "history": {
+      "items": "Елементи:",
+      "itemStatusCount": "{{count}} {{status}}",
+      "reset": "Скинути",
+      "recentRuns": "Останні запуски",
+      "runSummary": "{{scanned}} проскановано, {{matched}} зіставлено, {{added}} додано"
+    },
+    "deleteDialog": {
+      "title": "Видалити конфігурацію",
+      "description": "Це видалить конфігурацію «{{name}}» та всю пов'язану історію сканувань і елементи.",
+      "cancel": "Скасувати",
+      "delete": "Видалити"
+    },
+    "configDialog": {
+      "addTitle": "Додати конфігурацію сканування Arr",
+      "addDescription": "Налаштуйте крос-сідинг для екземпляра Sonarr або Radarr",
+      "editTitle": "Редагувати конфігурацію",
+      "editDescription": "Оновіть налаштування для {{name}}",
+      "arrInstanceLabel": "Екземпляр Arr",
+      "selectArrInstance": "Виберіть екземпляр Arr",
+      "arrInstanceOption": "{{name}} ({{type}})",
+      "targetInstanceLabel": "Цільовий екземпляр qBittorrent",
+      "selectTargetInstance": "Виберіть екземпляр qBittorrent",
+      "categoryLabel": "Категорія",
+      "categoryPlaceholder": "наприклад, TV.cross або MOVIES.cross",
+      "arrDockerPathLabel": "Шлях Docker Arr",
+      "arrDockerPathHelp": "Префікс шляху, яким він видимий усередині контейнера Arr (наприклад, /mnt/media/tv)",
+      "arrDockerPathPlaceholder": "/mnt/media/tv",
+      "hostDataPathLabel": "Шлях до даних на хості",
+      "hostDataPathHelp": "Відповідний шлях у системі хоста (наприклад, /mnt/media/tv/data)",
+      "hostDataPathPlaceholder": "/mnt/media/tv/data",
+      "torrentSavePathLabel": "Шлях збереження торента",
+      "torrentSavePathHelp": "Куди зберігати жорсткі посилання та дані торента (наприклад, /mnt/media/tv/torrents)",
+      "torrentSavePathPlaceholder": "/mnt/media/tv/torrents",
+      "scanIntervalLabel": "Інтервал сканування (хвилини)",
+      "unmonitorAfterSeedLabel": "Зняти з моніторингу після сідингу",
+      "unmonitorAfterSeedHelp": "Знімати серіал/фільм з моніторингу в Sonarr/Radarr після успішного крос-сіду",
+      "tagAfterSeedLabel": "Тег після сідингу",
+      "tagAfterSeedHelp": "Додавати цей тег до серіалу/фільму в Sonarr/Radarr після успішного крос-сіду",
+      "tagAfterSeedPlaceholder": "наприклад, cross-seeded",
+      "cancel": "Скасувати",
+      "createButton": "Створити",
+      "saveButton": "Зберегти"
+    },
+    "toast": {
+      "enabled": "Сканування Arr увімкнено",
+      "disabled": "Сканування Arr вимкнено",
+      "settingsUpdateFailed": "Не вдалося оновити налаштування",
+      "settingsSaved": "Налаштування збережено",
+      "settingsSaveFailed": "Не вдалося зберегти налаштування",
+      "scanStarted": "Сканування розпочато",
+      "scanStartFailed": "Не вдалося розпочати сканування: {{error}}",
+      "scanCompleted": "Сканування завершено: {{count}} додано",
+      "scanFailed": "Сканування не вдалося",
+      "scanStopping": "Зупинка після поточного елемента...",
+      "scanStopFailed": "Не вдалося зупинити сканування",
+      "scanKilled": "Сканування примусово зупинено",
+      "scanKillFailed": "Не вдалося примусово зупинити сканування",
+      "selectInstances": "Виберіть екземпляр Arr і цільовий екземпляр qBittorrent",
+      "configCreated": "Конфігурацію створено",
+      "configCreateFailed": "Не вдалося створити конфігурацію",
+      "configUpdated": "Конфігурацію оновлено",
+      "configUpdateFailed": "Не вдалося оновити конфігурацію",
+      "configDeleted": "Конфігурацію видалено",
+      "configDeleteFailed": "Не вдалося видалити конфігурацію",
+      "itemsReset": "Елементи скинуто для повторного сканування",
+      "itemsResetFailed": "Не вдалося скинути елементи"
+    },
+    "runStatusLabels": {
+      "running": "Виконується",
+      "stopping": "Зупинка",
+      "completed": "Завершено",
+      "failed": "Невдача",
+      "cancelled": "Скасовано"
+    },
+    "itemStatusLabels": {
+      "pending": "очікує",
+      "searched": "перевірено",
+      "matched": "зіставлено",
+      "seeded": "роздається",
+      "no_match": "без збігів",
+      "error": "з помилкою"
+    },
+    "phaseLabels": {
+      "scanning": "сканування",
+      "searching": "пошук"
+    },
+    "triggeredByLabels": {
+      "manual": "вручну",
+      "schedule": "за розкладом"
+    },
+    "instanceTypeLabels": {
+      "sonarr": "sonarr",
+      "radarr": "radarr",
+      "unknown": "невідомо"
     }
   }
 }

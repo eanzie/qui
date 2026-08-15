@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import {
   AlertTriangle,
@@ -89,6 +90,7 @@ interface ArrSeedTabProps {
 }
 
 export function ArrSeedTab({ instances }: ArrSeedTabProps) {
+  const { t } = useTranslation("crossseed")
   const { formatDate } = useDateTimeFormatters()
   const { data: settings, isLoading: settingsLoading } = useArrSeedSettings()
   const { data: configs, isLoading: configsLoading } = useArrSeedConfigs()
@@ -107,11 +109,11 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
   const handleToggleEnabled = useCallback(
     (enabled: boolean) => {
       updateSettings.mutate({ enabled }, {
-        onSuccess: () => toast.success(enabled ? "Arr Scan enabled" : "Arr Scan disabled"),
-        onError: () => toast.error("Failed to update settings"),
+        onSuccess: () => toast.success(enabled ? t("arrScan.toast.enabled") : t("arrScan.toast.disabled")),
+        onError: () => toast.error(t("arrScan.toast.settingsUpdateFailed")),
       })
     },
-    [updateSettings]
+    [updateSettings, t]
   )
 
   if (settingsLoading || configsLoading) {
@@ -131,16 +133,16 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Radar className="size-5" />
-                Arr Scan
+                {t("arrScan.title")}
               </CardTitle>
               <CardDescription>
-                Scan your Sonarr and Radarr libraries to find cross-seed matches on your indexers.
+                {t("arrScan.description")}
               </CardDescription>
             </div>
             <div className="flex items-center gap-4">
               <Button variant="outline" size="sm" onClick={() => setShowSettingsDialog(true)}>
                 <Settings2 className="size-4 mr-2" />
-                Settings
+                {t("arrScan.settings")}
               </Button>
               <Label htmlFor="arrseed-enabled" className="flex items-center gap-2">
                 <Switch
@@ -149,7 +151,7 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
                   onCheckedChange={handleToggleEnabled}
                   disabled={updateSettings.isPending}
                 />
-                {settings?.enabled ? "Enabled" : "Disabled"}
+                {settings?.enabled ? t("arrScan.enabled") : t("arrScan.disabled")}
               </Label>
             </div>
           </div>
@@ -161,12 +163,12 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">Instance Configurations</CardTitle>
-              <CardDescription>Configure cross-seeding for each Sonarr/Radarr instance</CardDescription>
+              <CardTitle className="text-base">{t("arrScan.instanceConfigs")}</CardTitle>
+              <CardDescription>{t("arrScan.instanceConfigsDescription")}</CardDescription>
             </div>
             <Button size="sm" onClick={() => setShowAddDialog(true)}>
               <Plus className="h-4 w-4 mr-1" />
-              Add Config
+              {t("arrScan.addConfig")}
             </Button>
           </div>
         </CardHeader>
@@ -189,7 +191,7 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Info className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>No configurations yet. Add one to start cross-seeding from your Arr libraries.</p>
+              <p>{t("arrScan.noConfigs")}</p>
             </div>
           )}
         </CardContent>
@@ -224,6 +226,7 @@ function SettingsDialog({
   onOpenChange: (open: boolean) => void
   settings: ReturnType<typeof useArrSeedSettings>["data"]
 }) {
+  const { t } = useTranslation("crossseed")
   const updateSettings = useUpdateArrSeedSettings()
   const [searchDelay, setSearchDelay] = useState(String(settings?.searchDelaySeconds ?? 5))
   const [maxItems, setMaxItems] = useState(String(settings?.maxItemsPerRun ?? 0))
@@ -236,10 +239,10 @@ function SettingsDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Settings saved")
+          toast.success(t("arrScan.toast.settingsSaved"))
           onOpenChange(false)
         },
-        onError: () => toast.error("Failed to save settings"),
+        onError: () => toast.error(t("arrScan.toast.settingsSaveFailed")),
       }
     )
   }
@@ -248,39 +251,39 @@ function SettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Arr Scan Settings</DialogTitle>
+          <DialogTitle>{t("arrScan.settingsDialog.title")}</DialogTitle>
           <DialogDescription>
-            Configure global settings for Arr Scan.
+            {t("arrScan.settingsDialog.description")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Search Delay (seconds)</Label>
+              <Label>{t("arrScan.settingsDialog.searchDelayLabel")}</Label>
               <Input
                 type="number"
                 value={searchDelay}
                 onChange={(e) => setSearchDelay(e.target.value)}
                 min={0}
               />
-              <p className="text-xs text-muted-foreground">Delay between indexer searches to avoid rate limiting</p>
+              <p className="text-xs text-muted-foreground">{t("arrScan.settingsDialog.searchDelayHelp")}</p>
             </div>
             <div className="space-y-2">
-              <Label>Max Items Per Run</Label>
+              <Label>{t("arrScan.settingsDialog.maxItemsLabel")}</Label>
               <Input
                 type="number"
                 value={maxItems}
                 onChange={(e) => setMaxItems(e.target.value)}
                 min={0}
               />
-              <p className="text-xs text-muted-foreground">0 = unlimited</p>
+              <p className="text-xs text-muted-foreground">{t("arrScan.settingsDialog.maxItemsHelp")}</p>
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.
+            {t("arrScan.settingsDialog.sharedSettingsNote")}
           </p>
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Quality Gate</Label>
+            <Label className="text-sm font-medium">{t("arrScan.settingsDialog.qualityGateLabel")}</Label>
             <div className="flex items-center gap-2">
               <Switch
                 checked={settings?.enableHighScoreOnly ?? false}
@@ -288,19 +291,19 @@ function SettingsDialog({
                   updateSettings.mutate({ enableHighScoreOnly: checked })
                 }
               />
-              <Label className="text-sm">High Score Only</Label>
+              <Label className="text-sm">{t("arrScan.settingsDialog.highScoreOnlyLabel")}</Label>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  Only process items with custom format score above the quality profile cutoff.
+                  {t("arrScan.settingsDialog.highScoreOnlyHelp")}
                 </TooltipContent>
               </Tooltip>
             </div>
           </div>
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Content Types</Label>
+            <Label className="text-sm font-medium">{t("arrScan.settingsDialog.contentTypesLabel")}</Label>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Switch
@@ -310,22 +313,22 @@ function SettingsDialog({
                     updateSettings.mutate({ enableEpisode: checked })
                   }
                 />
-                <Label className="text-sm">Individual Episodes</Label>
+                <Label className="text-sm">{t("arrScan.settingsDialog.individualEpisodesLabel")}</Label>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
                     {settings?.enableSeasonPackUpgrade
-                      ? "Disabled while Season Pack Upgrade is on."
-                      : "Process individual episode files from mixed release group seasons."}
+                      ? t("arrScan.settingsDialog.individualEpisodesDisabledHelp")
+                      : t("arrScan.settingsDialog.individualEpisodesHelp")}
                   </TooltipContent>
                 </Tooltip>
               </div>
             </div>
           </div>
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Season Pack Upgrade</Label>
+            <Label className="text-sm font-medium">{t("arrScan.settingsDialog.seasonPackUpgradeLabel")}</Label>
             <div className="flex items-center gap-2">
               <Switch
                 checked={settings?.enableSeasonPackUpgrade ?? false}
@@ -333,13 +336,13 @@ function SettingsDialog({
                   updateSettings.mutate({ enableSeasonPackUpgrade: checked })
                 }
               />
-              <Label className="text-sm">Enable Season Pack Upgrade</Label>
+              <Label className="text-sm">{t("arrScan.settingsDialog.enableSeasonPackUpgradeLabel")}</Label>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  When enabled, partial season packs will be injected and qBittorrent will download missing episodes as upgrades. After download completes, Sonarr will import the new files.
+                  {t("arrScan.settingsDialog.seasonPackUpgradeHelp")}
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -347,10 +350,10 @@ function SettingsDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("arrScan.settingsDialog.cancel")}
           </Button>
           <Button onClick={handleSave} disabled={updateSettings.isPending}>
-            Save
+            {t("arrScan.settingsDialog.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -373,6 +376,7 @@ function ConfigCard({
   formatDate: (d: Date) => string
   instances: Instance[]
 }) {
+  const { t } = useTranslation("crossseed")
   const queryClient = useQueryClient()
   const triggerScan = useTriggerArrSeedScan()
   const stopScan = useStopArrSeedScan()
@@ -401,41 +405,41 @@ function ConfigCard({
       queryClient.invalidateQueries({ queryKey: ["arr-seed", "items", config.id] })
 
       if (currentStatus === "completed") {
-        toast.success(`Scan completed: ${scanStatus!.torrentsAdded} added`)
+        toast.success(t("arrScan.toast.scanCompleted", { count: scanStatus!.torrentsAdded }))
       } else if (currentStatus === "failed") {
-        toast.error("Scan failed")
+        toast.error(t("arrScan.toast.scanFailed"))
       }
     }
-  }, [scanStatus?.status, scanStatus?.torrentsAdded, config.id, queryClient])
+  }, [scanStatus?.status, scanStatus?.torrentsAdded, config.id, queryClient, t])
 
   const handleTriggerScan = () => {
     triggerScan.mutate(config.id, {
-      onSuccess: () => toast.success("Scan started"),
-      onError: (err) => toast.error(`Failed to start scan: ${err.message}`),
+      onSuccess: () => toast.success(t("arrScan.toast.scanStarted")),
+      onError: (err) => toast.error(t("arrScan.toast.scanStartFailed", { error: err.message })),
     })
   }
 
   const handleStopScan = () => {
     stopScan.mutate(config.id, {
-      onSuccess: () => toast.success("Stopping after current item..."),
-      onError: () => toast.error("Failed to stop scan"),
+      onSuccess: () => toast.success(t("arrScan.toast.scanStopping")),
+      onError: () => toast.error(t("arrScan.toast.scanStopFailed")),
     })
   }
 
   const handleKillScan = () => {
     cancelScan.mutate(config.id, {
-      onSuccess: () => toast.success("Scan killed"),
-      onError: () => toast.error("Failed to kill scan"),
+      onSuccess: () => toast.success(t("arrScan.toast.scanKilled")),
+      onError: () => toast.error(t("arrScan.toast.scanKillFailed")),
     })
   }
 
   const handleDelete = () => {
     deleteConfig.mutate(config.id, {
       onSuccess: () => {
-        toast.success("Config deleted")
+        toast.success(t("arrScan.toast.configDeleted"))
         setShowDelete(false)
       },
-      onError: () => toast.error("Failed to delete config"),
+      onError: () => toast.error(t("arrScan.toast.configDeleteFailed")),
     })
   }
 
@@ -452,17 +456,17 @@ function ConfigCard({
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{config.arrInstanceName || `Arr #${config.arrInstanceId}`}</span>
+                  <span className="font-medium">{config.arrInstanceName || t("arrScan.config.arrInstanceFallback", { id: config.arrInstanceId })}</span>
                   <Badge variant="outline" className="text-xs">
-                    {config.arrInstanceType || "unknown"}
+                    {t(`arrScan.instanceTypeLabels.${config.arrInstanceType || "unknown"}`, config.arrInstanceType || "unknown")}
                   </Badge>
                   {!config.enabled && (
-                    <Badge variant="secondary" className="text-xs">disabled</Badge>
+                    <Badge variant="secondary" className="text-xs">{t("arrScan.config.disabledBadge")}</Badge>
                   )}
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  Target: {config.targetQbitInstanceName || `qBit #${config.targetQbitInstanceId}`}
-                  {config.category && ` | Category: ${config.category}`}
+                  {t("arrScan.config.target", { name: config.targetQbitInstanceName || t("arrScan.config.qbitInstanceFallback", { id: config.targetQbitInstanceId }) })}
+                  {config.category && t("arrScan.config.categorySuffix", { category: config.category })}
                 </div>
               </div>
             </div>
@@ -479,7 +483,7 @@ function ConfigCard({
                       <XCircle className="h-4 w-4 text-destructive" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Kill (stop immediately)</TooltipContent>
+                  <TooltipContent>{t("arrScan.config.killTooltip")}</TooltipContent>
                 </Tooltip>
               ) : isRunning ? (
                 <Tooltip>
@@ -488,7 +492,7 @@ function ConfigCard({
                       <Square className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Stop (finish current item)</TooltipContent>
+                  <TooltipContent>{t("arrScan.config.stopTooltip")}</TooltipContent>
                 </Tooltip>
               ) : (
                 <Tooltip>
@@ -502,7 +506,7 @@ function ConfigCard({
                       <Play className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Start Scan</TooltipContent>
+                  <TooltipContent>{t("arrScan.config.startTooltip")}</TooltipContent>
                 </Tooltip>
               )}
               <Tooltip>
@@ -511,7 +515,7 @@ function ConfigCard({
                     <Pencil className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Edit</TooltipContent>
+                <TooltipContent>{t("arrScan.config.editTooltip")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -519,7 +523,7 @@ function ConfigCard({
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Delete</TooltipContent>
+                <TooltipContent>{t("arrScan.config.deleteTooltip")}</TooltipContent>
               </Tooltip>
             </div>
           </div>
@@ -527,7 +531,7 @@ function ConfigCard({
           {config.lastScanAt && (
             <div className="mt-1 text-xs text-muted-foreground flex items-center gap-1 ml-7">
               <Clock className="h-3 w-3" />
-              Last scan: {formatDate(new Date(config.lastScanAt))}
+              {t("arrScan.config.lastScan", { time: formatDate(new Date(config.lastScanAt)) })}
             </div>
           )}
         </div>
@@ -543,15 +547,15 @@ function ConfigCard({
       <AlertDialog open={showDelete} onOpenChange={setShowDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Configuration</AlertDialogTitle>
+            <AlertDialogTitle>{t("arrScan.deleteDialog.title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will delete the configuration for &quot;{config.arrInstanceName}&quot; and all associated scan history and items.
+              {t("arrScan.deleteDialog.description", { name: config.arrInstanceName ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("arrScan.deleteDialog.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-              Delete
+              {t("arrScan.deleteDialog.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -568,11 +572,13 @@ function ConfigCard({
 }
 
 function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
+  const { t } = useTranslation("crossseed")
+
   if (progress.status === "completed") {
     return (
       <Badge variant="outline" className="text-xs gap-1 text-green-500">
         <CheckCircle2 className="h-3 w-3" />
-        {progress.itemsProcessed} scanned, {progress.torrentsAdded} added
+        {t("arrScan.progress.completed", { processed: progress.itemsProcessed, added: progress.torrentsAdded })}
       </Badge>
     )
   }
@@ -580,7 +586,7 @@ function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
     return (
       <Badge variant="outline" className="text-xs gap-1 text-destructive">
         <XCircle className="h-3 w-3" />
-        Failed
+        {t("arrScan.runStatusLabels.failed")}
       </Badge>
     )
   }
@@ -588,7 +594,7 @@ function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
     return (
       <Badge variant="outline" className="text-xs gap-1 text-yellow-500">
         <AlertTriangle className="h-3 w-3" />
-        Cancelled
+        {t("arrScan.runStatusLabels.cancelled")}
       </Badge>
     )
   }
@@ -596,59 +602,66 @@ function ScanProgressBadge({ progress }: { progress: ArrSeedProgress }) {
     return (
       <Badge variant="outline" className="text-xs gap-1 text-yellow-500">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Stopping... {progress.itemsProcessed}/{progress.itemsTotal}
+        {t("arrScan.progress.stopping", { processed: progress.itemsProcessed, total: progress.itemsTotal })}
       </Badge>
     )
   }
   return (
     <Badge variant="outline" className="text-xs gap-1">
       <Loader2 className="h-3 w-3 animate-spin" />
-      {progress.phase}: {progress.itemsProcessed}/{progress.itemsTotal}
-      {progress.torrentsAdded > 0 && ` (+${progress.torrentsAdded})`}
+      {t("arrScan.progress.running", {
+        phase: t(`arrScan.phaseLabels.${progress.phase}`, progress.phase),
+        processed: progress.itemsProcessed,
+        total: progress.itemsTotal,
+      })}
+      {progress.torrentsAdded > 0 && t("arrScan.progress.addedSuffix", { added: progress.torrentsAdded })}
     </Badge>
   )
 }
 
 function ConfigDetails({ config }: { config: ArrSeedInstanceConfig }) {
+  const { t } = useTranslation("crossseed")
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
       <div>
-        <span className="text-muted-foreground">Arr Docker Path:</span>{" "}
-        <code className="text-xs bg-muted px-1 rounded">{config.arrDockerPath || "(not set)"}</code>
+        <span className="text-muted-foreground">{t("arrScan.details.arrDockerPath")}</span>{" "}
+        <code className="text-xs bg-muted px-1 rounded">{config.arrDockerPath || t("arrScan.details.notSet")}</code>
       </div>
       <div>
-        <span className="text-muted-foreground">Host Data Path:</span>{" "}
-        <code className="text-xs bg-muted px-1 rounded">{config.hostDataPath || "(not set)"}</code>
+        <span className="text-muted-foreground">{t("arrScan.details.hostDataPath")}</span>{" "}
+        <code className="text-xs bg-muted px-1 rounded">{config.hostDataPath || t("arrScan.details.notSet")}</code>
       </div>
       <div>
-        <span className="text-muted-foreground">Torrent Save Path:</span>{" "}
-        <code className="text-xs bg-muted px-1 rounded">{config.torrentSavePath || "(not set)"}</code>
+        <span className="text-muted-foreground">{t("arrScan.details.torrentSavePath")}</span>{" "}
+        <code className="text-xs bg-muted px-1 rounded">{config.torrentSavePath || t("arrScan.details.notSet")}</code>
       </div>
       <div>
-        <span className="text-muted-foreground">Scan Interval:</span>{" "}
-        {config.scanIntervalMinutes} minutes
+        <span className="text-muted-foreground">{t("arrScan.details.scanInterval")}</span>{" "}
+        {t("arrScan.details.scanIntervalValue", { minutes: config.scanIntervalMinutes })}
       </div>
       <div>
-        <span className="text-muted-foreground">Unmonitor After Seed:</span>{" "}
-        {config.unmonitorAfterSeed ? "Yes" : "No"}
+        <span className="text-muted-foreground">{t("arrScan.details.unmonitorAfterSeed")}</span>{" "}
+        {config.unmonitorAfterSeed ? t("arrScan.details.yes") : t("arrScan.details.no")}
       </div>
       <div>
-        <span className="text-muted-foreground">Tag After Seed:</span>{" "}
-        <code className="text-xs bg-muted px-1 rounded">{config.tagAfterSeed || "(none)"}</code>
+        <span className="text-muted-foreground">{t("arrScan.details.tagAfterSeed")}</span>{" "}
+        <code className="text-xs bg-muted px-1 rounded">{config.tagAfterSeed || t("arrScan.details.none")}</code>
       </div>
     </div>
   )
 }
 
 function ConfigHistory({ configId, formatDate }: { configId: number; formatDate: (d: Date) => string }) {
+  const { t } = useTranslation("crossseed")
   const { data: runs } = useArrSeedRuns(configId)
   const { data: items } = useArrSeedItems(configId)
   const resetItems = useResetArrSeedItems()
 
   const handleReset = () => {
     resetItems.mutate(configId, {
-      onSuccess: () => toast.success("Items reset for re-scanning"),
-      onError: () => toast.error("Failed to reset items"),
+      onSuccess: () => toast.success(t("arrScan.toast.itemsReset")),
+      onError: () => toast.error(t("arrScan.toast.itemsResetFailed")),
     })
   }
 
@@ -665,28 +678,28 @@ function ConfigHistory({ configId, formatDate }: { configId: number; formatDate:
       {/* Item status summary */}
       {statusCounts && Object.keys(statusCounts).length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-muted-foreground">Items:</span>
+          <span className="text-sm text-muted-foreground">{t("arrScan.history.items")}</span>
           {statusCounts.seeded && (
             <Badge variant="default" className="gap-1">
               <CheckCircle2 className="h-3 w-3" />
-              {statusCounts.seeded} seeded
+              {t("arrScan.history.itemStatusCount", { count: statusCounts.seeded, status: t("arrScan.itemStatusLabels.seeded") })}
             </Badge>
           )}
           {statusCounts.pending && (
-            <Badge variant="secondary">{statusCounts.pending} pending</Badge>
+            <Badge variant="secondary">{t("arrScan.history.itemStatusCount", { count: statusCounts.pending, status: t("arrScan.itemStatusLabels.pending") })}</Badge>
           )}
           {statusCounts.no_match && (
-            <Badge variant="outline">{statusCounts.no_match} no match</Badge>
+            <Badge variant="outline">{t("arrScan.history.itemStatusCount", { count: statusCounts.no_match, status: t("arrScan.itemStatusLabels.no_match") })}</Badge>
           )}
           {statusCounts.error && (
             <Badge variant="destructive" className="gap-1">
               <XCircle className="h-3 w-3" />
-              {statusCounts.error} errors
+              {t("arrScan.history.itemStatusCount", { count: statusCounts.error, status: t("arrScan.itemStatusLabels.error") })}
             </Badge>
           )}
           <Button size="sm" variant="ghost" onClick={handleReset} className="h-6 text-xs">
             <RotateCcw className="h-3 w-3 mr-1" />
-            Reset
+            {t("arrScan.history.reset")}
           </Button>
         </div>
       )}
@@ -694,16 +707,16 @@ function ConfigHistory({ configId, formatDate }: { configId: number; formatDate:
       {/* Recent runs */}
       {runs && runs.length > 0 && (
         <div>
-          <p className="text-sm font-medium mb-1">Recent Runs</p>
+          <p className="text-sm font-medium mb-1">{t("arrScan.history.recentRuns")}</p>
           <div className="space-y-1">
-            {runs.slice(0, 5).map((run) => (
-              <div key={run.id} className="flex items-center gap-2 text-xs">
-                <RunStatusIcon status={run.status} />
-                <span className="text-muted-foreground">{formatDate(new Date(run.startedAt))}</span>
+            {runs.slice(0, 5).map(({ id, status, startedAt, itemsScanned, matchesFound, torrentsAdded, triggeredBy }) => (
+              <div key={id} className="flex items-center gap-2 text-xs">
+                <RunStatusIcon status={status} />
+                <span className="text-muted-foreground">{formatDate(new Date(startedAt))}</span>
                 <span>
-                  {run.itemsScanned} scanned, {run.matchesFound} matched, {run.torrentsAdded} added
+                  {t("arrScan.history.runSummary", { scanned: itemsScanned, matched: matchesFound, added: torrentsAdded })}
                 </span>
-                <Badge variant="outline" className="text-xs">{run.triggeredBy}</Badge>
+                <Badge variant="outline" className="text-xs">{t(`arrScan.triggeredByLabels.${triggeredBy}`, triggeredBy)}</Badge>
               </div>
             ))}
           </div>
@@ -741,6 +754,7 @@ function AddConfigDialog({
   arrInstances: ArrInstance[]
   instances: Instance[]
 }) {
+  const { t } = useTranslation("crossseed")
   const createConfig = useCreateArrSeedConfig()
 
   const [form, setForm] = useState<Partial<ArrSeedConfigCreate>>({
@@ -750,7 +764,7 @@ function AddConfigDialog({
 
   const handleCreate = () => {
     if (!form.arrInstanceId || !form.targetQbitInstanceId) {
-      toast.error("Please select both an Arr instance and a target qBittorrent instance")
+      toast.error(t("arrScan.toast.selectInstances"))
       return
     }
 
@@ -769,11 +783,11 @@ function AddConfigDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Config created")
+          toast.success(t("arrScan.toast.configCreated"))
           onOpenChange(false)
           setForm({ enabled: true, scanIntervalMinutes: 1440 })
         },
-        onError: () => toast.error("Failed to create config"),
+        onError: () => toast.error(t("arrScan.toast.configCreateFailed")),
       }
     )
   }
@@ -784,25 +798,28 @@ function AddConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add Arr Scan Configuration</DialogTitle>
+          <DialogTitle>{t("arrScan.configDialog.addTitle")}</DialogTitle>
           <DialogDescription>
-            Configure cross-seeding for a Sonarr or Radarr instance
+            {t("arrScan.configDialog.addDescription")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Arr Instance</Label>
+            <Label>{t("arrScan.configDialog.arrInstanceLabel")}</Label>
             <Select
               value={form.arrInstanceId ? String(form.arrInstanceId) : ""}
               onValueChange={(v) => setForm({ ...form, arrInstanceId: parseInt(v) })}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select an Arr instance" />
+                <SelectValue placeholder={t("arrScan.configDialog.selectArrInstance")} />
               </SelectTrigger>
               <SelectContent>
                 {enabledArrInstances.map((inst) => (
                   <SelectItem key={inst.id} value={String(inst.id)}>
-                    {inst.name} ({inst.type})
+                    {t("arrScan.configDialog.arrInstanceOption", {
+                      name: inst.name,
+                      type: t(`arrScan.instanceTypeLabels.${inst.type}`, inst.type),
+                    })}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -810,13 +827,13 @@ function AddConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Target qBittorrent Instance</Label>
+            <Label>{t("arrScan.configDialog.targetInstanceLabel")}</Label>
             <Select
               value={form.targetQbitInstanceId ? String(form.targetQbitInstanceId) : ""}
               onValueChange={(v) => setForm({ ...form, targetQbitInstanceId: parseInt(v) })}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select a qBittorrent instance" />
+                <SelectValue placeholder={t("arrScan.configDialog.selectTargetInstance")} />
               </SelectTrigger>
               <SelectContent>
                 {instances.map((inst) => (
@@ -829,73 +846,73 @@ function AddConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Category</Label>
+            <Label>{t("arrScan.configDialog.categoryLabel")}</Label>
             <Input
               value={form.category ?? ""}
               onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="e.g., TV.cross or MOVIES.cross"
+              placeholder={t("arrScan.configDialog.categoryPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Arr Docker Path
+              {t("arrScan.configDialog.arrDockerPathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The path prefix as seen inside the Arr container (e.g., /mnt/media/tv)
+                  {t("arrScan.configDialog.arrDockerPathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.arrDockerPath ?? ""}
               onChange={(e) => setForm({ ...form, arrDockerPath: e.target.value })}
-              placeholder="/mnt/media/tv"
+              placeholder={t("arrScan.configDialog.arrDockerPathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Host Data Path
+              {t("arrScan.configDialog.hostDataPathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The matching path on the host system (e.g., /mnt/media/tv/data)
+                  {t("arrScan.configDialog.hostDataPathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.hostDataPath ?? ""}
               onChange={(e) => setForm({ ...form, hostDataPath: e.target.value })}
-              placeholder="/mnt/media/tv/data"
+              placeholder={t("arrScan.configDialog.hostDataPathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Torrent Save Path
+              {t("arrScan.configDialog.torrentSavePathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Where hardlinks and torrent data should be saved (e.g., /mnt/media/tv/torrents)
+                  {t("arrScan.configDialog.torrentSavePathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.torrentSavePath ?? ""}
               onChange={(e) => setForm({ ...form, torrentSavePath: e.target.value })}
-              placeholder="/mnt/media/tv/torrents"
+              placeholder={t("arrScan.configDialog.torrentSavePathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>Scan Interval (minutes)</Label>
+            <Label>{t("arrScan.configDialog.scanIntervalLabel")}</Label>
             <Input
               type="number"
               value={form.scanIntervalMinutes ?? 1440}
@@ -911,43 +928,43 @@ function AddConfigDialog({
               checked={form.unmonitorAfterSeed ?? false}
               onCheckedChange={(checked) => setForm({ ...form, unmonitorAfterSeed: checked })}
             />
-            <Label>Unmonitor after seed</Label>
+            <Label>{t("arrScan.configDialog.unmonitorAfterSeedLabel")}</Label>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Info className="h-3.5 w-3.5 text-muted-foreground" />
               </TooltipTrigger>
               <TooltipContent>
-                Unmonitor the series/movie in Sonarr/Radarr after a successful cross-seed
+                {t("arrScan.configDialog.unmonitorAfterSeedHelp")}
               </TooltipContent>
             </Tooltip>
           </div>
 
           <div className="space-y-2">
             <Label>
-              Tag after seed
+              {t("arrScan.configDialog.tagAfterSeedLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Add this tag to the series/movie in Sonarr/Radarr after a successful cross-seed
+                  {t("arrScan.configDialog.tagAfterSeedHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.tagAfterSeed ?? ""}
               onChange={(e) => setForm({ ...form, tagAfterSeed: e.target.value })}
-              placeholder="e.g., cross-seeded"
+              placeholder={t("arrScan.configDialog.tagAfterSeedPlaceholder")}
             />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("arrScan.configDialog.cancel")}
           </Button>
           <Button onClick={handleCreate} disabled={createConfig.isPending}>
             {createConfig.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-            Create
+            {t("arrScan.configDialog.createButton")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -968,6 +985,7 @@ function EditConfigDialog({
   config: ArrSeedInstanceConfig
   instances: Instance[]
 }) {
+  const { t } = useTranslation("crossseed")
   const updateConfig = useUpdateArrSeedConfig(config.id)
 
   const [form, setForm] = useState({
@@ -1012,10 +1030,10 @@ function EditConfigDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Config updated")
+          toast.success(t("arrScan.toast.configUpdated"))
           onOpenChange(false)
         },
-        onError: () => toast.error("Failed to update config"),
+        onError: () => toast.error(t("arrScan.toast.configUpdateFailed")),
       }
     )
   }
@@ -1024,20 +1042,20 @@ function EditConfigDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit Configuration</DialogTitle>
+          <DialogTitle>{t("arrScan.configDialog.editTitle")}</DialogTitle>
           <DialogDescription>
-            Update settings for {config.arrInstanceName || `Arr #${config.arrInstanceId}`}
+            {t("arrScan.configDialog.editDescription", { name: config.arrInstanceName || t("arrScan.config.arrInstanceFallback", { id: config.arrInstanceId }) })}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Target qBittorrent Instance</Label>
+            <Label>{t("arrScan.configDialog.targetInstanceLabel")}</Label>
             <Select
               value={String(form.targetQbitInstanceId)}
               onValueChange={(v) => setForm({ ...form, targetQbitInstanceId: parseInt(v) })}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select a qBittorrent instance" />
+                <SelectValue placeholder={t("arrScan.configDialog.selectTargetInstance")} />
               </SelectTrigger>
               <SelectContent>
                 {instances.map((inst) => (
@@ -1050,73 +1068,73 @@ function EditConfigDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Category</Label>
+            <Label>{t("arrScan.configDialog.categoryLabel")}</Label>
             <Input
               value={form.category}
               onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="e.g., TV.cross or MOVIES.cross"
+              placeholder={t("arrScan.configDialog.categoryPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Arr Docker Path
+              {t("arrScan.configDialog.arrDockerPathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The path prefix as seen inside the Arr container (e.g., /mnt/media/tv)
+                  {t("arrScan.configDialog.arrDockerPathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.arrDockerPath}
               onChange={(e) => setForm({ ...form, arrDockerPath: e.target.value })}
-              placeholder="/mnt/media/tv"
+              placeholder={t("arrScan.configDialog.arrDockerPathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Host Data Path
+              {t("arrScan.configDialog.hostDataPathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  The matching path on the host system (e.g., /mnt/media/tv/data)
+                  {t("arrScan.configDialog.hostDataPathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.hostDataPath}
               onChange={(e) => setForm({ ...form, hostDataPath: e.target.value })}
-              placeholder="/mnt/media/tv/data"
+              placeholder={t("arrScan.configDialog.hostDataPathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
             <Label>
-              Torrent Save Path
+              {t("arrScan.configDialog.torrentSavePathLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Where hardlinks and torrent data should be saved (e.g., /mnt/media/tv/torrents)
+                  {t("arrScan.configDialog.torrentSavePathHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.torrentSavePath}
               onChange={(e) => setForm({ ...form, torrentSavePath: e.target.value })}
-              placeholder="/mnt/media/tv/torrents"
+              placeholder={t("arrScan.configDialog.torrentSavePathPlaceholder")}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>Scan Interval (minutes)</Label>
+            <Label>{t("arrScan.configDialog.scanIntervalLabel")}</Label>
             <Input
               type="number"
               value={form.scanIntervalMinutes}
@@ -1132,43 +1150,43 @@ function EditConfigDialog({
               checked={form.unmonitorAfterSeed}
               onCheckedChange={(checked) => setForm({ ...form, unmonitorAfterSeed: checked })}
             />
-            <Label>Unmonitor after seed</Label>
+            <Label>{t("arrScan.configDialog.unmonitorAfterSeedLabel")}</Label>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Info className="h-3.5 w-3.5 text-muted-foreground" />
               </TooltipTrigger>
               <TooltipContent>
-                Unmonitor the series/movie in Sonarr/Radarr after a successful cross-seed
+                {t("arrScan.configDialog.unmonitorAfterSeedHelp")}
               </TooltipContent>
             </Tooltip>
           </div>
 
           <div className="space-y-2">
             <Label>
-              Tag after seed
+              {t("arrScan.configDialog.tagAfterSeedLabel")}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 ml-1 inline text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Add this tag to the series/movie in Sonarr/Radarr after a successful cross-seed
+                  {t("arrScan.configDialog.tagAfterSeedHelp")}
                 </TooltipContent>
               </Tooltip>
             </Label>
             <Input
               value={form.tagAfterSeed}
               onChange={(e) => setForm({ ...form, tagAfterSeed: e.target.value })}
-              placeholder="e.g., cross-seeded"
+              placeholder={t("arrScan.configDialog.tagAfterSeedPlaceholder")}
             />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("arrScan.configDialog.cancel")}
           </Button>
           <Button onClick={handleSave} disabled={updateConfig.isPending}>
             {updateConfig.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-            Save
+            {t("arrScan.configDialog.saveButton")}
           </Button>
         </DialogFooter>
       </DialogContent>
