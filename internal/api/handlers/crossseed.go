@@ -103,6 +103,7 @@ type automationSettingsPatchRequest struct {
 	SeededSearchTags     *[]string `json:"seededSearchTags,omitempty"`
 	CompletionSearchTags *[]string `json:"completionSearchTags,omitempty"`
 	WebhookTags          *[]string `json:"webhookTags,omitempty"`
+	ArrSeedTags          *[]string `json:"arrSeedTags,omitempty"`
 	InheritSourceTags    *bool     `json:"inheritSourceTags,omitempty"`
 	// Skip auto-resume settings per source mode
 	SkipAutoResumeRSS            *bool `json:"skipAutoResumeRss,omitempty"`
@@ -217,6 +218,7 @@ func (r automationSettingsPatchRequest) isEmpty() bool {
 		r.SeededSearchTags == nil &&
 		r.CompletionSearchTags == nil &&
 		r.WebhookTags == nil &&
+		r.ArrSeedTags == nil &&
 		r.InheritSourceTags == nil &&
 		r.SkipAutoResumeRSS == nil &&
 		r.SkipAutoResumeSeededSearch == nil &&
@@ -339,6 +341,9 @@ func applyAutomationSettingsPatch(settings *models.CrossSeedAutomationSettings, 
 	}
 	if patch.WebhookTags != nil {
 		settings.WebhookTags = *patch.WebhookTags
+	}
+	if patch.ArrSeedTags != nil {
+		settings.ArrSeedTags = *patch.ArrSeedTags
 	}
 	if patch.InheritSourceTags != nil {
 		settings.InheritSourceTags = *patch.InheritSourceTags

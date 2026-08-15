@@ -194,22 +194,30 @@ func (s *ArrSeedStore) CreateConfig(ctx context.Context, cfg *ArrSeedInstanceCon
 		return nil, errors.New("config is nil")
 	}
 
-	res, err := s.db.ExecContext(ctx, `
+	const insertConfig = `
 		INSERT INTO arr_seed_instance_configs
 			(arr_instance_id, enabled, target_qbit_instance_id, category,
 			 arr_docker_path, host_data_path, torrent_save_path, scan_interval_minutes,
 			 unmonitor_after_seed, tag_after_seed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, cfg.ArrInstanceID, boolToInt(cfg.Enabled), cfg.TargetQbitInstanceID, cfg.Category,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	args := []any{
+		cfg.ArrInstanceID, boolToInt(cfg.Enabled), cfg.TargetQbitInstanceID, cfg.Category,
 		cfg.ArrDockerPath, cfg.HostDataPath, cfg.TorrentSavePath, cfg.ScanIntervalMinutes,
-		boolToInt(cfg.UnmonitorAfterSeed), cfg.TagAfterSeed)
-	if err != nil {
-		return nil, fmt.Errorf("insert config: %w", err)
+		boolToInt(cfg.UnmonitorAfterSeed), cfg.TagAfterSeed,
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("get last insert id: %w", err)
+	var id int64
+	if dbinterface.DialectOf(s.db) != "postgres" {
+		res, err := s.db.ExecContext(ctx, insertConfig, args...)
+		if err != nil {
+			return nil, fmt.Errorf("insert config: %w", err)
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return nil, fmt.Errorf("get last insert id: %w", err)
+		}
+	} else if err := s.db.QueryRowContext(ctx, insertConfig+" RETURNING id", args...).Scan(&id); err != nil {
+		return nil, fmt.Errorf("insert config: %w", err)
 	}
 
 	return s.GetConfig(ctx, int(id))
@@ -440,29 +448,42 @@ var ErrArrSeedRunAlreadyActive = errors.New("an active arr seed run already exis
 
 // CreateRunIfNoActive atomically creates a run if none is active.
 func (s *ArrSeedStore) CreateRunIfNoActive(ctx context.Context, configID int, triggeredBy string) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `
+	const insertRun = `
 		INSERT INTO arr_seed_runs (config_id, status, triggered_by)
 		SELECT ?, 'running', ?
 		WHERE NOT EXISTS (
 			SELECT 1 FROM arr_seed_runs
 			WHERE config_id = ? AND status = 'running'
-		)
-	`, configID, triggeredBy, configID)
-	if err != nil {
-		return 0, fmt.Errorf("insert run: %w", err)
+		)`
+
+	var id int64
+	if dbinterface.DialectOf(s.db) != "postgres" {
+		res, err := s.db.ExecContext(ctx, insertRun, configID, triggeredBy, configID)
+		if err != nil {
+			return 0, fmt.Errorf("insert run: %w", err)
+		}
+
+		rows, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("get rows affected: %w", err)
+		}
+		if rows == 0 {
+			return 0, ErrArrSeedRunAlreadyActive
+		}
+
+		if id, err = res.LastInsertId(); err != nil {
+			return 0, fmt.Errorf("get last insert id: %w", err)
+		}
+		return id, nil
 	}
 
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
+	// The guard suppresses the insert, so RETURNING yields no row when a run is
+	// already active.
+	switch err := s.db.QueryRowContext(ctx, insertRun+" RETURNING id", configID, triggeredBy, configID).Scan(&id); {
+	case errors.Is(err, sql.ErrNoRows):
 		return 0, ErrArrSeedRunAlreadyActive
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("get last insert id: %w", err)
+	case err != nil:
+		return 0, fmt.Errorf("insert run: %w", err)
 	}
 	return id, nil
 }

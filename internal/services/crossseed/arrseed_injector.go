@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/services/jackett"
+	"github.com/autobrr/qui/pkg/fsutil"
 	"github.com/autobrr/qui/pkg/hardlinktree"
 )
 
@@ -300,9 +301,12 @@ func (inj *arrSeedInjector) tryInject(
 		if err := inj.svc.syncManager.BulkAction(ctx, config.TargetQbitInstanceID, []string{parsed.InfoHash}, "recheck"); err != nil {
 			l.Warn().Err(err).Str("hash", parsed.InfoHash).Msg("arrseed: failed to trigger recheck")
 		} else {
+			// A non-partial add is expected to be complete, so it follows the same
+			// auto-resume budget as any other new cross-seed rather than a coverage
+			// threshold: resume only when the missing data fits the user's
+			// auto_resume_max_download_mb.
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume")
-			resumeThreshold := coverageThresholdFromTolerance(defaultSizeMismatchTolerancePercent)
-			if qErr := inj.svc.queueRecheckResumeWithThreshold(config.TargetQbitInstanceID, parsed.InfoHash, resumeThreshold); qErr != nil {
+			if qErr := inj.svc.queueRecheckResumeWithBudget(config.TargetQbitInstanceID, parsed.InfoHash, inj.svc.resumeBudgetBytes(ctx), false); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume")
 			}
 		}
@@ -337,7 +341,7 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		}
 	}
 
-	if err := os.MkdirAll(savePath, 0o750); err != nil {
+	if err := os.MkdirAll(savePath, fsutil.LinkTreeBaseDirMode); err != nil {
 		return nil, 0, fmt.Errorf("create save path: %w", err)
 	}
 
