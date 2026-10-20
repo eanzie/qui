@@ -676,7 +676,6 @@
       "searchDelayHelp": "속도 제한을 피하기 위한 인덱서 검색 간 지연 시간",
       "maxItemsLabel": "실행당 최대 항목 수",
       "maxItemsHelp": "0 = 무제한",
-      "sharedSettingsNote": "크기 허용 범위, 일시 정지 상태로 시작, 태그는 Cross-Seed 규칙에서 구성되며 모든 cross-seed 모드에서 공유됩니다.",
       "qualityGateLabel": "품질 게이트",
       "highScoreOnlyLabel": "높은 점수만",
       "highScoreOnlyHelp": "커스텀 포맷 점수가 품질 프로필 컷오프를 초과하는 항목만 처리합니다.",

@@ -687,7 +687,6 @@
       "searchDelayHelp": "Temps d'espera entre cerques als indexadors per evitar els límits de freqüència",
       "maxItemsLabel": "Màxim d'elements per execució",
       "maxItemsHelp": "0 = sense límit",
-      "sharedSettingsNote": "La tolerància de mida, l'inici aturat i les etiquetes es configuren a les regles de cross-seed i són compartits per tots els modes de cross-seed.",
       "qualityGateLabel": "Filtre de qualitat",
       "highScoreOnlyLabel": "Només puntuacions altes",
       "highScoreOnlyHelp": "Processa només els elements amb una puntuació de formats personalitzats superior al límit del perfil de qualitat.",

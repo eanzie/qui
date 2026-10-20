@@ -676,7 +676,6 @@
       "searchDelayHelp": "索引器搜尋之間的延遲，以避免觸發限速",
       "maxItemsLabel": "每次執行的最大項目數",
       "maxItemsHelp": "0 = 無限制",
-      "sharedSettingsNote": "大小容差、以暫停狀態新增和標籤皆在輔種規則中設定，並由所有輔種模式共用。",
       "qualityGateLabel": "品質門檻",
       "highScoreOnlyLabel": "僅限高分",
       "highScoreOnlyHelp": "僅處理自訂格式分數高於品質設定檔截止值的項目。",

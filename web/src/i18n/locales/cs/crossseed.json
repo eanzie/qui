@@ -701,7 +701,6 @@
       "searchDelayHelp": "Prodleva mezi hledáními na indexerech, aby nedošlo k omezení rychlosti",
       "maxItemsLabel": "Maximální počet položek na spuštění",
       "maxItemsHelp": "0 = neomezeno",
-      "sharedSettingsNote": "Velikost tolerance, spuštění v pozastaveném stavu a tagy se nastavují v Pravidlech křížového sdílení a jsou sdílené všemi režimy křížového sdílení.",
       "qualityGateLabel": "Kvalitativní práh",
       "highScoreOnlyLabel": "Pouze vysoké skóre",
       "highScoreOnlyHelp": "Zpracovávat pouze položky se skóre vlastního formátu nad mezní hodnotou profilu kvality.",

@@ -687,7 +687,6 @@
       "searchDelayHelp": "Verzögerung zwischen Indexer-Suchen, um Rate-Limits zu vermeiden",
       "maxItemsLabel": "Max. Einträge pro Durchlauf",
       "maxItemsHelp": "0 = unbegrenzt",
-      "sharedSettingsNote": "Größentoleranz, „pausiert starten“ und Tags werden in den Cross-Seed-Regeln konfiguriert und gelten für alle Cross-Seed-Modi gemeinsam.",
       "qualityGateLabel": "Qualitätsschwelle",
       "highScoreOnlyLabel": "Nur hohe Punktzahl",
       "highScoreOnlyHelp": "Nur Einträge verarbeiten, deren Custom-Format-Punktzahl über dem Cutoff des Qualitätsprofils liegt.",

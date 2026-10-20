@@ -687,7 +687,6 @@
       "searchDelayHelp": "Delay between indexer searches to avoid rate limiting",
       "maxItemsLabel": "Max Items Per Run",
       "maxItemsHelp": "0 = unlimited",
-      "sharedSettingsNote": "Size tolerance, start paused, and tags are configured in Cross Seed Rules and shared across all cross-seed modes.",
       "qualityGateLabel": "Quality Gate",
       "highScoreOnlyLabel": "High Score Only",
       "highScoreOnlyHelp": "Only process items with custom format score above the quality profile cutoff.",

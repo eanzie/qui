@@ -308,9 +308,6 @@ function SettingsDialog({
               <p className="text-xs text-muted-foreground">{t("arrScan.settingsDialog.maxItemsHelp")}</p>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {t("arrScan.settingsDialog.sharedSettingsNote")}
-          </p>
           <div className="space-y-2">
             <Label className="text-sm font-medium">{t("arrScan.settingsDialog.qualityGateLabel")}</Label>
             <div className="flex items-center gap-2">

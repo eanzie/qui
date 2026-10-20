@@ -676,7 +676,6 @@
       "searchDelayHelp": "索引器搜索之间的延迟，用于避免触发限速",
       "maxItemsLabel": "每次运行最大项目数",
       "maxItemsHelp": "0 = 无限制",
-      "sharedSettingsNote": "大小容差、以暂停状态添加和标签在辅种规则中配置，并在所有辅种模式间共享。",
       "qualityGateLabel": "质量门槛",
       "highScoreOnlyLabel": "仅限高分",
       "highScoreOnlyHelp": "仅处理自定义格式评分高于质量配置文件截止值的项目。",

@@ -687,7 +687,6 @@
       "searchDelayHelp": "Atraso entre as buscas nos indexadores para evitar limites de taxa",
       "maxItemsLabel": "Máx. de Itens por Execução",
       "maxItemsHelp": "0 = ilimitado",
-      "sharedSettingsNote": "A tolerância de tamanho, o início pausado e as tags são configurados em Regras Cross-Seed e compartilhados por todos os modos de cross-seed.",
       "qualityGateLabel": "Filtro de Qualidade",
       "highScoreOnlyLabel": "Apenas Pontuação Alta",
       "highScoreOnlyHelp": "Processa apenas itens com pontuação de formato personalizado acima do corte do perfil de qualidade.",
