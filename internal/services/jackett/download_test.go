@@ -4,112 +4,31 @@
 package jackett
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/autobrr/qui/internal/models"
+	"github.com/autobrr/qui/internal/testutil/testdb"
 )
 
-func TestDownloadRateLimitError_Error(t *testing.T) {
-	resumeAt := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
-
-	tests := []struct {
-		name    string
-		err     *DownloadRateLimitError
-		wantMsg string
-	}{
-		{
-			name: "not queued",
-			err: &DownloadRateLimitError{
-				IndexerID:   1,
-				IndexerName: "TorrentLeech",
-				ResumeAt:    resumeAt,
-				Queued:      false,
-			},
-			wantMsg: "indexer TorrentLeech rate-limited until 2025-01-15T10:30:00Z",
-		},
-		{
-			name: "queued for retry",
-			err: &DownloadRateLimitError{
-				IndexerID:   2,
-				IndexerName: "IPTorrents",
-				ResumeAt:    resumeAt,
-				Queued:      true,
-			},
-			wantMsg: "indexer IPTorrents rate-limited, queued for retry at 2025-01-15T10:30:00Z",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.wantMsg, tt.err.Error())
-		})
-	}
-}
-
-func TestDownloadRateLimitError_Is(t *testing.T) {
-	tests := []struct {
-		name   string
-		target error
-		want   bool
-	}{
-		{
-			name:   "matches DownloadRateLimitError",
-			target: &DownloadRateLimitError{},
-			want:   true,
-		},
-		{
-			name: "matches DownloadRateLimitError with different values",
-			target: &DownloadRateLimitError{
-				IndexerID:   99,
-				IndexerName: "Other",
-				ResumeAt:    time.Now(),
-			},
-			want: true,
-		},
-		{
-			name:   "does not match other error types",
-			target: errors.New("some error"),
-			want:   false,
-		},
-		{
-			name:   "does not match DownloadError",
-			target: &DownloadError{StatusCode: 429},
-			want:   false,
-		},
-		{
-			name:   "does not match nil",
-			target: nil,
-			want:   false,
-		},
-	}
-
-	err := &DownloadRateLimitError{
+func TestRateLimitError_Error(t *testing.T) {
+	err := &RateLimitError{
 		IndexerID:   1,
-		IndexerName: "Test",
-		ResumeAt:    time.Now(),
+		IndexerName: "TorrentLeech",
+		Scope:       rateLimitScopeGrab,
+		RetryAt:     time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, err.Is(tt.target))
-		})
-	}
-}
-
-func TestDownloadRateLimitError_ErrorsIs(t *testing.T) {
-	err := &DownloadRateLimitError{
-		IndexerID:   1,
-		IndexerName: "Test",
-		ResumeAt:    time.Now(),
-	}
-	wrapped := errors.Join(errors.New("wrapper"), err)
-
-	assert.True(t, errors.Is(wrapped, &DownloadRateLimitError{}), "errors.Is should find DownloadRateLimitError in wrapped error")
+	assert.Equal(t, "indexer TorrentLeech grab rate-limited until 2025-01-15T10:30:00Z", err.Error())
 }
 
 func TestIsRetryableDownloadError(t *testing.T) {
@@ -209,19 +128,83 @@ func TestIsRetryableDownloadError_WrappedErrors(t *testing.T) {
 	})
 }
 
-func TestDownloadRateLimitError_ErrorsAs(t *testing.T) {
-	err := &DownloadRateLimitError{
+func TestRateLimitError_ErrorsAs(t *testing.T) {
+	err := &RateLimitError{
 		IndexerID:   42,
 		IndexerName: "TestIndexer",
-		ResumeAt:    time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
-		Queued:      false,
+		RetryAt:     time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
 	}
 	wrapped := errors.Join(errors.New("wrapper"), err)
 
-	var dlErr *DownloadRateLimitError
-	require.True(t, errors.As(wrapped, &dlErr), "errors.As should extract DownloadRateLimitError from wrapped error")
-	assert.Equal(t, 42, dlErr.IndexerID)
-	assert.Equal(t, "TestIndexer", dlErr.IndexerName)
+	var rateLimitErr *RateLimitError
+	require.ErrorAs(t, wrapped, &rateLimitErr, "errors.As should extract RateLimitError from wrapped error")
+	assert.Equal(t, 42, rateLimitErr.IndexerID)
+	assert.Equal(t, "TestIndexer", rateLimitErr.IndexerName)
+}
+
+func TestDownloadRateLimitUsesGrabScopeAndRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	indexer := &models.TorznabIndexer{ID: 7, Name: "GrabLimited", BaseURL: server.URL, Backend: models.TorznabBackendProwlarr}
+	service := NewService(&mockTorznabIndexerStore{indexers: []*models.TorznabIndexer{indexer}})
+	t.Cleanup(service.searchScheduler.Stop)
+	before := time.Now().Add(41 * time.Second)
+
+	_, err := service.DownloadTorrent(context.Background(), TorrentDownloadRequest{IndexerID: indexer.ID, DownloadURL: server.URL + "/download"})
+	var rateLimitErr *RateLimitError
+	require.ErrorAs(t, err, &rateLimitErr)
+	assert.Equal(t, rateLimitScopeGrab, rateLimitErr.Scope)
+	assert.WithinRange(t, rateLimitErr.RetryAt, before, time.Now().Add(43*time.Second))
+	queryLimited, _ := service.rateLimiter.IsInCooldown(indexer.ID, rateLimitScopeQuery)
+	grabLimited, _ := service.rateLimiter.IsInCooldown(indexer.ID, rateLimitScopeGrab)
+	assert.False(t, queryLimited)
+	assert.True(t, grabLimited)
+}
+
+func TestDownloadTorrentDoesNotCacheRejectedPayload(t *testing.T) {
+	const torrentBody = testTorrentPayload
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html>Login required</html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(torrentBody))
+	}))
+	t.Cleanup(server.Close)
+
+	db := testdb.NewMigratedSQLite(t, "torrent-download-cache")
+	store, err := models.NewTorznabIndexerStore(db, make([]byte, 32))
+	require.NoError(t, err)
+	indexer, err := store.Create(t.Context(), "Test indexer", server.URL, "test-key", nil, nil, true, 0, 5)
+	require.NoError(t, err)
+	cache := models.NewTorznabTorrentCacheStore(db)
+	service := NewService(store, WithTorrentCache(cache))
+	t.Cleanup(service.searchScheduler.Stop)
+	req := TorrentDownloadRequest{IndexerID: indexer.ID, DownloadURL: server.URL + "/download", GUID: "test-release"}
+
+	data, err := service.DownloadTorrent(t.Context(), req)
+	require.ErrorIs(t, err, ErrInvalidTorrentPayload)
+	assert.Nil(t, data)
+	assert.Equal(t, int32(1), calls.Load(), "rejected payload must not trigger a retry")
+	_, found, err := cache.Fetch(t.Context(), indexer.ID, req.GUID, defaultTorrentCacheTTL)
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	for range 2 {
+		data, err = service.DownloadTorrent(t.Context(), req)
+		require.NoError(t, err)
+		assert.Equal(t, []byte(torrentBody), data)
+		assert.Equal(t, int32(2), calls.Load(), "valid payload must be fetched once and then cached")
+	}
 }
 
 // timeoutError implements net.Error for testing timeout detection

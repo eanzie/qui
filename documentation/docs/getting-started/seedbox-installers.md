@@ -1,15 +1,16 @@
 ---
 sidebar_position: 2
-title: Seedbox Installers
-description: One-line installers for popular seedbox providers.
+title: Install qui on a seedbox
+sidebar_label: Seedbox Installers
+description: One-line qui installers for Ultra.cc, Whatbox, Feral, Seedhost, Bytesized, and HostingByDesign.
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Seedbox Installers
+# Seedbox installers
 
-One-line installers for popular seedbox providers. These scripts automatically configure qui for your specific environment.
+One-line installers for popular seedbox providers. Each script configures qui for the provider's environment. If your provider is not listed, follow the [manual install](./installation.md) and set a [base URL](../configuration/base-url.md) if you run qui under a subpath.
 
 <Tabs>
   <TabItem value="feral" label="Feral" default>
@@ -42,7 +43,7 @@ One-line installers for popular seedbox providers. These scripts automatically c
     wget -O installer.sh https://get.autobrr.com/qui/bytesized && chmod +x installer.sh && ./installer.sh
     ```
     :::note
-    This installer has not been tested.
+    This installer is untested.
     :::
   </TabItem>
 </Tabs>

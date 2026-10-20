@@ -6,16 +6,15 @@
 import type { ColumnDnd } from "@/hooks/torrent-table/useColumnDnd"
 import type { ViewMode } from "@/hooks/usePersistedCompactViewState"
 import type { ColumnFilter } from "@/lib/column-filter-utils"
-import type { Torrent } from "@/types"
 import { closestCenter, DndContext } from "@dnd-kit/core"
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers"
 import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable"
-import type { Table } from "@tanstack/react-table"
 import type { Dispatch, SetStateAction } from "react"
 import { DraggableTableHeader } from "../DraggableTableHeader"
+import type { TorrentTable } from "../tanstackTableFeatures"
 
 export interface TableColumnHeaderProps {
-  table: Table<Torrent>
+  table: TorrentTable
   sensors: ColumnDnd["sensors"]
   onDragEnd: ColumnDnd["onDragEnd"]
   columnFilters: ColumnFilter[]
@@ -24,6 +23,8 @@ export interface TableColumnHeaderProps {
   viewMode: ViewMode
   // Spreadsheet theme only: reserve the blank corner above the row-number gutter.
   showRowGutter?: boolean
+  // Column whose width is derived from the container (stretch mode); its resize handle is inert.
+  stretchedColumnId?: string
 }
 
 /**
@@ -41,6 +42,7 @@ export function TableColumnHeader({
   minTableWidth,
   viewMode,
   showRowGutter,
+  stretchedColumnId,
 }: TableColumnHeaderProps) {
   if (viewMode === "compact") {
     return null
@@ -72,6 +74,7 @@ export function TableColumnHeader({
                     header={header}
                     columnFilters={columnFilters}
                     viewMode={viewMode}
+                    stretched={header.column.id === stretchedColumnId}
                     onFilterChange={(columnId, filter) => {
                       if (filter === null) {
                         setColumnFilters(columnFilters.filter(f => f.columnId !== columnId))

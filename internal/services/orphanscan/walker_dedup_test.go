@@ -1,75 +1,126 @@
 // Copyright (c) 2025-2026, s0up and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// The FileID literals below spell unix Dev/Ino fields; the scenarios they
+// drive (bind-mount aliases) are unix-only anyway.
 //go:build !windows
 
 package orphanscan
 
 import (
-	"context"
-	"io/fs"
+	"errors"
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/pkg/hardlink"
 )
 
-type testDirEntry struct {
-	info fs.FileInfo
+func TestScanWalker_ShouldSkipDuplicate(t *testing.T) {
+	t.Parallel()
+
+	w := &scanWalker{
+		seenFileIDs: make(map[fsops.FileKey]struct{}),
+	}
+
+	// Single-link file (nlink=1) seen twice: same file reachable through a
+	// second path (bind mount, mergerfs branch) — the alias is a dup (#1212).
+	fid := hardlink.UnixFileID(1, 42)
+	if w.shouldSkipDuplicate(fid, 1) {
+		t.Fatal("first occurrence should not be skipped")
+	}
+	if !w.shouldSkipDuplicate(fid, 1) {
+		t.Fatal("alias of an already-seen single-link file should be skipped")
+	}
+
+	// Hardlinked file (nlink > 1): distinct directory entries, never deduped.
+	fid2 := hardlink.UnixFileID(1, 99)
+	if w.shouldSkipDuplicate(fid2, 3) {
+		t.Fatal("hardlinked file should not be skipped")
+	}
+	if w.shouldSkipDuplicate(fid2, 3) {
+		t.Fatal("hardlinked file should not be skipped on repeat sighting")
+	}
+
+	// Zero FileID: never skip.
+	if w.shouldSkipDuplicate(hardlink.FileID{}, 1) {
+		t.Fatal("zero FileID should not be skipped")
+	}
+
+	// A remote ID with no instance has no filesystem scope, so it says
+	// nothing about which file it names: two such files are not aliases.
+	if w.shouldSkipDuplicate(hardlink.RemoteFileID([]byte{1}), 1) {
+		t.Fatal("first unscoped remote file should not be skipped")
+	}
+	if w.shouldSkipDuplicate(hardlink.RemoteFileID([]byte{2}), 1) {
+		t.Fatal("a different unscoped remote file should not be skipped")
+	}
 }
 
-func (d testDirEntry) Name() string               { return d.info.Name() }
-func (d testDirEntry) IsDir() bool                { return d.info.IsDir() }
-func (d testDirEntry) Type() fs.FileMode          { return d.info.Mode().Type() }
-func (d testDirEntry) Info() (fs.FileInfo, error) { return d.info, nil }
-
-type testFileInfo struct {
-	name    string
-	size    int64
-	mode    fs.FileMode
-	modTime time.Time
-	sys     any
-}
-
-func (i testFileInfo) Name() string       { return i.name }
-func (i testFileInfo) Size() int64        { return i.size }
-func (i testFileInfo) Mode() fs.FileMode  { return i.mode }
-func (i testFileInfo) ModTime() time.Time { return i.modTime }
-func (i testFileInfo) IsDir() bool        { return i.mode.IsDir() }
-func (i testFileInfo) Sys() any           { return i.sys }
-
-func TestScanWalker_RecordsInUseInodesForDedup(t *testing.T) {
+func TestScanWalker_RecordsInUseFileIDsForDedup(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-
 	inUsePath := filepath.Join(root, "in-use.mkv")
-	dupPath := filepath.Join(root, "dup.mkv")
+	aliasPath := filepath.Join(root, "alias.mkv")
 
-	tfm := NewTorrentFileMap()
+	tfm := NewTorrentFileMap(fsops.HostPaths)
 	tfm.Add(inUsePath)
 
-	w := newScanWalker(context.Background(), root, tfm, nil, 0, 0, nil)
-
-	info := testFileInfo{
-		name:    "file.mkv",
-		size:    123,
-		modTime: time.Now().Add(-time.Hour),
-		sys: &syscall.Stat_t{
-			Dev:   1,
-			Ino:   2,
-			Nlink: 1,
+	fid := hardlink.UnixFileID(1, 2)
+	old := time.Now().Add(-time.Hour)
+	backend := &fakeWalkBackend{
+		Backend: newTestBackend(),
+		entries: []fsops.WalkEntry{
+			{Path: inUsePath, Size: 123, ModTime: old, FileID: fid, Nlinks: 1},
+			{Path: aliasPath, Size: 123, ModTime: old, FileID: fid, Nlinks: 1},
 		},
 	}
 
-	if err := w.handleFile(inUsePath, testDirEntry{info: info}); err != nil {
-		t.Fatalf("handle in-use: %v", err)
-	}
-	if err := w.handleFile(dupPath, testDirEntry{info: info}); err != nil {
-		t.Fatalf("handle dup: %v", err)
+	orphans, _, err := walkScanRoot(t.Context(), root, tfm, nil, 0, 0, backend, nil)
+	if err != nil {
+		t.Fatalf("walkScanRoot: %v", err)
 	}
 
-	if got := len(w.orphanUnits); got != 0 {
-		t.Fatalf("expected no orphans, got %d", got)
+	// The alias shares the in-use file's identity — it must not be reported
+	// as a deletable orphan.
+	if got := len(orphans); got != 0 {
+		t.Fatalf("expected no orphans, got %d: %v", got, orphans)
+	}
+}
+
+func TestScanWalker_HardlinkOrphansReportedPerPath(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "original.mkv")
+	if err := os.WriteFile(src, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dup := filepath.Join(root, "duplicate.mkv")
+	if err := os.Link(src, dup); err != nil {
+		if errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+			t.Skip("hardlinks not supported on this filesystem")
+		}
+		t.Fatalf("os.Link(%s, %s): %v", src, dup, err)
+	}
+
+	tfm := NewTorrentFileMap(fsops.HostPaths)
+	// Neither file is in the TFM. Hardlinks (nlink=2) are distinct directory
+	// entries, so both paths are reported as orphan units.
+
+	orphans, _, err := walkScanRoot(
+		t.Context(), root, tfm, nil, 0, 100,
+		newTestBackend(), nil,
+	)
+	if err != nil {
+		t.Fatalf("walkScanRoot: %v", err)
+	}
+
+	if len(orphans) != 2 {
+		t.Fatalf("expected 2 orphan units (one per hardlink path), got %d", len(orphans))
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	qbt "github.com/autobrr/go-qbittorrent"
-	"github.com/moistari/rls"
 
 	"github.com/autobrr/qui/internal/services/jackett"
 )
@@ -31,10 +30,8 @@ type CrossSeedRequest struct {
 	TargetInstanceIDs []int `json:"target_instance_ids,omitempty"`
 	// Category to apply to the cross-seeded torrent
 	Category string `json:"category,omitempty"`
-	// Tags to apply to the cross-seeded torrent (source-specific tags from settings)
+	// Tags to apply to the cross-seeded torrent (the Trigger's tags from settings)
 	Tags []string `json:"tags,omitempty"`
-	// SkipIfExists if true, skip cross-seeding if torrent already exists on target
-	SkipIfExists *bool `json:"skip_if_exists,omitempty"`
 	// StartPaused controls whether newly added torrents start paused
 	StartPaused *bool `json:"start_paused,omitempty"`
 	// InheritSourceTags controls whether to also copy tags from the matched source torrent.
@@ -51,11 +48,17 @@ type CrossSeedRequest struct {
 	// SkipAutoResume prevents automatic resume after hash check when true.
 	// Default behavior (false) resumes torrents after verification completes.
 	SkipAutoResume bool `json:"skip_auto_resume,omitempty"`
-	// SkipRecheck skips matches that would require a manual recheck (rename alignment or extra files).
+	// SkipRecheck skips matches that require a recheck because of file layout or
+	// an exact-size season, episode, title, or release-group relaxation.
 	SkipRecheck bool `json:"skip_recheck,omitempty"`
 	// SkipPieceBoundarySafetyCheck bypasses the piece boundary safety check that prevents
 	// corruption when extra files share pieces with content. Risky: may corrupt existing seeded data.
 	SkipPieceBoundarySafetyCheck bool `json:"skip_piece_boundary_safety_check,omitempty"`
+	// ManualTargetHash pins candidate discovery to one user-chosen existing
+	// torrent (Manual match). Requires exactly one target instance. The
+	// release-matching and content-type gates are bypassed; the recheck is the
+	// arbiter of a wrong pick.
+	ManualTargetHash string `json:"manual_target_hash,omitempty"`
 
 	// SourceFilterCategories filters candidate torrents to only those in these categories.
 	// Used by RSS automation to respect RSSSourceCategories setting.
@@ -70,20 +73,9 @@ type CrossSeedRequest struct {
 	// SourceFilterExcludeTags excludes candidate torrents with any of these tags.
 	// Internal-only, not exposed via JSON API.
 	SourceFilterExcludeTags []string `json:"-"`
-	// SearchDecisionClass records the private search classification that admitted
-	// this torrent. Only cached search results may set it; exact-size provenance
-	// bypasses only the duplicate apply-stage release prefilter.
-	SearchDecisionClass searchCandidateClass `json:"-"`
-	// SearchSourceInstanceID and SearchSourceHash identify the torrent whose size
-	// was compared with the selected search result.
-	SearchSourceInstanceID int    `json:"-"`
-	SearchSourceHash       string `json:"-"`
-	// SearchStrictMismatchReason and SearchRelaxedDifferences preserve the exact
-	// metadata relaxation admitted during search.
-	SearchStrictMismatchReason string   `json:"-"`
-	SearchRelaxedDifferences   []string `json:"-"`
-	// SearchSourceTitles preserves ARR aliases used to admit the cached search result.
-	SearchSourceTitles []string `json:"-"`
+	// SearchDecision is private provenance carried only by cached search results.
+	// It binds apply to the source torrent and every relaxation search admitted.
+	SearchDecision searchDecisionProvenance `json:"-"`
 }
 
 // CrossSeedResponse represents the result of a cross-seed operation
@@ -109,6 +101,8 @@ type InstanceCrossSeedResult struct {
 	Message string `json:"message,omitempty"`
 	// MatchedTorrent is the existing torrent that matched (if any)
 	MatchedTorrent *MatchedTorrent `json:"matched_torrent,omitempty"`
+	// partialPoolPending keeps pool-only reporting out of ordinary search results.
+	partialPoolPending bool
 }
 
 // MatchedTorrent represents an existing torrent that matches the cross-seed candidate
@@ -160,11 +154,9 @@ type TorrentFile struct {
 type FindCandidatesRequest struct {
 	// TorrentName is the title/name of the torrent you want to add (just a string, torrent doesn't exist yet)
 	TorrentName string `json:"torrent_name"`
-	// TargetRelease optionally overrides the release parsed from TorrentName.
-	// Apply file-derives TV structure from the incoming torrent's metainfo
-	// (bracket-anime pack names parse as non-TV, structure lives in file names),
-	// so candidate matching sees the same structure search matched with.
-	TargetRelease *rls.Release `json:"-"`
+	// TargetRelease keeps the public release fields, raw name, and selected-file
+	// tag provenance together so apply cannot accidentally drop one origin.
+	TargetRelease namedRelease `json:"-"`
 	// SourceIndexer optionally records where the request originated (e.g., automation feed indexer)
 	SourceIndexer string `json:"source_indexer,omitempty"`
 	// TargetInstanceIDs specifies which instances to search for EXISTING torrents with matching files
@@ -177,6 +169,9 @@ type FindCandidatesRequest struct {
 	// incomplete "season pack from episode" outcomes.
 	// If false (default), season packs will only match with other season packs.
 	FindIndividualEpisodes bool `json:"find_individual_episodes,omitempty"`
+	// ManualTargetHash short-circuits discovery to one user-chosen torrent
+	// (Manual match). Requires exactly one target instance.
+	ManualTargetHash string `json:"manual_target_hash,omitempty"`
 
 	// Source filters - used to restrict which existing torrents are considered as candidates.
 	// These are applied when fetching torrents (if no pre-built snapshot is provided).
@@ -190,17 +185,9 @@ type FindCandidatesRequest struct {
 	SourceFilterExcludeCategories []string `json:"-"`
 	// SourceFilterExcludeTags excludes candidate torrents with any of these tags.
 	SourceFilterExcludeTags []string `json:"-"`
-	// SearchDecisionClass and source identity bind an exact-size search decision
-	// to the one existing torrent that supplied the size evidence.
-	SearchDecisionClass    searchCandidateClass `json:"-"`
-	SearchSourceInstanceID int                  `json:"-"`
-	SearchSourceHash       string               `json:"-"`
-	// SearchStrictMismatchReason and SearchRelaxedDifferences limit the apply-stage
-	// bypass to metadata differences explicitly admitted during search.
-	SearchStrictMismatchReason string   `json:"-"`
-	SearchRelaxedDifferences   []string `json:"-"`
-	// SearchSourceTitles are ARR aliases for the existing torrent that originated the search.
-	SearchSourceTitles []string `json:"-"`
+	// SearchDecision binds a cached decision to the source torrent and limits
+	// apply replay to exactly the relaxations search admitted.
+	SearchDecision searchDecisionProvenance `json:"-"`
 }
 
 // FindCandidatesResponse represents potential cross-seed candidates
@@ -297,14 +284,8 @@ type TorrentSearchResult struct {
 	TVDbID               string  `json:"tvdb_id,omitempty"`
 	MatchReason          string  `json:"match_reason,omitempty"`
 	MatchScore           float64 `json:"match_score"`
-	// SearchDecisionClass is retained only in the in-memory search result cache.
-	SearchDecisionClass searchCandidateClass `json:"-"`
-	// SearchStrictMismatchReason and SearchRelaxedDifferences retain the exact
-	// release-metadata relaxation admitted for this cached result.
-	SearchStrictMismatchReason string   `json:"-"`
-	SearchRelaxedDifferences   []string `json:"-"`
-	// SearchSourceTitles retains ARR aliases used to admit this cached result.
-	SearchSourceTitles []string `json:"-"`
+	// SearchDecision is retained only in the in-memory search result cache.
+	SearchDecision searchDecisionProvenance `json:"-"`
 }
 
 // Reasons for TorrentSearchResponse.QueryDegraded. No reason is reported when
@@ -333,6 +314,13 @@ type TorrentSearchResponse struct {
 	// stamp per-indexer search history; an indexer missing here was rate
 	// limited or failed a pass and stays eligible for the next run.
 	CoveredIndexerIDs []int `json:"-"`
+	// TorznabAnswered reports that an indexer answered some pass, even when a
+	// failed retry left CoveredIndexerIDs empty.
+	TorznabAnswered bool `json:"-"`
+	// DecisionTrace explains why the Torznab passes accepted or rejected
+	// candidates. Ephemeral diagnostics for the manual search dialog; unset
+	// when no Torznab search ran (Gazelle-only or failed searches).
+	DecisionTrace *SearchDecisionTrace `json:"decisionTrace,omitempty"`
 }
 
 // TorrentSearchSelection represents a user-selected search result that should be added for cross-seeding.
@@ -404,6 +392,12 @@ type AsyncIndexerFilteringState struct {
 	ContentMatches        []string       `json:"content_matches,omitempty"`
 	Error                 string         `json:"error,omitempty"`
 
+	// contentType records which content type this filtering run was computed
+	// for; category mapping rules can change a torrent's type at runtime, so
+	// readers must not reuse a run computed for a different type (#2313).
+	// Unexported to stay out of the /async-status API payload.
+	contentType string
+
 	rejectedContentCandidates map[string]contentPrefilterRejectedTorrent
 }
 
@@ -416,6 +410,7 @@ func (s *AsyncIndexerFilteringState) cloneLocked() *AsyncIndexerFilteringState {
 		CapabilitiesCompleted: s.CapabilitiesCompleted,
 		ContentCompleted:      s.ContentCompleted,
 		Error:                 s.Error,
+		contentType:           s.contentType,
 	}
 	if len(s.CapabilityIndexers) > 0 {
 		clone.CapabilityIndexers = append([]int(nil), s.CapabilityIndexers...)
@@ -491,12 +486,14 @@ type WebhookCheckResponse struct {
 // AutobrrApplyRequest represents autobrr pushing a torrent directly to qui for application.
 type AutobrrApplyRequest struct {
 	TorrentData string `json:"torrentData"`
+	// TorrentName is the original announcement name. It is distinct from the
+	// downloaded metainfo info.name used for replay validation.
+	TorrentName string `json:"torrentName,omitempty"`
 	// InstanceIDs optionally scopes the apply request to specific instances; omit or pass an empty array to target all matches.
-	InstanceIDs  []int    `json:"instanceIds,omitempty"`
-	Category     string   `json:"category,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
-	StartPaused  *bool    `json:"startPaused,omitempty"`
-	SkipIfExists *bool    `json:"skipIfExists,omitempty"`
+	InstanceIDs []int    `json:"instanceIds,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	StartPaused *bool    `json:"startPaused,omitempty"`
 	// FindIndividualEpisodes overrides the automation-level episode matching behavior when set.
 	FindIndividualEpisodes *bool `json:"findIndividualEpisodes,omitempty"`
 	// Indexer is autobrr's stable indexer identifier (for example "hdb").

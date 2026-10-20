@@ -64,6 +64,7 @@ func TestSetupReturns500WhenRenewTokenFails(t *testing.T) {
 		authService:    authService,
 		sessionManager: sm,
 		config:         &domain.Config{},
+		loginLimiter:   newLoginLimiter(),
 	}
 
 	body := `{"username":"alice","password":"password1234"}`
@@ -80,7 +81,7 @@ func TestSetupReturns500WhenRenewTokenFails(t *testing.T) {
 
 	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &respBody))
-	assert.Contains(t, respBody["error"], "Authentication failed")
+	assert.Contains(t, respBody["error"], "Failed to create session")
 }
 
 func TestLoginReturns500WhenRenewTokenFails(t *testing.T) {
@@ -100,6 +101,7 @@ func TestLoginReturns500WhenRenewTokenFails(t *testing.T) {
 		authService:    authService,
 		sessionManager: sm,
 		config:         &domain.Config{},
+		loginLimiter:   newLoginLimiter(),
 	}
 
 	body := `{"username":"bob","password":"securepass123"}`
@@ -115,7 +117,7 @@ func TestLoginReturns500WhenRenewTokenFails(t *testing.T) {
 
 	var respBody map[string]any
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &respBody))
-	assert.Contains(t, respBody["error"], "Authentication failed")
+	assert.Contains(t, respBody["error"], "Failed to create session")
 }
 
 func TestLoginDoesNotSetAuthenticatedWhenRenewTokenFails(t *testing.T) {
@@ -133,6 +135,7 @@ func TestLoginDoesNotSetAuthenticatedWhenRenewTokenFails(t *testing.T) {
 		authService:    authService,
 		sessionManager: sm,
 		config:         &domain.Config{},
+		loginLimiter:   newLoginLimiter(),
 	}
 
 	body := `{"username":"carol","password":"securepass123"}`

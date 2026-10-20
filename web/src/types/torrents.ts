@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-import type { AppPreferences, QBittorrentAppInfo } from "./app"
+import type { QBittorrentAppInfo } from "./app"
 import type { InstanceError } from "./instances"
 
 export interface TorrentTracker {
@@ -109,7 +109,6 @@ export interface Torrent {
   popularity: number
   private: boolean
   last_activity: number
-  magnet_uri: string
   max_ratio: number
   max_seeding_time: number
   max_inactive_seeding_time?: number
@@ -208,6 +207,7 @@ export interface TorrentCounts {
  * Tracker filters use the same normalized domain keys as TorrentCounts.trackers.
  */
 export interface TorrentFilters {
+  hashes?: string[]
   status: string[]
   excludeStatus: string[]
   categories: string[]
@@ -253,9 +253,6 @@ export interface InstanceMeta {
 
 /**
  * Torrent list response shared by REST and stream snapshots.
- *
- * `preferences` is tri-state: omitted leaves existing frontend preference caches
- * unchanged, a value replaces them, and `null` clears stale cached preferences.
  */
 export interface TorrentResponse {
   torrents: Torrent[]
@@ -269,8 +266,6 @@ export interface TorrentResponse {
   tags?: string[]
   serverState?: ServerState
   appInfo?: QBittorrentAppInfo
-  /** qBittorrent preferences for this instance; `null` explicitly clears cached preferences. */
-  preferences?: AppPreferences | null
   useSubcategories?: boolean
   cacheMetadata?: CacheMetadata
   hasMore?: boolean
@@ -317,6 +312,11 @@ export interface TorrentStreamMeta {
   streamKey?: string
 }
 
+export interface TorrentStreamVersion {
+  major: number
+  minor: number
+}
+
 // TorrentStreamDelta reconciles a delta frame's page-0 window against the previous
 // frame. The added/changed rows ride in the frame's `data.torrents` (or
 // `cross_instance_torrents`); `order` is the full page key sequence, present only
@@ -325,6 +325,7 @@ export interface TorrentStreamMeta {
 // cross-instance streams.
 export interface TorrentStreamDelta {
   order?: string[]
+  baseVersion: TorrentStreamVersion
 }
 
 export interface TorrentStreamPayload {
@@ -332,6 +333,7 @@ export interface TorrentStreamPayload {
   data?: TorrentResponse
   delta?: TorrentStreamDelta
   meta?: TorrentStreamMeta
+  version?: TorrentStreamVersion
   error?: string
 }
 
@@ -389,8 +391,8 @@ export interface TransferInfo {
 }
 
 export interface TorrentPeer {
-  ip: string
-  port: number
+  ip?: string
+  port?: number
   connection?: string
   flags?: string
   flags_desc?: string
@@ -415,7 +417,6 @@ export interface TorrentPeersResponse {
   peers?: Record<string, TorrentPeer>
   peers_removed?: string[]
   rid: number
-  full_update: boolean
   show_flags?: boolean
 }
 
@@ -425,4 +426,26 @@ export interface SortedPeersResponse extends TorrentPeersResponse {
 
 export interface WebSeed {
   url: string
+}
+
+export type DiscScanStatus = "pending" | "scanning" | "completed" | "failed" | "canceled"
+
+// DiscScanRun mirrors models.DiscScanRun: one queued or running BDInfo job on
+// one Disc, and after completion its cached Disc report.
+export interface DiscScanRun {
+  id: number
+  instanceId: number
+  torrentHash: string
+  discPath: string
+  resolvedPath: string
+  status: DiscScanStatus
+  errorMessage?: string
+  processedBytes: number
+  totalBytes: number
+  queuePosition?: number
+  quickSummary?: string
+  forumsBlock?: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
 }

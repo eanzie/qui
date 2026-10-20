@@ -5,8 +5,6 @@ package automations
 
 import (
 	"math"
-	"net"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -28,11 +26,11 @@ const maxConditionDepth = 20
 // to avoid surprising matches on short names.
 const minContainsNameLength = 10
 
-// categoryEntry stores torrent info for category-based lookups.
-type categoryEntry struct {
+// CategoryEntry stores torrent info for category-based lookups.
+type CategoryEntry struct {
 	Hash           string // torrent hash for self-exclusion
 	Name           string // lowercased name (for EXISTS_IN exact match)
-	NormalizedName string // normalized name for CONTAINS_IN (separators → space)
+	NormalizedName string // normalizeName(Name) result, used for CONTAINS_IN matching
 }
 
 // FreeSpaceSourceState tracks free space projection state for a single source.
@@ -43,14 +41,20 @@ type FreeSpaceSourceState struct {
 	FreeSpace int64
 	// SpaceToClear is the cumulative disk space that will be freed by deletions.
 	SpaceToClear int64
-	// FilesToClear tracks cross-seed keys already counted to avoid double-counting.
-	FilesToClear map[crossSeedKey]struct{}
-	// HardlinkSignaturesToClear tracks hardlink signatures already counted.
-	HardlinkSignaturesToClear map[string]struct{}
+	// FilesToClear is non-nil while the rule projects freed space.
+	FilesToClear map[string]int64
+	// FileBytesToClear counts selected files by resolved path for ordinary file deletes.
+	FileBytesToClear map[string]int64
+	// CrossSeedHashesToClear tracks verified cross-seed members already counted.
+	CrossSeedHashesToClear map[string]struct{}
 }
 
 // EvalContext provides additional context for condition evaluation.
 type EvalContext struct {
+	// The deletion projection uses the same snapshot and hardlink index as execution.
+	torrentsByHash map[string]qbt.Torrent
+	hardlinkIndex  *HardlinkIndex
+
 	// UnregisteredSet contains hashes of unregistered torrents (from SyncManager health counts)
 	UnregisteredSet map[string]struct{}
 	// TrackerDownSet contains hashes of torrents whose trackers are down (from SyncManager health counts)
@@ -64,23 +68,30 @@ type EvalContext struct {
 	HardlinkCrossScopeByHash map[string]string
 	// HasMissingFilesByHash maps torrent hash to whether or not it has missing files on disk
 	HasMissingFilesByHash map[string]bool
-	// InstanceHasLocalAccess indicates whether the instance has local filesystem access
-	InstanceHasLocalAccess bool
+	// HasSkippedFilesByHash maps torrent hash to whether any file has priority 0 (Do not download)
+	HasSkippedFilesByHash map[string]bool
+	// InstanceCanRead gates the missing-files field.
+	InstanceCanRead bool
+	// InstanceHasTrustedIdentity gates the hardlink fields, hardlink grouping
+	// and includeHardlinks. Each of them can add torrents to a delete, so a
+	// remote instance, whose identity only its host asserts, never reads them
+	// as known.
+	InstanceHasTrustedIdentity bool
 	// FreeSpace is the free space on the instance's filesystem (current active source)
 	FreeSpace int64
 	// SpaceToClear is the amount of disk space that will be cleared by the "free space" condition (current active source)
 	SpaceToClear int64
-	// FilesToClear is a map of cross-seed keys to the amount of disk space that will be cleared by the "free space" condition, ensuring we don't double count cross-seeds (current active source)
-	FilesToClear map[crossSeedKey]struct{}
+	// FilesToClear is non-nil while the active rule projects freed space for the "free space" condition.
+	FilesToClear map[string]int64
+	// FileBytesToClear holds the active rule's selected file sizes by resolved path.
+	FileBytesToClear map[string]int64
+	// CrossSeedFilesByHash contains cycle-local file lists used to verify cross-seed groups.
+	CrossSeedFilesByHash map[string]qbt.TorrentFiles
+	// CrossSeedHashesToClear tracks verified cross-seed members already counted (current active source).
+	CrossSeedHashesToClear map[string]struct{}
 	// HardlinkSignatureByHash maps torrent hash to its hardlink signature (sorted file IDs joined with ";").
 	// Used for hardlink_signature grouping and grouped-condition evaluation.
 	HardlinkSignatureByHash map[string]string
-	// DeleteSafeHardlinkSignatureByHash maps torrent hash to its hardlink signature for torrents whose
-	// hardlinks stay fully inside qBittorrent. Used only by delete/include-hardlinks FREE_SPACE dedupe.
-	DeleteSafeHardlinkSignatureByHash map[string]string
-	// HardlinkSignaturesToClear tracks hardlink signatures already counted in space projection (current active source).
-	// Torrents with the same signature share physical files and should only be counted once.
-	HardlinkSignaturesToClear map[string]struct{}
 	// FreeSpaceStates maps rule keys to their projection state.
 	// Rule keys are "sourceKey|rule:<id>" where sourceKey is "qbt" or "path:/some/path".
 	// Each rule gets its own state to prevent interference between rules with different thresholds.
@@ -92,9 +103,9 @@ type EvalContext struct {
 	// Enables O(1) EXISTS_IN lookups while supporting self-exclusion.
 	CategoryIndex map[string]map[string]map[string]struct{}
 
-	// CategoryNames maps lowercased category → slice of categoryEntry.
+	// CategoryNames maps lowercased category → slice of CategoryEntry.
 	// Used for CONTAINS_IN iteration (stores pre-normalized names).
-	CategoryNames map[string][]categoryEntry
+	CategoryNames map[string][]CategoryEntry
 
 	// NowUnix is the current Unix timestamp, used for age field evaluation.
 	// If zero, time.Now().Unix() is used. Set this for deterministic tests.
@@ -108,7 +119,7 @@ type EvalContext struct {
 	CrossInstanceSeedingHashSet map[string]struct{}
 
 	// SameInstanceCrossSeedHashSet contains hashes of torrents that have a cross-seed
-	// (same content path, different hash) on the same instance.
+	// (same data, decided per file) on the same instance.
 	SameInstanceCrossSeedHashSet map[string]struct{}
 	// SameInstanceCrossSeedSeedingHashSet contains hashes of torrents that have a cross-seed
 	// seeding (Progress >= 1.0) on the same instance.
@@ -116,9 +127,29 @@ type EvalContext struct {
 	// SameInstanceCrossSeedTagsByHash maps a torrent hash to the raw Tags strings of
 	// its same-instance cross-seeds (self excluded). Built when rules use CROSS_SEED_TAGS.
 	SameInstanceCrossSeedTagsByHash map[string][]string
+	// SameInstanceContentByHash maps a torrent hash to the torrents on the same
+	// instance that share at least one file on disk with it (self excluded).
+	// Built when a delete, move, or category action groups cross-seeds;
+	// buildCrossSeedGroups reads it.
+	SameInstanceContentByHash map[string][]string
+	// SameInstanceCrossSeedUnknown and CrossInstanceUnknown hold the torrents
+	// whose cross-seed checks on that side are incomplete for this run.
+	// Only confirmed positive existence or seeding values remain known, so a
+	// rule that tests for "no cross-seed" cannot act on a read error.
+	SameInstanceCrossSeedUnknown map[string]struct{}
+	CrossInstanceUnknown         map[string]struct{}
+
+	// SeasonPackSet holds one seasonPackKey per single-season pack on this
+	// instance. Built when rules use SEASON_PACK_STATUS. Nil means not built:
+	// the status is unknown and never matches.
+	SeasonPackSet map[string]struct{}
+	// SeasonPackSetAnyInstance is the same over every active instance, for
+	// SEASON_PACK_STATUS_ANY_INSTANCE.
+	SeasonPackSetAnyInstance map[string]struct{}
 
 	// TrackerDisplayNameByDomain maps lowercase tracker domains to their display names.
-	// Used for UseTrackerAsTag with UseDisplayName option.
+	// Read by the TRACKER and TRACKERS conditions, and by UseTrackerAsTag with the
+	// UseDisplayName option.
 	TrackerDisplayNameByDomain map[string]string
 
 	// ReleaseParser caches parsed release metadata for RLS-derived fields.
@@ -143,9 +174,9 @@ var separatorReplacer = strings.NewReplacer(".", " ", "_", " ", "-", " ")
 // whitespaceCollapser collapses multiple spaces into one.
 var whitespaceCollapser = regexp.MustCompile(`\s+`)
 
-// normalizeName normalizes a torrent name for CONTAINS_IN comparison:
-// lowercase + replace . _ - with space + collapse whitespace.
+// Lowercase before Unicode folding for ẞ, and after for letters produced by decomposition.
 func normalizeName(s string) string {
+	s = stringutils.NormalizeUnicode(normalizeLower(s))
 	s = normalizeLower(s)
 	s = separatorReplacer.Replace(s)
 	s = whitespaceCollapser.ReplaceAllString(s, " ")
@@ -154,9 +185,9 @@ func normalizeName(s string) string {
 
 // BuildCategoryIndex builds the category lookup structures from a list of torrents.
 // Returns both the CategoryIndex (for O(1) EXISTS_IN) and CategoryNames (for CONTAINS_IN iteration).
-func BuildCategoryIndex(torrents []qbt.Torrent) (map[string]map[string]map[string]struct{}, map[string][]categoryEntry) {
+func BuildCategoryIndex(torrents []qbt.Torrent) (map[string]map[string]map[string]struct{}, map[string][]CategoryEntry) {
 	categoryIndex := make(map[string]map[string]map[string]struct{})
-	categoryNames := make(map[string][]categoryEntry)
+	categoryNames := make(map[string][]CategoryEntry)
 
 	for _, t := range torrents {
 		// Use lowercased + trimmed category as key (empty string is valid for uncategorized)
@@ -173,7 +204,7 @@ func BuildCategoryIndex(torrents []qbt.Torrent) (map[string]map[string]map[strin
 		categoryIndex[catKey][nameLower][t.Hash] = struct{}{}
 
 		// Build CategoryNames for CONTAINS_IN iteration
-		categoryNames[catKey] = append(categoryNames[catKey], categoryEntry{
+		categoryNames[catKey] = append(categoryNames[catKey], CategoryEntry{
 			Hash:           t.Hash,
 			Name:           nameLower,
 			NormalizedName: normalizeName(t.Name),
@@ -290,8 +321,15 @@ func evaluateTime(ctx *EvalContext) time.Time {
 // EvaluateConditionWithContext recursively evaluates a condition against a torrent with optional context.
 // Returns true if the torrent matches the condition.
 func EvaluateConditionWithContext(cond *RuleCondition, torrent qbt.Torrent, ctx *EvalContext, depth int) bool {
+	matched, known := evaluateCondition(cond, torrent, ctx, depth)
+	return known && matched
+}
+
+// evaluateCondition keeps unknown filesystem data separate from a known non-match.
+// Negation cannot turn unknown data into a match, including inside nested groups.
+func evaluateCondition(cond *RuleCondition, torrent qbt.Torrent, ctx *EvalContext, depth int) (matched, known bool) {
 	if cond == nil || depth > maxConditionDepth {
-		return false
+		return false, true
 	}
 
 	// Compile regex if needed, but skip for EXISTS_IN/CONTAINS_IN operators
@@ -304,12 +342,13 @@ func EvaluateConditionWithContext(cond *RuleCondition, torrent qbt.Torrent, ctx 
 					Str("field", string(cond.Field)).
 					Str("pattern", cond.Value).
 					Msg("automations: regex compilation failed")
-				return false
+				return false, true
 			}
 		}
 	}
 
 	var result bool
+	known = true
 
 	// Handle logical operators (AND/OR) with child conditions
 	if cond.IsGroup() {
@@ -318,8 +357,14 @@ func EvaluateConditionWithContext(cond *RuleCondition, torrent qbt.Torrent, ctx 
 			// OR: at least one child must match
 			result = false
 			for _, child := range cond.Conditions {
-				if EvaluateConditionWithContext(child, torrent, ctx, depth+1) {
+				childMatch, childKnown := evaluateCondition(child, torrent, ctx, depth+1)
+				if !childKnown {
+					known = false
+					continue
+				}
+				if childMatch {
 					result = true
+					known = true
 					break
 				}
 			}
@@ -327,15 +372,24 @@ func EvaluateConditionWithContext(cond *RuleCondition, torrent qbt.Torrent, ctx 
 			// AND: all children must match
 			result = true
 			for _, child := range cond.Conditions {
-				if !EvaluateConditionWithContext(child, torrent, ctx, depth+1) {
-					result = false
-					break
-				}
+				childMatch, childKnown := evaluateCondition(child, torrent, ctx, depth+1)
+				known = known && childKnown
+				result = result && childMatch
 			}
+		default:
+			// A group carrying a leaf operator has no children to combine.
+			result = false
 		}
 	} else {
 		// Leaf condition: evaluate against the torrent
+		if !conditionDataKnown(cond.Field, torrent.Hash, ctx) {
+			return false, false
+		}
 		result = evaluateLeaf(cond, torrent, ctx)
+	}
+
+	if !known {
+		return false, false
 	}
 
 	// Apply negation if specified
@@ -343,7 +397,13 @@ func EvaluateConditionWithContext(cond *RuleCondition, torrent qbt.Torrent, ctx 
 		result = !result
 	}
 
-	return result
+	return result, true
+}
+
+func (ctx *EvalContext) setFilesystemAccess(instance *models.Instance) {
+	capabilities := models.FilesystemCapabilitiesOf(instance)
+	ctx.InstanceCanRead = capabilities.Read
+	ctx.InstanceHasTrustedIdentity = capabilities.TrustedIdentity
 }
 
 // evaluateLeaf evaluates a leaf condition (not a group) against a torrent.
@@ -402,9 +462,7 @@ func evaluateLeaf(cond *RuleCondition, torrent qbt.Torrent, ctx *EvalContext) bo
 		return compareRlsYearIfSet(torrentRlsYear(torrent, ctx), cond)
 	case FieldState:
 		return compareState(torrent, cond, ctx)
-	case FieldTracker:
-		return compareTracker(torrent.Tracker, cond, ctx)
-	case FieldTrackers:
+	case FieldTracker, FieldTrackers:
 		return compareTrackers(torrent, cond, ctx)
 	case FieldTrackerStatus:
 		return compareTrackerStatuses(torrent, cond)
@@ -560,52 +618,23 @@ func evaluateLeaf(cond *RuleCondition, torrent qbt.Torrent, ctx *EvalContext) bo
 		return compareBool(isUnregistered, cond)
 
 	case FieldHardlinkScope:
-		// Instances without local filesystem access cannot detect hardlink scope.
-		// Return false so the condition doesn't match and rules won't trigger unintended actions.
-		// Note: Automations using HARDLINK_SCOPE are validated at creation time to require local access.
-		if ctx == nil || !ctx.InstanceHasLocalAccess {
-			return false
-		}
-		// If scope couldn't be computed for this torrent (files inaccessible, stat failures, etc.),
-		// treat as "unknown" and don't match any condition to prevent unintended rule triggers.
-		if ctx.HardlinkScopeByHash == nil {
-			return false
-		}
-		scope, ok := ctx.HardlinkScopeByHash[torrent.Hash]
-		if !ok {
-			return false // Unknown scope - don't match
-		}
-		return compareHardlinkScope(scope, cond)
+		return compareHardlinkScope(ctx.HardlinkScopeByHash[torrent.Hash], cond)
 
 	case FieldHardlinkScopeCross:
-		if ctx == nil || !ctx.InstanceHasLocalAccess {
-			return false
-		}
-		if ctx.HardlinkCrossScopeByHash == nil {
-			return false
-		}
-		scope, ok := ctx.HardlinkCrossScopeByHash[torrent.Hash]
-		if !ok {
-			return false
-		}
-		return compareHardlinkScope(scope, cond)
+		return compareHardlinkScope(ctx.HardlinkCrossScopeByHash[torrent.Hash], cond)
 
 	case FieldHasMissingFiles:
-		// Instances without local filesystem access cannot detect missing files.
-		// Return false so the condition doesn't match and rules won't trigger unintended actions.
-		if ctx == nil || !ctx.InstanceHasLocalAccess {
+		return compareBool(ctx.HasMissingFilesByHash[torrent.Hash], cond)
+
+	case FieldHasSkippedFiles:
+		if ctx == nil {
 			return false
 		}
-		// If missing files couldn't be computed for this torrent (incomplete, etc.),
-		// treat as "unknown" and don't match any condition to prevent unintended rule triggers.
-		if ctx.HasMissingFilesByHash == nil {
-			return false
-		}
-		hasMissing, ok := ctx.HasMissingFilesByHash[torrent.Hash]
+		hasSkipped, ok := ctx.HasSkippedFilesByHash[torrent.Hash]
 		if !ok {
-			return false // Unknown state - don't match
+			return false // Files not fetched - don't match
 		}
-		return compareBool(hasMissing, cond)
+		return compareBool(hasSkipped, cond)
 
 	case FieldIsGrouped:
 		grouped := false
@@ -654,6 +683,11 @@ func evaluateLeaf(cond *RuleCondition, torrent qbt.Torrent, ctx *EvalContext) bo
 			parts = append(parts, ctx.SameInstanceCrossSeedTagsByHash[torrent.Hash]...)
 		}
 		return compareTags(strings.Join(parts, ","), cond)
+
+	case FieldSeasonPackStatus:
+		return compareString(seasonPackStatus(parsedTorrentRelease(torrent, ctx), ctx.SeasonPackSet), cond)
+	case FieldSeasonPackStatusAnyInstance:
+		return compareString(seasonPackStatus(parsedTorrentRelease(torrent, ctx), ctx.SeasonPackSetAnyInstance), cond)
 
 	default:
 		return false
@@ -812,10 +846,10 @@ func compareString(value string, cond *RuleCondition) bool {
 	}
 }
 
-func compareTracker(trackerURL string, cond *RuleCondition, ctx *EvalContext) bool {
-	return compareStringCandidates(trackerCandidates(trackerURL, ctx), cond)
-}
-
+// compareTrackers matches TRACKER and TRACKERS against every tracker the torrent
+// announces to. The qBittorrent tracker field holds the last tracker that answered,
+// so it can name a tracker that is down now. When no tracker answered yet, the field
+// is empty before qBittorrent 5.1 and holds the first tracker in the list from 5.1.
 func compareTrackers(torrent qbt.Torrent, cond *RuleCondition, ctx *EvalContext) bool {
 	candidates := make([]string, 0, len(torrent.Trackers)*3+3)
 	candidates = append(candidates, trackerCandidates(torrent.Tracker, ctx)...)
@@ -925,7 +959,16 @@ func compareTrackerMessage(message string, cond *RuleCondition) bool {
 func trackerCandidates(trackerURL string, ctx *EvalContext) []string {
 	// Candidates: raw URL, extracted domain, optional customization display name.
 	raw := strings.TrimSpace(trackerURL)
-	domain := extractTrackerDomain(raw)
+	// DHT/PeX/LSD are peer-discovery mechanisms, not trackers. qBittorrent reports
+	// them both as entries and as the primary tracker, and they would otherwise match
+	// a "contains dht" query on nearly every public torrent.
+	if qbittorrent.IsPseudoTrackerLabel(raw) {
+		return nil
+	}
+	domain := qbittorrent.ExtractDomainFromURL(raw)
+	if domain == "Unknown" {
+		domain = ""
+	}
 	displayName := ""
 	if ctx != nil && ctx.TrackerDisplayNameByDomain != nil && domain != "" {
 		if name, ok := ctx.TrackerDisplayNameByDomain[strings.ToLower(domain)]; ok {
@@ -994,62 +1037,8 @@ func compareStringCandidates(candidates []string, cond *RuleCondition) bool {
 	}
 
 	return slices.ContainsFunc(uniq, func(c string) bool {
-		if compareString(c, cond) {
-			return true
-		}
-		return false
+		return compareString(c, cond)
 	})
-}
-
-func extractTrackerDomain(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-
-	// URL parsing with scheme (http/https/udp/etc).
-	if u, err := url.Parse(raw); err == nil {
-		if h := u.Hostname(); h != "" {
-			return normalizeLower(h)
-		}
-	}
-
-	// Scheme-less input (tracker.example.com/announce).
-	if !strings.Contains(raw, "://") {
-		if u, err := url.Parse("//" + raw); err == nil {
-			if h := u.Hostname(); h != "" {
-				return normalizeLower(h)
-			}
-		}
-	}
-
-	// Manual fallback: host[:port][/path]
-	candidate := raw
-	if idx := strings.IndexAny(candidate, "/?#"); idx != -1 {
-		candidate = candidate[:idx]
-	}
-	candidate = strings.TrimPrefix(candidate, "//")
-	candidate = strings.TrimSpace(candidate)
-	if candidate == "" {
-		return ""
-	}
-
-	// Try to split host:port (IPv6 requires brackets for SplitHostPort).
-	if host, _, err := net.SplitHostPort(candidate); err == nil {
-		return normalizeLower(strings.Trim(host, "[]"))
-	}
-
-	// If it's a plain IP (including IPv6 without port), keep it.
-	if ip := net.ParseIP(candidate); ip != nil && strings.Contains(candidate, ":") {
-		return normalizeLower(candidate)
-	}
-
-	// Strip :port for hostnames/IPv4.
-	if idx := strings.Index(candidate, ":"); idx != -1 {
-		candidate = candidate[:idx]
-	}
-	candidate = strings.Trim(candidate, "[]")
-	return normalizeLowerTrim(candidate)
 }
 
 // compareTags compares tags against the condition, treating tags as a set.
@@ -1122,13 +1111,23 @@ func compareInt64(value int64, cond *RuleCondition) bool {
 	case OperatorLessThanOrEqual:
 		return value <= condValue
 	case OperatorBetween:
-		if cond.MinValue == nil || cond.MaxValue == nil {
-			return false
-		}
-		return float64(value) >= *cond.MinValue && float64(value) <= *cond.MaxValue
+		return matchesBetween(float64(value), cond)
 	default:
 		return false
 	}
+}
+
+// matchesBetween reports whether value falls inside the condition's BETWEEN range.
+// A reversed range wraps on a clock field and stops before the maximum, so hour 20
+// to 6 is 20:00 to 05:59; on any other field a reversed range stays empty.
+func matchesBetween(value float64, cond *RuleCondition) bool {
+	if cond.MinValue == nil || cond.MaxValue == nil {
+		return false
+	}
+	if *cond.MinValue > *cond.MaxValue && cond.Field.WrapsBetween() {
+		return value >= *cond.MinValue || value < *cond.MaxValue
+	}
+	return value >= *cond.MinValue && value <= *cond.MaxValue
 }
 
 // compareFloat64 compares a float64 value against the condition.
@@ -1154,10 +1153,7 @@ func compareFloat64(value float64, cond *RuleCondition) bool {
 	case OperatorLessThanOrEqual:
 		return value <= condValue
 	case OperatorBetween:
-		if cond.MinValue == nil || cond.MaxValue == nil {
-			return false
-		}
-		return value >= *cond.MinValue && value <= *cond.MaxValue
+		return matchesBetween(value, cond)
 	default:
 		return false
 	}
@@ -1317,7 +1313,8 @@ func (ctx *EvalContext) LoadFreeSpaceSourceState(sourceKey string) {
 		ctx.FreeSpace = math.MaxInt64
 		ctx.SpaceToClear = 0
 		ctx.FilesToClear = nil
-		ctx.HardlinkSignaturesToClear = nil
+		ctx.FileBytesToClear = nil
+		ctx.CrossSeedHashesToClear = nil
 		ctx.ActiveFreeSpaceSource = ""
 		return
 	}
@@ -1325,7 +1322,8 @@ func (ctx *EvalContext) LoadFreeSpaceSourceState(sourceKey string) {
 	ctx.FreeSpace = state.FreeSpace
 	ctx.SpaceToClear = state.SpaceToClear
 	ctx.FilesToClear = state.FilesToClear
-	ctx.HardlinkSignaturesToClear = state.HardlinkSignaturesToClear
+	ctx.FileBytesToClear = state.FileBytesToClear
+	ctx.CrossSeedHashesToClear = state.CrossSeedHashesToClear
 	ctx.ActiveFreeSpaceSource = sourceKey
 }
 
@@ -1343,5 +1341,6 @@ func (ctx *EvalContext) PersistFreeSpaceSourceState() {
 
 	state.SpaceToClear = ctx.SpaceToClear
 	state.FilesToClear = ctx.FilesToClear
-	state.HardlinkSignaturesToClear = ctx.HardlinkSignaturesToClear
+	state.FileBytesToClear = ctx.FileBytesToClear
+	state.CrossSeedHashesToClear = ctx.CrossSeedHashesToClear
 }

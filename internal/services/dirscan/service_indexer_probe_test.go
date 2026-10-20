@@ -64,19 +64,11 @@ func (s *failingDirScanIndexerStore) RecordLatency(context.Context, int, string,
 	return nil
 }
 
+func (s *failingDirScanIndexerStore) CleanupOldLatency(context.Context, time.Duration) (int64, error) {
+	return 0, nil
+}
+
 func (s *failingDirScanIndexerStore) RecordError(context.Context, int, string, string) error {
-	return nil
-}
-
-func (s *failingDirScanIndexerStore) ListRateLimitCooldowns(context.Context) ([]models.TorznabIndexerCooldown, error) {
-	return []models.TorznabIndexerCooldown{}, nil
-}
-
-func (s *failingDirScanIndexerStore) UpsertRateLimitCooldown(context.Context, int, time.Time, time.Duration, string) error {
-	return nil
-}
-
-func (s *failingDirScanIndexerStore) DeleteRateLimitCooldown(context.Context, int) error {
 	return nil
 }
 
@@ -116,7 +108,7 @@ func TestService_ProcessSearchee_NoEnabledIndexers_StaysPending(t *testing.T) {
 
 	// The searchee must not error and must not count as searched: with no known
 	// enabled indexers, a no_match stamp here would be permanent and wrong.
-	matches, outcome := svc.processSearchee(ctx, dir, searchee, settings, matcher, 1, nil, &l)
+	matches, outcome := svc.processSearchee(ctx, dir, searchee, settings, matcher, 1, nil, nil, &l)
 	require.Nil(t, matches)
 	require.False(t, outcome.searched)
 	require.False(t, outcome.searchError)

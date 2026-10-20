@@ -7,8 +7,11 @@ package automations
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/internal/fsops/local"
 	"github.com/autobrr/qui/internal/models"
 )
 
@@ -58,22 +61,28 @@ func TestResolveFreeSpaceSource(t *testing.T) {
 	}
 }
 
-func TestGetLocalFreeSpaceBytes(t *testing.T) {
-	// Test with a known-existing directory (temp dir should always exist)
+func localFreeSpaceService() *Service {
+	row := &models.Instance{ID: 1, HasLocalFilesystemAccess: true}
+	return &Service{backendPool: fsops.NewPool(rowGetter{row: row}, local.NewBackend())}
+}
+
+func TestFreeSpaceBytes_PathViaBackend(t *testing.T) {
 	tmpDir := os.TempDir()
-	bytes, err := getLocalFreeSpaceBytes(tmpDir)
+	src := &models.FreeSpaceSource{Type: models.FreeSpaceSourcePath, Path: tmpDir}
+	bytes, err := localFreeSpaceService().freeSpaceBytes(t.Context(), &models.Instance{ID: 1}, src)
 	if err != nil {
-		t.Fatalf("getLocalFreeSpaceBytes(%q) returned error: %v", tmpDir, err)
+		t.Fatalf("freeSpaceBytes(%q) returned error: %v", tmpDir, err)
 	}
 	if bytes <= 0 {
-		t.Errorf("getLocalFreeSpaceBytes(%q) returned %d, want > 0", tmpDir, bytes)
+		t.Errorf("freeSpaceBytes(%q) returned %d, want > 0", tmpDir, bytes)
 	}
 }
 
-func TestGetLocalFreeSpaceBytes_InvalidPath(t *testing.T) {
-	_, err := getLocalFreeSpaceBytes("/nonexistent/path/that/should/not/exist")
+func TestFreeSpaceBytes_PathInvalidPath(t *testing.T) {
+	src := &models.FreeSpaceSource{Type: models.FreeSpaceSourcePath, Path: filepath.Join(t.TempDir(), "nonexistent")}
+	_, err := localFreeSpaceService().freeSpaceBytes(t.Context(), &models.Instance{ID: 1}, src)
 	if err == nil {
-		t.Error("getLocalFreeSpaceBytes with invalid path should return error")
+		t.Error("freeSpaceBytes with invalid path should return error")
 	}
 }
 

@@ -2,7 +2,7 @@
 
 # Build stage for Go binary
 # Use BUILDPLATFORM to build on native architecture (fast)
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.22 AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine3.23 AS go-builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
@@ -12,7 +12,6 @@ ARG VERSION=dev
 ARG BUILDTIME
 ARG REVISION
 ARG BUILDER
-ARG POLAR_ORG_ID=""
 
 # Cross-compilation arguments from Docker BuildKit
 ARG TARGETOS
@@ -47,8 +46,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="\
     -s -w \
     -X github.com/autobrr/qui/internal/buildinfo.Version=${VERSION} \
     -X github.com/autobrr/qui/internal/buildinfo.Date=${BUILDTIME} \
-    -X github.com/autobrr/qui/internal/buildinfo.Commit=${REVISION} \
-    -X main.PolarOrgID=${POLAR_ORG_ID}" \
+    -X github.com/autobrr/qui/internal/buildinfo.Commit=${REVISION}" \
     -o qui ./cmd/qui
 
 # Final stage
@@ -68,15 +66,20 @@ ENV HOME="/config" \
 # curl and bash stay for the External Programs feature and existing container workflows.
 # ca-certificates: TLS connections to qBittorrent, trackers, update checks
 # tzdata: timezone display in logs and UI
-RUN apk --no-cache add ca-certificates curl tzdata bash
+# su-exec: privilege drop in the entrypoint when PUID/PGID are set
+RUN apk --no-cache add ca-certificates curl tzdata bash su-exec
 
 WORKDIR /config
 
 # Declare volume for persistent data
 VOLUME /config
 
-# Copy binary from build stage
+# Copy binary and entrypoint
 COPY --from=go-builder /app/qui /usr/local/bin/
+COPY distrib/docker/entrypoint.sh /entrypoint.sh
+
+# Verify Compose user mode still works when shared PUID/PGID variables are present.
+RUN PUID=99 PGID=100 su-exec 99:100 /entrypoint.sh --version
 
 EXPOSE 7476
 
@@ -84,5 +87,5 @@ EXPOSE 7476
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:7476/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/qui"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve"]

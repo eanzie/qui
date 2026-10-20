@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest"
 
 import { APIError, api } from "@/lib/api"
 import { server } from "@/test/msw/server"
+import "@/i18n"
 
 // Contract tests for the lib/api.ts "export" method group (issue #1931).
 //
@@ -52,6 +53,35 @@ describe("api.exportTorrent — request serialization", () => {
     expect(req.headers.get("Content-Type")).toBeNull()
     // ssoSafeFetch injects the XHR marker header.
     expect(req.headers.get("X-Requested-With")).toBe("XMLHttpRequest")
+  })
+})
+
+describe("api.exportTorrentsArchive", () => {
+  it("posts archive targets and returns the ZIP filename", async () => {
+    let captured: Request | undefined
+    const targets = [{
+      instanceId: 7,
+      instanceName: "Home",
+      hash: "deadbeef",
+      category: "Movies",
+    }]
+
+    server.use(
+      http.post("*/api/torrents/export", ({ request }) => {
+        captured = request.clone()
+        return new HttpResponse("zipdata", {
+          status: 200,
+          headers: { "Content-Disposition": "attachment; filename=qui-torrents.zip" },
+        })
+      })
+    )
+
+    const result = await api.exportTorrentsArchive(targets)
+
+    expect(captured?.method).toBe("POST")
+    expect(await captured?.json()).toEqual({ targets })
+    expect(await result.blob.text()).toBe("zipdata")
+    expect(result.filename).toBe("qui-torrents.zip")
   })
 })
 

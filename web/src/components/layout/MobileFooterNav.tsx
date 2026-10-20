@@ -23,18 +23,21 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { isThemePremium, themes } from "@/config/themes"
+import { getThemeById, isThemePremium, themes } from "@/config/themes"
 import { useMobileScroll } from "@/contexts/MobileScrollContext"
 import { useTorrentSelection } from "@/contexts/TorrentSelectionContext"
 import { useAuth } from "@/hooks/useAuth"
+import { useIsMobile } from "@/hooks/useMediaQuery"
 import { usePersistedCompactViewState } from "@/hooks/usePersistedCompactViewState"
 import { useCrossSeedInstanceState } from "@/hooks/useCrossSeedInstanceState"
-import { useHasPremiumAccess } from "@/hooks/useLicense"
+import { useCustomThemes } from "@/hooks/useCustomThemes"
 import { usePersistedUnifiedInstanceFilter } from "@/hooks/usePersistedUnifiedInstanceFilter"
 import { api } from "@/lib/api"
 import { getAppVersion } from "@/lib/build-info"
+import { demoLinks, isDemo } from "@/lib/demo"
 import { changeLanguage, languageNames, supportedLanguages } from "@/i18n"
-import { canSwitchToPremiumTheme } from "@/lib/license-entitlement"
+import { useBuiltinThemes } from "@/hooks/useBuiltinThemes"
+import { buildThemeCatalog } from "@/lib/theme-catalog"
 import { normalizeUnifiedInstanceIds } from "@/lib/instances"
 import { cn } from "@/lib/utils"
 import {
@@ -78,10 +81,6 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
-
-
-const MOBILE_VIEW_MODES = ["normal", "compact", "ultra-compact"] as const
-
 // Custom hook for theme change detection
 const useThemeChange = () => {
   const [currentMode, setCurrentMode] = useState<ThemeMode>(getCurrentThemeMode())
@@ -115,10 +114,13 @@ export function MobileFooterNav() {
   const { logout } = useAuth()
   const { isSelectionMode } = useTorrentSelection()
   const { isFooterVisible } = useMobileScroll()
-  const { viewMode, setViewMode } = usePersistedCompactViewState("compact", MOBILE_VIEW_MODES)
+  const isMobile = useIsMobile()
+  const { viewMode, setViewMode, viewModes } = usePersistedCompactViewState(isMobile ? "mobile" : "desktop")
   const { currentMode, currentTheme } = useThemeChange()
-  const { hasPremiumAccess, isLoading, isError } = useHasPremiumAccess()
-  const canSwitchPremium = canSwitchToPremiumTheme({ hasPremiumAccess, isLoading, isError })
+  const { customThemes } = useCustomThemes()
+  // Subscribe so the list re-renders when the async theme registry lands.
+  useBuiltinThemes()
+  const themeCatalog = buildThemeCatalog(themes, customThemes)
   const [showThemeDialog, setShowThemeDialog] = useState(false)
   const appVersion = getAppVersion()
 
@@ -134,6 +136,16 @@ export function MobileFooterNav() {
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   })
+  const updateItemClass = "flex items-center gap-2 text-green-600 dark:text-green-400 focus:text-green-600 dark:focus:text-green-400"
+  const updateItemLabel = updateInfo && (
+    <>
+      <Download className="h-4 w-4" />
+      <div className="flex flex-col">
+        <span className="font-medium">{t("mobileNav.updateAvailable")}</span>
+        <span className="text-[10px] opacity-80">{t("mobileNav.updateVersion", { version: updateInfo.tag_name })}</span>
+      </div>
+    </>
+  )
 
   const activeInstances = useMemo(() => {
     if (!instances) {
@@ -194,42 +206,30 @@ export function MobileFooterNav() {
   }, [t])
 
   const handleThemeSelect = useCallback(async (themeId: string) => {
-    const isPremium = isThemePremium(themeId)
-    if (isPremium && !canSwitchPremium) {
-      if (isError) {
-        toast.error(t("themeToggle.unableToVerifyLicense"), {
-          description: t("themeToggle.licenseCheckFailed"),
-        })
-      } else {
-        toast.error(t("themeToggle.premiumThemeError"))
-      }
+    // The server is the authority: a premium theme without a license arrives
+    // as a locked stub with no CSS, so the locked flag is the gate.
+    if (getThemeById(themeId)?.locked) {
+      toast.error(t("themeToggle.premiumThemeError"))
       return
     }
 
     await setTheme(themeId)
-    const theme = themes.find(th => th.id === themeId)
+    const theme = getThemeById(themeId)
     toast.success(t("themeToggle.switchedToTheme", { theme: theme?.name || themeId }))
-  }, [canSwitchPremium, isError, t])
+  }, [t])
 
   const handleVariationSelect = useCallback(async (themeId: string, variationId: string): Promise<boolean> => {
-    const isPremium = isThemePremium(themeId)
-    if (isPremium && !canSwitchPremium) {
-      if (isError) {
-        toast.error(t("themeToggle.unableToVerifyLicense"), {
-          description: t("themeToggle.licenseCheckFailed"),
-        })
-      } else {
-        toast.error(t("themeToggle.premiumThemeError"))
-      }
+    if (getThemeById(themeId)?.locked) {
+      toast.error(t("themeToggle.premiumThemeError"))
       return false
     }
 
     await setTheme(themeId)
     await setThemeVariation(variationId)
-    const theme = themes.find(th => th.id === themeId)
+    const theme = getThemeById(themeId)
     toast.success(t("themeToggle.switchedToThemeVariation", { theme: theme?.name || themeId, variation: variationId }))
     return true
-  }, [canSwitchPremium, isError, t])
+  }, [t])
 
   if (isSelectionMode) {
     return null
@@ -247,7 +247,7 @@ export function MobileFooterNav() {
     >
       <div className="flex items-center justify-around h-16">
         {/* Dashboard */}
-        <Link
+        {!isDemo && <Link
           to="/dashboard"
           className={cn(
             "flex flex-col items-center justify-center gap-1 px-3 py-2 text-xs font-medium transition-colors min-w-0 flex-1",
@@ -259,7 +259,7 @@ export function MobileFooterNav() {
             location.pathname === "/dashboard" && "text-primary"
           )} />
           <span className="truncate">{t("mobileNav.dashboard")}</span>
-        </Link>
+        </Link>}
 
         {/* Clients access */}
         {hasClientScopeEntry ? (
@@ -427,100 +427,94 @@ export function MobileFooterNav() {
             {updateInfo && (
               <>
                 <DropdownMenuItem asChild>
-                  <a
-                    href={updateInfo.html_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-green-600 dark:text-green-400 focus:text-green-600 dark:focus:text-green-400"
-                  >
-                    <Download className="h-4 w-4" />
-                    <div className="flex flex-col">
-                      <span className="font-medium">{t("mobileNav.updateAvailable")}</span>
-                      <span className="text-[10px] opacity-80">{t("mobileNav.updateVersion", { version: updateInfo.tag_name })}</span>
-                    </div>
-                  </a>
+                  {/* Settings holds the Install update button. */}
+                  <Link to="/settings" search={{ tab: "application", modal: "install-update" }} className={updateItemClass}>{updateItemLabel}</Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
             )}
-            <DropdownMenuItem asChild>
-              <Link
-                to="/search"
-                className="flex items-center gap-2"
-              >
-                <SearchIcon className="h-4 w-4" />
-                {t("nav.search")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/cross-seed"
-                params={{}}
-                className="flex items-center gap-2"
-              >
-                <GitBranch className="h-4 w-4" />
-                {t("nav.crossSeed")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/automations"
-                className="flex items-center gap-2"
-              >
-                <Zap className="h-4 w-4" />
-                {t("nav.automations")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/backups"
-                className="flex items-center gap-2"
-              >
-                <Archive className="h-4 w-4" />
-                {t("nav.instanceBackups")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/rss"
-                className="flex items-center gap-2"
-              >
-                <Rss className="h-4 w-4" />
-                {t("nav.rss")}
-              </Link>
-            </DropdownMenuItem>
+            {!isDemo && (
+              <>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/search"
+                    className="flex items-center gap-2"
+                  >
+                    <SearchIcon className="h-4 w-4" />
+                    {t("nav.search")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/cross-seed"
+                    params={{}}
+                    className="flex items-center gap-2"
+                  >
+                    <GitBranch className="h-4 w-4" />
+                    {t("nav.crossSeed")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/automations"
+                    className="flex items-center gap-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    {t("nav.automations")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/backups"
+                    className="flex items-center gap-2"
+                  >
+                    <Archive className="h-4 w-4" />
+                    {t("nav.instanceBackups")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/rss"
+                    className="flex items-center gap-2"
+                  >
+                    <Rss className="h-4 w-4" />
+                    {t("nav.rss")}
+                  </Link>
+                </DropdownMenuItem>
 
-            <DropdownMenuSeparator />
+                <DropdownMenuSeparator />
 
-            <DropdownMenuItem asChild>
-              <Link
-                to="/settings"
-                className="flex items-center gap-2"
-              >
-                <Settings className="h-4 w-4" />
-                {t("nav.generalSettings")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/settings"
-                search={{ tab: "instances" }}
-                className="flex items-center gap-2"
-              >
-                <Server className="h-4 w-4" />
-                {t("nav.manageInstances")}
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link
-                to="/settings"
-                search={{ tab: "logs" }}
-                className="flex items-center gap-2"
-              >
-                <FileText className="h-4 w-4" />
-                {t("nav.logs")}
-              </Link>
-            </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/settings"
+                    className="flex items-center gap-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    {t("nav.generalSettings")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/settings"
+                    search={{ tab: "instances" }}
+                    className="flex items-center gap-2"
+                  >
+                    <Server className="h-4 w-4" />
+                    {t("nav.manageInstances")}
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/settings"
+                    search={{ tab: "logs" }}
+                    className="flex items-center gap-2"
+                  >
+                    <FileText className="h-4 w-4" />
+                    {t("nav.logs")}
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onClick={() => setShowThemeDialog(true)}>
               <Palette className="h-4 w-4" />
               {t("nav.appearance")}
@@ -565,14 +559,26 @@ export function MobileFooterNav() {
                 ))}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => logout()}
-              className="text-destructive focus:text-destructive flex items-center gap-2"
-            >
-              <LogOut className="h-4 w-4 text-destructive" />
-              {t("mobileNav.logout")}
-            </DropdownMenuItem>
+            {isDemo && demoLinks.map((link) => (
+              <DropdownMenuItem asChild key={link.href}>
+                <a href={link.href} target="_top" className="flex items-center gap-2">
+                  <link.icon className="h-4 w-4" />
+                  {t(link.labelKey)}
+                </a>
+              </DropdownMenuItem>
+            ))}
+            {!isDemo && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => logout()}
+                  className="text-destructive focus:text-destructive flex items-center gap-2"
+                >
+                  <LogOut className="h-4 w-4 text-destructive" />
+                  {t("mobileNav.logout")}
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -638,7 +644,7 @@ export function MobileFooterNav() {
             <div>
               <div className="text-sm font-medium mb-2">{tTorrents("filterSidebar.viewMode")}</div>
               <div className="grid grid-cols-3 gap-1">
-                {MOBILE_VIEW_MODES.map((mode) => (
+                {viewModes.map((mode) => (
                   <button
                     key={mode}
                     onClick={() => setViewMode(mode)}
@@ -647,7 +653,9 @@ export function MobileFooterNav() {
                       viewMode === mode ? "bg-accent" : "hover:bg-accent/50"
                     )}
                   >
-                    {mode === "normal"? tTorrents("filterSidebar.viewModeNormal"): mode === "compact"? tTorrents("filterSidebar.viewModeCompact"): tTorrents("filterSidebar.viewModeUltra")}
+                    {isMobile
+                      ? mode === "normal"? tTorrents("filterSidebar.viewModeNormal"): mode === "compact"? tTorrents("filterSidebar.viewModeCompact"): tTorrents("filterSidebar.viewModeUltra")
+                      : mode === "normal"? tTorrents("statusBar.viewModes.table"): mode === "dense"? tTorrents("statusBar.viewModes.dense"): tTorrents("statusBar.viewModes.stacked")}
                   </button>
                 ))}
               </div>
@@ -657,92 +665,85 @@ export function MobileFooterNav() {
             <div>
               <div className="text-sm font-medium mb-2">{t("themeToggle.theme")}</div>
               <div className="space-y-1">
-                {themes
-                  .sort((a, b) => {
-                    const aIsPremium = isThemePremium(a.id)
-                    const bIsPremium = isThemePremium(b.id)
-                    if (aIsPremium === bIsPremium) return 0
-                    return aIsPremium ? 1 : -1
-                  })
-                  .map((theme) => {
-                    const isPremium = isThemePremium(theme.id)
-                    const isLocked = isPremium && !hasPremiumAccess
-                    const colors = getThemeColors(theme)
-                    const currentVariation = getThemeVariation(theme.id)
+                {themeCatalog.map((theme) => {
+                  const isPremium = isThemePremium(theme.id)
+                  const isLocked = !!theme.locked
+                  const colors = getThemeColors(theme)
+                  const currentVariation = getThemeVariation(theme.id)
 
-                    return (
-                      <button
-                        key={theme.id}
-                        onClick={() => {
-                          if (!isLocked) {
-                            handleThemeSelect(theme.id)
-                            setShowThemeDialog(false)
-                          }
-                        }}
-                        disabled={isLocked}
-                        className={cn(
-                          "w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-                          currentTheme.id === theme.id ? "bg-accent" : "hover:bg-accent/50",
-                          isLocked && "opacity-60 cursor-not-allowed"
-                        )}
-                      >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className="h-4 w-4 rounded-full ring-1 ring-black/10 dark:ring-white/10 flex-shrink-0"
-                              style={{
-                                backgroundColor: colors.primary,
-                                backgroundImage: "none",
-                                background: colors.primary + " !important",
-                              }}
-                            />
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className="truncate">{theme.name}</span>
-                              {isPremium && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground font-medium flex-shrink-0">
-                                  {t("themeToggle.premium")}
-                                </span>
-                              )}
+                  return (
+                    <button
+                      key={theme.id}
+                      onClick={() => {
+                        if (!isLocked) {
+                          handleThemeSelect(theme.id)
+                          setShowThemeDialog(false)
+                        }
+                      }}
+                      disabled={isLocked}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                        currentTheme.id === theme.id ? "bg-accent" : "hover:bg-accent/50",
+                        isLocked && "opacity-60 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="h-4 w-4 rounded-full ring-1 ring-black/10 dark:ring-white/10 flex-shrink-0"
+                            style={{
+                              backgroundColor: colors.primary,
+                              backgroundImage: "none",
+                              background: colors.primary + " !important",
+                            }}
+                          />
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="truncate">{theme.name}</span>
+                            {isPremium && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground font-medium flex-shrink-0">
+                                {t("themeToggle.premium")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Variation pills */}
+                        {colors.variations && colors.variations.length > 0 && (
+                          <div className="flex items-center gap-2 pl-1.5 mt-2">
+                            <CornerDownRight className="h-4 w-4 text-muted-foreground" />
+                            <div className="flex gap-2">
+                              {colors.variations.map((variation) => {
+                                const isSelected = currentVariation === variation.id
+                                return (
+                                  <div
+                                    key={variation.id}
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      const success = await handleVariationSelect(theme.id, variation.id)
+                                      if (success) {
+                                        setShowThemeDialog(false)
+                                      }
+                                    }}
+                                    className={cn(
+                                      "w-8 h-8 rounded-full transition-all cursor-pointer",
+                                      isSelected? "ring-2 ring-black dark:ring-white": "ring-1 ring-black/10 dark:ring-white/10"
+                                    )}
+                                    style={{
+                                      backgroundColor: variation.color,
+                                      backgroundImage: "none",
+                                      background: variation.color + " !important",
+                                    }}
+                                  />
+                                )
+                              })}
                             </div>
                           </div>
-
-                          {/* Variation pills */}
-                          {colors.variations && colors.variations.length > 0 && (
-                            <div className="flex items-center gap-2 pl-1.5 mt-2">
-                              <CornerDownRight className="h-4 w-4 text-muted-foreground" />
-                              <div className="flex gap-2">
-                                {colors.variations.map((variation) => {
-                                  const isSelected = currentVariation === variation.id
-                                  return (
-                                    <div
-                                      key={variation.id}
-                                      onClick={async (e) => {
-                                        e.stopPropagation()
-                                        const success = await handleVariationSelect(theme.id, variation.id)
-                                        if (success) {
-                                          setShowThemeDialog(false)
-                                        }
-                                      }}
-                                      className={cn(
-                                        "w-8 h-8 rounded-full transition-all cursor-pointer",
-                                        isSelected? "ring-2 ring-black dark:ring-white": "ring-1 ring-black/10 dark:ring-white/10"
-                                      )}
-                                      style={{
-                                        backgroundColor: variation.color,
-                                        backgroundImage: "none",
-                                        background: variation.color + " !important",
-                                      }}
-                                    />
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        {currentTheme.id === theme.id && <Check className="h-4 w-4 flex-shrink-0 self-center" />}
-                      </button>
-                    )
-                  })}
+                        )}
+                      </div>
+                      {currentTheme.id === theme.id && <Check className="h-4 w-4 flex-shrink-0 self-center" />}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>

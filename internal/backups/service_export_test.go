@@ -229,7 +229,7 @@ func newExportTestService(t *testing.T, stub backupReader) (*Service, int) {
 		IncludeTags:       true,
 	}))
 
-	svc := NewService(store, stub, nil, Config{
+	svc := NewService(store, stub, Config{
 		WorkerCount:    1,
 		DataDir:        t.TempDir(),
 		ExportThrottle: time.Millisecond,
@@ -369,8 +369,8 @@ func TestExecuteBackupRunsExportsConcurrently(t *testing.T) {
 		})
 	}
 	stub := &rendezvousExportStub{
-		concurrentExportStub: concurrentExportStub{torrents: torrents},
-		ready:                make(chan struct{}),
+		torrents: torrents,
+		ready:    make(chan struct{}),
 	}
 	svc, instanceID := newExportTestService(t, stub)
 

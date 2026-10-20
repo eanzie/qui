@@ -1,6 +1,7 @@
 ---
-sidebar_position: 4
-title: Orphan Scan
+sidebar_position: 5
+title: Orphan scan for qBittorrent download folders
+sidebar_label: Orphan Scan
 description: Find and remove files not associated with any torrent.
 ---
 
@@ -9,36 +10,105 @@ import OrphanScanDefaultIgnores from "../_partials/_orphan-scan-default-ignores.
 
 # Orphan Scan
 
-Finds and removes files in your download directories that aren't associated with any torrent.
+Orphan scan finds and removes files in your download directories that no torrent references.
 
-## How It Works
+## How it works
 
-1. **Scan roots are determined dynamically** - qui scans all unique `SavePath` directories from your current torrents, not qBittorrent's default download directory
-2. Files not referenced by any torrent are flagged as orphans
-3. You preview the list before confirming deletion
-4. Empty directories are cleaned up after file deletion
+1. qui builds the scan roots from the save paths of your current torrents. It does not scan qBittorrent's default save path unless you turn on **Scan Default Save Path**.
+2. qui flags files that no torrent references as orphans.
+3. Before you confirm deletion, you preview the list.
+4. qui deletes the files, then removes the directories the preview listed.
 
 :::note
-qui normalizes Unicode paths to canonical NFC form during matching. This avoids false orphans when equivalent composed/decomposed names are reported differently. On normalization-sensitive filesystems, two byte-distinct canonical-equivalent names are treated as one logical path.
+When matching paths, qui normalizes Unicode paths to canonical NFC form. If the filesystem and qBittorrent report composed and decomposed forms of the same name, this normalization prevents false orphans. On normalization-sensitive filesystems, qui treats two byte-distinct canonical-equivalent names as one logical path.
 :::
 
 :::info
-If you have multiple **active** qBittorrent instances with `Has local filesystem access` enabled, and their torrent `SavePath` directories overlap, qui also protects files referenced by torrents from those other instances (even when scanning a single instance).
+If multiple **active** qBittorrent instances have **[Local Filesystem Access](./instance-settings.md#local-filesystem-access)** enabled and their torrent save paths overlap, qui also protects files that torrents from those other instances reference. qui applies this protection even when it scans a single instance.
 
-To do this safely, qui must be able to determine whether scan roots overlap. If any other local-access instance is unreachable/not ready, the scan fails to avoid false positives.
+To protect files safely, qui must determine whether the scan roots overlap. If any other local-access instance is unreachable or not ready, the scan fails to prevent false positives.
 :::
 
 :::warning
-**Disabled instances are not protected.** If you have a disabled instance with local filesystem access that shares save paths with an active instance, its files may be flagged as orphans. Enable the instance or ensure paths don't overlap before scanning.
+qui does not protect disabled instances. If a disabled instance with local filesystem access shares save paths with an active instance, qui can flag its files as orphans. Before you scan, enable the instance or make sure that the paths do not overlap.
 :::
 
 <LocalFilesystemDocker />
 
-## Important: Abandoned Directories
+## Directories no torrent points at
 
-Directories are only scanned if at least one torrent points to them. If you delete all torrents from a directory, that directory is no longer a scan root and any leftover files there won't be detected.
+By default, qui scans a directory only if at least one torrent points to it. If you delete all torrents from a directory, that directory stops being a scan root. qui does not detect leftover files there.
 
-**Example:** You have torrents in `/downloads/old-stuff/`. You delete all those torrents. Orphan scan no longer knows about `/downloads/old-stuff/` and won't clean it up.
+**Example:** You have torrents in `/downloads/old-stuff/`. If you delete all those torrents, orphan scan stops tracking `/downloads/old-stuff/` and does not clean it up.
+
+The same gap applies one level up. If your torrents all save to `/data/torrents/mydata/`, a stray `/data/torrents/test.txt` is never walked, because no torrent points at `/data/torrents/`.
+
+For a directory outside the default save path and outside each category path, keep one small torrent with its save path in that directory. Orphan scan then walks the directory and all its subdirectories. The save path must match the case of the directory name. On Linux, if the save path is `/data/mtv` and the directory is `/data/MTV`, qBittorrent makes a second, empty `mtv` directory and moves the torrent into it. The scan then walks the new directory and reports it as clean.
+
+## Scanning the default save path
+
+Turn on **Scan Default Save Path** to close that gap. qui reads the default save path from the instance's own qBittorrent settings and walks it as a scan root, including subdirectories that no torrent uses.
+
+Turn on **Including Category Paths** underneath it to also walk every category destination: the save path a category sets, or `default save path / category name` for a category that inherits it. This matters when a category points somewhere outside the default save path, which the first toggle alone would not reach. It is available only while **Scan Default Save Path** is on.
+
+Both are off by default. Turning them on widens what a scan can flag, so review the preview before you confirm a deletion.
+
+Everything else still applies inside the wider roots:
+
+- Files that torrents reference are protected, including torrents on other active instances with local filesystem access.
+- Ignore paths, the grace period, and max items per run all apply.
+- A save path missing from disk, such as an unmounted volume, is reported rather than treated as scanned, even when a wider root covers it.
+
+If qui cannot read the default save path or the category list from qBittorrent, or qBittorrent reports an empty or relative default save path, the run fails and names the cause. qui does not fall back to a narrower scan, because a narrower scan would report a clean result over a tree you asked it to check.
+
+:::note
+These paths come from qBittorrent, so they are paths as qBittorrent sees them. If qui runs in a different container, they must resolve to the same directories on the host that runs qui.
+:::
+
+## Abandoned directories
+
+Moves and deletions leave empty directories behind. qui removes the leftover folders of the deletes and moves it makes or proxies itself (see [Deleting and moving torrents](./torrent-management.md#deleting-and-moving-torrents)). Deletes made in the qBittorrent WebUI, by qBittorrent's share limits, or by a client that bypasses the proxy still leave them. Orphan scan reports files, so an empty directory is never flagged, and the tree fills up with them over time.
+
+Turn on **Delete Abandoned Directories** to include them. qui reports a directory when this run empties it: either it holds no files at any depth, or every file below it is an orphan the run is about to delete. Each one is listed in the preview alongside the orphan files, marked with a directory icon and no size.
+
+A single file that survives the run keeps its whole chain of parent directories. That covers a file a torrent owns, a file still inside the grace period, a file under your ignore paths, and a file the max-items cap pushed out of this run.
+
+These are never reported, even when empty:
+
+- A scan root itself.
+- A category destination, or any directory above one. qBittorrent will save into it again. qui works out a category's directory the same way qBittorrent does, including one that inherits from a parent category.
+- Anything under your ignore paths.
+- A directory changed more recently than the grace period.
+- A directory holding anything qui did not itself list for removal, such as an ignored subdirectory or a symlink.
+
+Directories are removed after the files, so a tree this run empties goes in one pass. qui removes only the directories the preview listed, so the directory count never exceeds what you saw. Anything that changed between the preview and your confirmation is skipped rather than removed: a directory that still holds a file the run kept, one that gained content, or one that has since become a scan root or a category destination is reported as skipped, not failed.
+
+## Partial scans
+
+A directory can disappear while a scan runs, for example when an automation removes a torrent and its files.
+If at least one scan path completes but another is unavailable, qui reports **Partial scan** and keeps the results from completed paths.
+This also applies when qui skips paths because qBittorrent temporarily cannot provide torrent file lists.
+This result applies even when qui finds no orphan files.
+
+The run details and deletion preview show the warning with the affected paths and reasons.
+The selected scan paths list includes paths that failed during scanning.
+Paths skipped before scanning appear in the warning.
+
+Partial scans skip automatic cleanup.
+You can review the warning and delete the listed orphan files manually.
+Before deletion, qui refreshes torrent ownership data and applies its normal deletion checks.
+After successful manual deletion, the run keeps its **Partial scan** label.
+If all deletion attempts fail, the run shows **Failed** and keeps both the scan warning and the deletion error.
+
+If you enable orphan-scan completion notifications, partial scans send a warning through that setting, including when results await manual review.
+The completion notification after manual deletion also includes the scan warning.
+
+Use **Scan Now** to try again, or wait for the next scheduled scan.
+qui does not retry immediately.
+If paths are unavailable or skipped and no scan path completes, the run fails.
+The run also fails if qui cannot establish torrent ownership.
+qui ignores a missing default or category path only if no torrent uses the same path as a scan root.
+Otherwise, qui reports the path as unavailable.
 
 ## Settings
 
@@ -47,34 +117,39 @@ Directories are only scanned if at least one torrent points to them. If you dele
 | Grace period | Skip files modified within this window | 10 minutes |
 | Ignore paths | Directories to exclude from scanning | - |
 | Scan interval | How often scheduled scans run | 24 hours |
-| Max files per run | Maximum orphan preview entries saved for a run (also caps what can be deleted from that run) | 1,000 |
-| Auto-cleanup | Automatically delete orphans from scheduled scans | Disabled |
-| Auto-cleanup max files | Only auto-delete if orphan count is at or below this threshold | 100 |
+| Max items per run | Maximum orphan preview entries, files and directories together, saved for a run (also caps what qui can delete from that run) | 1,000 |
+| Scan default save path | Also walk qBittorrent's default save path, including directories no torrent uses | Disabled |
+| Including category paths | Also walk every category destination, explicit or inherited | Disabled |
+| Delete abandoned directories | Report directories this run empties | Disabled |
+| Auto-cleanup | Delete orphans from complete scheduled scans without manual confirmation | Disabled |
+| Max files threshold | If the orphan file count is at or below this threshold, auto-delete orphans. Directories do not count. | 100 |
 
 <OrphanScanDefaultIgnores />
 
-## Max Files Per Run Behavior
+If an ignore path is a scan path, or a directory above a scan path, qui removes that scan path from the run. Use this when a save path is not available on the host that runs qui. If the ignore paths remove all scan paths, the run fails and tells you that the ignore paths cover every scan path.
 
-- Scan scope is still full: qui walks all scan roots each run.
-- Then it sorts orphan candidates by your selected preview sort.
-- Then it applies `Max files per run` and marks the run as truncated when more candidates exist.
-- Deletion only operates on files saved in that run's preview list.
+## Max items per run behavior
 
-**Example:** If 5,000 files are scanned, 2,000 are orphan candidates, and `Max files per run` is 1,000, qui scans all 5,000, saves the top 1,000 candidates for preview/deletion, and marks the run truncated.
+1. qui attempts to scan all selected paths. A wider directory can cover nested scan paths. Unavailable paths follow the [partial scan rules](#partial-scans).
+2. qui sorts the orphan candidates by your selected preview sort.
+3. qui applies `Max items per run`. If more candidates exist than the cap, qui marks the run as truncated.
+4. qui deletes only the items saved in that run's preview list: orphan files and the abandoned directories they empty.
+
+**Example:** If qui finds 2,000 orphan candidates among 5,000 total files and `Max items per run` is 1,000, qui scans all 5,000 files, saves the top 1,000 candidates for preview and deletion, and marks the run as truncated.
 
 ### FAQ
 
 **Do I need multiple runs to scan everything?**
-No. Each run scans all roots. Multiple runs are only needed if you want to work through orphan candidates beyond the per-run preview cap.
+No. qui applies the preview cap after scanning. If orphan candidates exceed the cap, delete the items in the current preview first. The next scan returns the next set of candidates. If paths were unavailable, restore access and run another scan.
 
 ## Workflow
 
-1. Trigger a scan (manual or scheduled)
-2. Review the preview list of orphan files
-3. Confirm deletion
-4. Files are deleted and empty directories cleaned up
+1. Trigger a manual or scheduled scan.
+2. Review the preview list of orphan files and directories.
+3. Confirm deletion.
+4. qui deletes the files, then removes the directories you saw in the preview.
 
-## Preview Features
+## Preview features
 
-- **Path column** - Shows the full file path with copy-to-clipboard support
-- **Export CSV** - Download the full preview list (all pages) as a CSV file
+- **Path column**: Shows the full file path with copy-to-clipboard support.
+- **Export CSV**: Downloads the full preview list across all pages as a CSV file.

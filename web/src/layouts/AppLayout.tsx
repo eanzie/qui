@@ -16,8 +16,7 @@ import { cn } from "@/lib/utils"
 import { useTranslation } from "react-i18next"
 import { MobileScrollProvider, useMobileScroll } from "@/contexts/MobileScrollContext"
 import { TorrentSelectionProvider } from "@/contexts/TorrentSelectionContext"
-import { ThemeValidator } from "@/components/themes/ThemeValidator"
-import { CustomThemesLoader } from "@/components/themes/CustomThemesLoader"
+import { useCustomThemes } from "@/hooks/useCustomThemes"
 
 function AppLayoutContent() {
   const { t } = useTranslation("common")
@@ -61,7 +60,7 @@ function AppLayoutContent() {
           </Tooltip>
         </Header>
         <main className={cn(
-          "flex-1 overflow-y-auto transition-[padding] duration-300",
+          "flex-1 overflow-y-auto",
           isFooterVisible ? "pb-[calc(4rem+env(safe-area-inset-bottom))]" : "pb-0",
           "lg:pb-0"
         )}>
@@ -76,10 +75,10 @@ function AppLayoutContent() {
 }
 
 export function AppLayout() {
+  // Registers and applies stored custom themes for authenticated users.
+  useCustomThemes()
   return (
     <LayoutRouteProvider>
-      <ThemeValidator />
-      <CustomThemesLoader />
       <TorrentSelectionProvider>
         <MobileScrollProvider>
           <AppLayoutContent />

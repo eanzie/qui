@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-import { joinPath, parseTrackerDomains } from "@/lib/utils"
+import { formatBytesOrFallback, joinPath, parseTrackerDomains } from "@/lib/utils"
 import type { Automation } from "@/types"
 import { describe, expect, it } from "vitest"
+import "@/i18n"
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
   return {
@@ -13,7 +14,6 @@ function makeAutomation(overrides: Partial<Automation> = {}): Automation {
     instanceId: 1,
     name: "My workflow",
     trackerPattern: "",
-    trackerDomains: [],
     conditions: { schemaVersion: "1" },
     enabled: true,
     dryRun: false,
@@ -24,9 +24,9 @@ function makeAutomation(overrides: Partial<Automation> = {}): Automation {
 }
 
 describe("parseTrackerDomains", () => {
-  it("strips negation from tokenized trackerDomains values", () => {
+  it("strips negation from trackerPattern tokens", () => {
     const result = parseTrackerDomains(makeAutomation({
-      trackerDomains: ["a.com,!b.com;c.com"],
+      trackerPattern: "a.com,!b.com;c.com",
     }))
 
     expect(result).toEqual(["a.com", "b.com", "c.com"])
@@ -49,5 +49,18 @@ describe("joinPath", () => {
 
   it("returns the relative path unchanged when the base is empty", () => {
     expect(joinPath("", "Movie/file.mkv")).toBe("Movie/file.mkv")
+  })
+})
+
+describe("formatBytesOrFallback", () => {
+  it("returns the fallback for a negative byte value", () => {
+    expect(formatBytesOrFallback(-1, "Unknown")).toBe("Unknown")
+  })
+
+  it.each([
+    [0, "0 B"],
+    [1024, "1 KiB"],
+  ])("formats the available byte value %s", (value, expected) => {
+    expect(formatBytesOrFallback(value, "Unknown")).toBe(expected)
   })
 })

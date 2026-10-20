@@ -12,6 +12,79 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// testInstanceSchema is the shared test schema for instance store tests.
+// Keeping it in one place avoids updating 7 inline schemas when columns change.
+// It must stay column-for-column with the migrated instances table: the columns
+// it invents are exactly the ones a statement can reference and still pass here
+// while failing against a real database.
+const testInstanceSchema = `
+	CREATE TABLE IF NOT EXISTS string_pool (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		value TEXT NOT NULL UNIQUE
+	);
+
+	CREATE TABLE instances (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name_id INTEGER NOT NULL,
+		host_id INTEGER NOT NULL,
+		username_id INTEGER NOT NULL,
+		password_encrypted TEXT NOT NULL,
+		api_key_encrypted TEXT NOT NULL DEFAULT '',
+		basic_username_id INTEGER,
+		basic_password_encrypted TEXT,
+		tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		is_active BOOLEAN NOT NULL DEFAULT 1,
+		has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
+		use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
+		hardlink_base_dir TEXT NOT NULL DEFAULT '',
+		hardlink_dir_preset TEXT NOT NULL DEFAULT 'flat',
+		use_reflinks BOOLEAN NOT NULL DEFAULT 0,
+		fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
+		ssh_host TEXT NOT NULL DEFAULT '',
+		ssh_port INTEGER NOT NULL DEFAULT 22,
+		ssh_username TEXT NOT NULL DEFAULT '',
+		ssh_key_encrypted TEXT NOT NULL DEFAULT '',
+		ssh_host_key_encrypted TEXT NOT NULL DEFAULT '',
+		ssh_tier TEXT NOT NULL DEFAULT 'sftp',
+		FOREIGN KEY (name_id) REFERENCES string_pool(id),
+		FOREIGN KEY (host_id) REFERENCES string_pool(id),
+		FOREIGN KEY (username_id) REFERENCES string_pool(id),
+		FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
+	);
+
+	CREATE VIEW instances_view AS
+	SELECT
+		i.id,
+		sp_name.value AS name,
+		sp_host.value AS host,
+		sp_username.value AS username,
+		i.password_encrypted,
+		i.api_key_encrypted,
+		sp_basic_username.value AS basic_username,
+		i.basic_password_encrypted,
+		i.tls_skip_verify,
+		i.sort_order,
+		i.is_active,
+		i.has_local_filesystem_access,
+		i.use_hardlinks,
+		i.hardlink_base_dir,
+		i.hardlink_dir_preset,
+		i.use_reflinks,
+		i.fallback_to_regular_mode,
+		i.ssh_host,
+		i.ssh_port,
+		i.ssh_username,
+		i.ssh_key_encrypted,
+		i.ssh_host_key_encrypted,
+		i.ssh_tier
+	FROM instances i
+	LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
+	LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
+	LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
+	LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
+`
+
 func TestHostValidation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -142,70 +215,8 @@ func TestInstanceStoreWithHost(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err, "Failed to create instance store")
 
-	// Create string_pool table
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err, "Failed to create string_pool table")
-
-	// Create new schema (with interned host, username, basic_username fields)
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			last_connected_at TIMESTAMP,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err, "Failed to create test table")
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	// Test creating an instance with host
 	instance, err := store.Create(ctx, "Test Instance", "http://localhost:8080", "testuser", "testpass", nil, nil, false, nil)
@@ -260,94 +271,32 @@ func TestInstanceStoreWithEmptyUsername(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err, "Failed to create instance store")
 
-	// Create string_pool table
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err, "Failed to create string_pool table")
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	// Insert empty string into string_pool (as migration does)
 	_, err = db.ExecContext(ctx, `INSERT INTO string_pool (value) VALUES ('')`)
 	require.NoError(t, err, "Failed to insert empty string")
 
-	// Create new schema
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			last_connected_at TIMESTAMP,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err, "Failed to create test table")
-
 	// Test creating an instance with empty username (localhost bypass)
 	instance, err := store.Create(ctx, "Test Instance", "http://localhost:8080", "", "", nil, nil, false, nil)
 	require.NoError(t, err, "Failed to create instance with empty username")
-	assert.Equal(t, "", instance.Username, "username should be empty")
+	assert.Empty(t, instance.Username, "username should be empty")
 	assert.Equal(t, "http://localhost:8080", instance.Host, "host should match")
 	password, err := store.GetDecryptedPassword(instance)
 	require.NoError(t, err, "Failed to decrypt instance password")
-	assert.Equal(t, "", password, "password should be empty for bypass auth instances")
+	assert.Empty(t, password, "password should be empty for bypass auth instances")
 
 	// Test retrieving the instance
 	retrieved, err := store.Get(ctx, instance.ID)
 	require.NoError(t, err, "Failed to get instance")
-	assert.Equal(t, "", retrieved.Username, "retrieved username should be empty")
+	assert.Empty(t, retrieved.Username, "retrieved username should be empty")
 	assert.Equal(t, "http://localhost:8080", retrieved.Host, "retrieved host should match")
 
 	// Test updating the instance with empty username
 	updated, err := store.Update(ctx, instance.ID, "Updated Instance", "http://localhost:9091", "", "", nil, nil, nil)
 	require.NoError(t, err, "Failed to update instance with empty username")
-	assert.Equal(t, "", updated.Username, "updated username should be empty")
+	assert.Empty(t, updated.Username, "updated username should be empty")
 	assert.Equal(t, "http://localhost:9091", updated.Host, "updated host should match")
 }
 
@@ -371,76 +320,17 @@ func TestInstanceStoreEmptyUsernameSelfHealing(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err, "Failed to create instance store")
 
-	// Create string_pool table WITHOUT the empty string (simulates cleanup deletion)
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err, "Failed to create string_pool table")
-
 	// NOTE: Intentionally NOT inserting empty string - this is the bug scenario
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err, "Failed to create test table")
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	// This should work even without pre-inserted empty string (self-healing)
 	instance, err := store.Create(ctx, "Bypass Auth Instance", "http://localhost:8080", "", "", nil, nil, false, nil)
 	require.NoError(t, err, "Create with empty username should work even when empty string not pre-inserted")
-	assert.Equal(t, "", instance.Username, "username should be empty")
+	assert.Empty(t, instance.Username, "username should be empty")
 	password, err := store.GetDecryptedPassword(instance)
 	require.NoError(t, err, "Failed to decrypt instance password")
-	assert.Equal(t, "", password, "password should be empty for bypass auth instances")
+	assert.Empty(t, password, "password should be empty for bypass auth instances")
 
 	// Verify the empty string was created in string_pool
 	var count int
@@ -468,68 +358,9 @@ func TestInstanceStoreUpdateEmptyUsernameSelfHealing(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err, "Failed to create instance store")
 
-	// Create string_pool table WITHOUT the empty string (simulates cleanup deletion)
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err, "Failed to create string_pool table")
-
 	// NOTE: Intentionally NOT inserting empty string - this is the bug scenario
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err, "Failed to create test table")
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	// First create an instance with non-empty username (this works without empty string)
 	instance, err := store.Create(ctx, "Regular Instance", "http://localhost:8080", "admin", "pass", nil, nil, false, nil)
@@ -539,10 +370,10 @@ func TestInstanceStoreUpdateEmptyUsernameSelfHealing(t *testing.T) {
 	// Now update to empty username (bypass auth) - this should work via self-healing
 	updated, err := store.Update(ctx, instance.ID, "Bypass Auth Instance", "http://localhost:8080", "", "", nil, nil, nil)
 	require.NoError(t, err, "Update to empty username should work even when empty string not pre-inserted")
-	assert.Equal(t, "", updated.Username, "username should be empty after update")
+	assert.Empty(t, updated.Username, "username should be empty after update")
 	password, err := store.GetDecryptedPassword(updated)
 	require.NoError(t, err, "Failed to decrypt instance password")
-	assert.Equal(t, "", password, "password should be cleared when enabling bypass auth")
+	assert.Empty(t, password, "password should be cleared when enabling bypass auth")
 
 	// Verify the empty string was created in string_pool
 	var count int
@@ -568,68 +399,8 @@ func TestInstanceStoreUpdateOrder(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err)
 
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			last_connected_at TIMESTAMP,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	first, err := store.Create(ctx, "First", "http://first.local", "user1", "pass1", nil, nil, false, nil)
 	require.NoError(t, err)
@@ -675,65 +446,8 @@ func TestInstanceStoreAPIKeyAuth(t *testing.T) {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err)
 
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	instance, err := store.Create(ctx, "API Key Instance", "http://localhost:8080", "admin", "password", nil, nil, false, nil, "api-key-123")
 	require.NoError(t, err)
@@ -809,65 +523,8 @@ func newInstanceStoreWithAPIKeySchema(t *testing.T) *InstanceStore {
 	store, err := NewInstanceStore(db, encryptionKey)
 	require.NoError(t, err)
 
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE string_pool (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			value TEXT NOT NULL UNIQUE
-		)
-	`)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		CREATE TABLE instances (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name_id INTEGER NOT NULL,
-			host_id INTEGER NOT NULL,
-			username_id INTEGER NOT NULL,
-			password_encrypted TEXT NOT NULL,
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			basic_username_id INTEGER,
-			basic_password_encrypted TEXT,
-			tls_skip_verify BOOLEAN NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			is_active BOOLEAN DEFAULT 1,
-			has_local_filesystem_access BOOLEAN NOT NULL DEFAULT 0,
-			use_hardlinks BOOLEAN NOT NULL DEFAULT 0,
-			hardlink_base_dir TEXT NOT NULL DEFAULT '',
-			hardlink_dir_preset TEXT NOT NULL DEFAULT '',
-			use_reflinks BOOLEAN NOT NULL DEFAULT 0,
-			fallback_to_regular_mode BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (name_id) REFERENCES string_pool(id),
-			FOREIGN KEY (host_id) REFERENCES string_pool(id),
-			FOREIGN KEY (username_id) REFERENCES string_pool(id),
-			FOREIGN KEY (basic_username_id) REFERENCES string_pool(id)
-		);
-
-		CREATE VIEW instances_view AS
-		SELECT
-			i.id,
-			sp_name.value AS name,
-			sp_host.value AS host,
-			sp_username.value AS username,
-			i.password_encrypted,
-			i.api_key_encrypted,
-			sp_basic_username.value AS basic_username,
-			i.basic_password_encrypted,
-			i.tls_skip_verify,
-			i.sort_order,
-			i.is_active,
-			i.has_local_filesystem_access,
-			i.use_hardlinks,
-			i.hardlink_base_dir,
-			i.hardlink_dir_preset,
-			i.use_reflinks,
-			i.fallback_to_regular_mode
-		FROM instances i
-		LEFT JOIN string_pool sp_name ON i.name_id = sp_name.id
-		LEFT JOIN string_pool sp_host ON i.host_id = sp_host.id
-		LEFT JOIN string_pool sp_username ON i.username_id = sp_username.id
-		LEFT JOIN string_pool sp_basic_username ON i.basic_username_id = sp_basic_username.id;
-	`)
-	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, testInstanceSchema)
+	require.NoError(t, err, "Failed to create test schema")
 
 	return store
 }

@@ -366,3 +366,60 @@ func TestBuildHardlinkPlan_PartialUpgrade_RejectsTraversal(t *testing.T) {
 		})
 	}
 }
+
+// --- Linked Paths For Resume ---
+
+func TestArrSeedLinkedPaths_MatchQbitFileNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	savePath := filepath.Join(tmpDir, "save")
+	srcFile := filepath.Join(tmpDir, "S01E01.mkv")
+	if err := os.WriteFile(srcFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("create source file: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		allowPartial bool
+		files        []arrSeedTorrentFile
+		want         []string
+	}{
+		{
+			// The pending episode must stay out of the set, or the resume check
+			// would treat qBittorrent downloading it as writing into a library file.
+			name:         "partial pack links only the matched episode",
+			allowPartial: true,
+			files: []arrSeedTorrentFile{
+				{Path: "Show.S01/S01E01.mkv", Size: 1},
+				{Path: "Show.S01/S01E02.mkv", Size: 1},
+			},
+			want: []string{"Show.S01/S01E01.mkv"},
+		},
+		{
+			name:  "full add links every file",
+			files: []arrSeedTorrentFile{{Path: "S01E01.mkv", Size: 1}},
+			want:  []string{"S01E01.mkv"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := &ArrSeedMediaItem{HostFiles: []HostFile{{Path: srcFile, Size: 1}}}
+			parsed := &arrSeedParsedTorrent{Name: "Show.S01", Files: tt.files}
+
+			plan, _, err := (&arrSeedInjector{}).buildHardlinkPlan(item, parsed, savePath, tt.allowPartial, 0)
+			if err != nil {
+				t.Fatalf("build plan: %v", err)
+			}
+
+			got := arrSeedLinkedPaths(plan)
+			if len(got) != len(tt.want) {
+				t.Fatalf("linked paths = %v, want %v", got, tt.want)
+			}
+			for _, name := range tt.want {
+				if _, ok := got[name]; !ok {
+					t.Errorf("linked paths = %v, missing %q", got, name)
+				}
+			}
+		})
+	}
+}

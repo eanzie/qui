@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/internal/fsops/local"
 	"github.com/autobrr/qui/internal/models"
 	internalqb "github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/pkg/stringutils"
@@ -200,6 +202,7 @@ func TestTitleRescueForcesPausedFullRecheck(t *testing.T) {
 	case pending := <-service.recheckResumeChan:
 		require.NotNil(t, pending.budgetBytes)
 		require.Zero(t, *pending.budgetBytes)
+		requireVerificationPendingWaitsForObservedFullCheck(t, service, pending)
 	default:
 		require.Fail(t, "expected title rescue to wait for a full recheck")
 	}
@@ -583,6 +586,7 @@ func TestLinkModeFilesystemFallback_ResumeOnlyAfterFullRecheck(t *testing.T) {
 			return settings, nil
 		},
 	}
+	service.SetBackendPool(fsops.NewPool(mockInstances, local.NewBackend()))
 
 	candidate := CrossSeedCandidate{
 		InstanceID:   instanceID,

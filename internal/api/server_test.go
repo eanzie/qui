@@ -7,15 +7,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -27,6 +30,7 @@ import (
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/internal/services/dirscan"
+	"github.com/autobrr/qui/internal/services/jackett"
 	"github.com/autobrr/qui/internal/services/license"
 	"github.com/autobrr/qui/internal/services/notifications"
 	"github.com/autobrr/qui/internal/services/trackericons"
@@ -42,8 +46,22 @@ type routeKey struct {
 }
 
 var undocumentedRoutes = map[routeKey]struct{}{
-	{Method: http.MethodGet, Path: "/api/auth/validate"}:                                            {},
-	{Method: http.MethodGet, Path: "/api/stream"}:                                                   {},
+	{Method: http.MethodGet, Path: "/api/torznab/activity"}:                                         {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers"}:                                         {},
+	{Method: http.MethodPost, Path: "/api/torznab/indexers"}:                                        {},
+	{Method: http.MethodPost, Path: "/api/torznab/indexers/discover"}:                               {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/health"}:                                  {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/tracker-domains"}:                         {},
+	{Method: http.MethodDelete, Path: "/api/torznab/indexers/{indexerID}"}:                          {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/{indexerID}"}:                             {},
+	{Method: http.MethodPut, Path: "/api/torznab/indexers/{indexerID}"}:                             {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/{indexerID}/errors"}:                      {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/{indexerID}/health"}:                      {},
+	{Method: http.MethodGet, Path: "/api/torznab/indexers/{indexerID}/stats"}:                       {},
+	{Method: http.MethodGet, Path: "/api/torznab/search/cache"}:                                     {},
+	{Method: http.MethodPut, Path: "/api/torznab/search/cache/settings"}:                            {},
+	{Method: http.MethodGet, Path: "/api/torznab/search/history"}:                                   {},
+	{Method: http.MethodGet, Path: "/api/torznab/search/recent"}:                                    {},
 	{Method: http.MethodPost, Path: "/api/instances/{instanceId}/backups/run"}:                      {},
 	{Method: http.MethodGet, Path: "/api/instances/{instanceId}/backups/runs"}:                      {},
 	{Method: http.MethodDelete, Path: "/api/instances/{instanceId}/backups/runs"}:                   {},
@@ -87,6 +105,24 @@ func TestNewServerRegistersStreamManagerAsSyncSink(t *testing.T) {
 	require.Same(t, server.streamManager, sink, "stream manager should be registered as sync sink")
 }
 
+func TestServerShutdownTwiceEndsStreamsWithoutPanic(t *testing.T) {
+	server := NewServer(&Dependencies{
+		Config: &config.AppConfig{Config: &domain.Config{BaseURL: "/"}},
+	})
+
+	// http.Server.Shutdown starts the registered callbacks on every call.
+	require.NoError(t, server.Shutdown(t.Context()))
+	require.NoError(t, server.Shutdown(t.Context()))
+
+	select {
+	case <-server.shuttingDown:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown signal was not sent")
+	}
+	// The second callback runs in its own goroutine; let it run so a double close panics here.
+	time.Sleep(50 * time.Millisecond)
+}
+
 func TestAllEndpointsDocumented(t *testing.T) {
 	server := NewServer(newTestDependencies(t))
 	router, err := server.Handler()
@@ -128,6 +164,8 @@ func newTestDependencies(t *testing.T) *Dependencies {
 	trackerCustomizationStore := models.NewTrackerCustomizationStore(db)
 	notificationTargetStore := models.NewNotificationTargetStore(db)
 	notificationService := notifications.NewService(notificationTargetStore, &models.InstanceStore{}, log.Logger)
+	torznabIndexerStore, err := models.NewTorznabIndexerStore(db, []byte("01234567890123456789012345678901"))
+	require.NoError(t, err)
 	dirScanService := dirscan.NewService(
 		dirscan.DefaultConfig(),
 		models.NewDirScanStore(db),
@@ -137,6 +175,8 @@ func newTestDependencies(t *testing.T) *Dependencies {
 		nil,
 		nil,
 		trackerCustomizationStore,
+		nil,
+		nil,
 		nil,
 	)
 
@@ -165,6 +205,8 @@ func newTestDependencies(t *testing.T) *Dependencies {
 		NotificationTargetStore:   notificationTargetStore,
 		NotificationService:       notificationService,
 		DirScanService:            dirScanService,
+		JackettService:            jackett.NewService(torznabIndexerStore),
+		TorznabIndexerStore:       torznabIndexerStore,
 	}
 }
 
@@ -258,7 +300,6 @@ func normalizeRoutePath(path string) (string, bool) {
 
 	path = strings.ReplaceAll(path, "{instanceID}", "{instanceId}")
 	path = strings.ReplaceAll(path, "{runID}", "{runId}")
-	path = strings.ReplaceAll(path, "{licenseKey}", "{licenseKey}")
 
 	return path, true
 }
@@ -314,4 +355,20 @@ func getClientPoolSyncEventSink(t *testing.T, pool *qbittorrent.ClientPool) qbit
 	sink, ok := exposed.Interface().(qbittorrent.SyncEventSink)
 	require.True(t, ok, "unexpected sink type stored on client pool")
 	return sink
+}
+
+func TestOpenStopsWhenPortIsInUse(t *testing.T) {
+	held, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer held.Close()
+
+	s := &Server{
+		logger: zerolog.Nop(),
+		config: &config.AppConfig{Config: &domain.Config{
+			Host: "localhost",
+			Port: held.Addr().(*net.TCPAddr).Port,
+		}},
+	}
+	err = s.open(nil)
+	require.ErrorIs(t, err, errAddrInUse)
 }

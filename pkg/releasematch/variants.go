@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 )
 
 // variantOverrides lists release tags that must match on both releases for

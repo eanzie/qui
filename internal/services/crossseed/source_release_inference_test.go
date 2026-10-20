@@ -4,12 +4,14 @@
 package crossseed
 
 import (
+	"context"
 	"testing"
 
 	qbt "github.com/autobrr/go-qbittorrent"
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 	"github.com/stretchr/testify/require"
 
+	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/pkg/stringutils"
 )
 
@@ -80,6 +82,18 @@ func TestDeriveSourceReleaseForSearch(t *testing.T) {
 			},
 			expectedType:    rls.Series,
 			expectedSeries:  0,
+			expectedEpisode: 0,
+		},
+		{
+			name:   "season pack with seasoned and absolute files",
+			source: "Some.Show.S02.1080p.WEB-DL.x264-GROUP",
+			files: qbt.TorrentFiles{
+				{Name: "Some.Show.S02E01.1080p.WEB-DL.x264-GROUP.mkv", Size: 1},
+				{Name: "Some Show - 14.mkv", Size: 1},
+				{Name: "Some Show - 15.mkv", Size: 1},
+			},
+			expectedType:    rls.Series,
+			expectedSeries:  2,
 			expectedEpisode: 0,
 		},
 		{
@@ -170,10 +184,46 @@ func TestSelectSourceReleaseForSearch_UsesTVDetectionReleaseForTVCategories(t *t
 	require.Equal(t, rls.Episode, searchRelease.Type)
 	require.Equal(t, 37, searchRelease.Episode)
 
-	query := buildSafeSearchQuery("[SubsPlease] Some, Anime (2025) [720p]", searchRelease, searchRelease.Title)
+	query := BuildTorznabQuery("[SubsPlease] Some, Anime (2025) [720p]", searchRelease, false)
 	require.Equal(t, "Some, Anime", query.Query)
 	require.NotNil(t, query.Episode)
 	require.Equal(t, 37, *query.Episode)
+}
+
+func TestDeriveSearchSourceRelease_ReplaysCategoryMappedView(t *testing.T) {
+	const instanceID = 1
+	torrent := qbt.Torrent{
+		Hash:     "category-mapped-source",
+		Name:     "[Orbit] Azure Compass (2025) [720p]",
+		Category: "forced-movie",
+	}
+	files := qbt.TorrentFiles{
+		{Name: "[Orbit] Azure Compass - S01E03 (720p) [11111111].mkv", Size: 1},
+	}
+	instance := &models.Instance{ID: instanceID, Name: "main"}
+	svc := &Service{
+		releaseCache:     NewReleaseCache(),
+		stringNormalizer: stringutils.NewDefaultNormalizer(),
+		automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
+			return &models.CrossSeedAutomationSettings{
+				CategoryMappingRules: []models.CategoryMappingRule{
+					{Categories: []string{torrent.Category}, ContentType: "movie"},
+				},
+			}, nil
+		},
+	}
+	svc.syncManager = newFakeSyncManager(instance, []qbt.Torrent{torrent}, map[string]qbt.TorrentFiles{
+		torrent.Hash: files,
+	})
+
+	searchView, contentInfo := svc.readSearchSource(context.Background(), &torrent, files)
+	replayedView := svc.deriveSearchSourceRelease(context.Background(), instanceID, &torrent)
+
+	require.Equal(t, "movie", contentInfo.ContentType)
+	require.Equal(t, rls.Movie, searchView.release.Type,
+		"the category rule must keep TV-looking files on the movie search path")
+	require.Equal(t, searchView.release, replayedView.release)
+	require.Equal(t, searchView.tagOrigin, replayedView.tagOrigin)
 }
 
 func TestSelectContentDetectionRelease_MusicNameKeepsEpisodeMarkersFromFiles(t *testing.T) {
@@ -197,6 +247,90 @@ func TestSelectContentDetectionRelease_MusicNameKeepsEpisodeMarkersFromFiles(t *
 	require.Equal(t, "tv", DetermineContentTypeWithFiles(contentDetectionRelease, files).ContentType)
 }
 
+func TestSelectContentDetectionRelease_DiscLayout(t *testing.T) {
+	svc := &Service{
+		releaseCache:     NewReleaseCache(),
+		stringNormalizer: stringutils.NewDefaultNormalizer(),
+	}
+
+	const sourceName = "Space Badgers From Pluto (2011)"
+	tests := []struct {
+		name string
+		file string
+	}{
+		{
+			name: "BDMV",
+			file: sourceName + "/BDMV/STREAM/00000.m2ts",
+		},
+		{
+			name: "VIDEO_TS",
+			file: sourceName + "/VIDEO_TS/VTS_01_1.VOB",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := svc.releaseCache.Parse(sourceName)
+			require.Equal(t, rls.Music, source.Type,
+				"fixture only exercises the fix while the torrent name classifies as music")
+
+			files := qbt.TorrentFiles{
+				{Name: tt.file, Size: 1},
+				{Name: sourceName + "/extras/misleading.mp3", Size: 10_000},
+			}
+			contentDetectionRelease, usedFile := svc.selectContentDetectionRelease(sourceName, source, files)
+
+			require.False(t, usedFile, "disc layout must bypass largest-file parsing")
+			require.Equal(t, "movie", DetermineContentTypeWithFiles(contentDetectionRelease, files).ContentType,
+				"dominant audio must not override the authoritative disc classification")
+			require.NotSame(t, source, contentDetectionRelease, "disc classification must not mutate the cached parse")
+			require.Equal(t, rls.Music, source.Type, "disc classification must not mutate the cached parse")
+		})
+	}
+
+	t.Run("keeps explicit TV structure", func(t *testing.T) {
+		source := &rls.Release{Type: rls.Music, Title: "Signal Voyagers", Series: 2}
+		files := qbt.TorrentFiles{
+			{Name: "Signal Voyagers S02/VIDEO_TS/VTS_01_1.VOB", Size: 1},
+			{Name: "Signal Voyagers S02/extras/misleading.mp3", Size: 10_000},
+		}
+		require.Equal(t, "tv", DetermineContentTypeWithFiles(source, files).ContentType,
+			"disc classification must normalize explicit TV metadata without relying on the selector")
+
+		contentDetectionRelease, usedFile := svc.selectContentDetectionRelease(source.Title, source, files)
+
+		require.False(t, usedFile, "disc layout must bypass largest-file parsing")
+		require.NotSame(t, source, contentDetectionRelease, "disc classification must not mutate the cached parse")
+		require.Equal(t, rls.Music, source.Type, "disc classification must not mutate the cached parse")
+		require.Equal(t, "tv", DetermineContentTypeWithFiles(contentDetectionRelease, files).ContentType,
+			"dominant audio must not override explicit TV structure")
+	})
+}
+
+func TestDiscLayoutDominantAudioKeepsTVSearchShape(t *testing.T) {
+	svc := &Service{
+		releaseCache:     NewReleaseCache(),
+		stringNormalizer: stringutils.NewDefaultNormalizer(),
+	}
+
+	const sourceName = "Signal.Voyagers.S02E03.DVDR"
+	source := &rls.Release{Type: rls.Episode, Title: "Signal Voyagers", Series: 2, Episode: 3}
+	files := qbt.TorrentFiles{
+		{Name: sourceName + "/VIDEO_TS/VTS_01_1.VOB", Size: 1},
+		{Name: sourceName + "/extras/misleading.mp3", Size: 10_000},
+	}
+
+	contentDetectionRelease, usedFile := svc.selectContentDetectionRelease(sourceName, source, files)
+	require.False(t, usedFile)
+
+	contentInfo := DetermineContentTypeWithFiles(contentDetectionRelease, files)
+	require.Equal(t, "tv", contentInfo.ContentType)
+	searchRelease := svc.selectSourceReleaseForSearch(source, contentDetectionRelease, files, contentInfo)
+	query := BuildTorznabQuery(sourceName, searchRelease, contentInfo.IsMusic)
+	require.NotNil(t, query.Episode)
+	require.Equal(t, 3, *query.Episode)
+}
+
 // Regression: parsing the full torrent-relative path invented a group and hard-rejected
 // byte-identical candidates with "group/site mismatch". See selectContentDetectionRelease.
 func TestSelectContentDetectionRelease_RepeatedFolderNameKeepsGroup(t *testing.T) {
@@ -218,13 +352,11 @@ func TestSelectContentDetectionRelease_RepeatedFolderNameKeepsGroup(t *testing.T
 	searchRelease := svc.selectSourceReleaseForSearch(source, contentDetectionRelease, files, contentInfo)
 
 	const candidateName = sourceName + ".mkv"
-	ok, reason := svc.validateExactSizeSearchIdentity(searchCandidateInput{
-		SourceRelease:    searchRelease,
-		CandidateRelease: svc.releaseCache.Parse(candidateName),
-		SourceName:       sourceName,
-		CandidateName:    candidateName,
-		SourceSize:       sourceSize,
-		CandidateSize:    sourceSize,
+	ok, reason := svc.matcher().validateExactSizeSearchIdentity(searchCandidateInput{
+		Source:        namedRelease{release: searchRelease, rawName: sourceName},
+		Candidate:     namedRelease{release: svc.releaseCache.Parse(candidateName), rawName: candidateName},
+		SourceSize:    sourceSize,
+		CandidateSize: sourceSize,
 	})
 	require.True(t, ok, "byte-identical candidate rejected: %s", reason)
 }
@@ -269,6 +401,6 @@ func TestSelectSourceReleaseForSearch_SeasonPackKeepsTorrentIdentity(t *testing.
 	require.NotEqual(t, contentDetectionRelease.Sum, searchRelease.Sum)
 
 	candidate := svc.releaseCache.Parse("Silver.Gear.Labyrinth.S02.720p.CR.WEB-DL.AAC2.0.H.264-ALPHA")
-	match, reason := svc.releasesMatchWithReason(searchRelease, candidate, false)
+	match, reason := svc.matcher().releasesMatchWithReason(searchRelease, candidate, false)
 	require.True(t, match, "season pack candidate should not be rejected by file-level identity, got %q", reason)
 }

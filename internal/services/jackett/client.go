@@ -4,7 +4,9 @@
 package jackett
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/rs/zerolog/log"
 
 	gojackett "github.com/autobrr/qui/pkg/gojackett"
@@ -26,11 +29,15 @@ import (
 
 const maxTorrentDownloadBytes int64 = 16 << 20 // 16 MiB safety limit for torrent blobs
 
+// ErrInvalidTorrentPayload identifies a response that does not parse as torrent metainfo.
+var ErrInvalidTorrentPayload = errors.New("torrent download returned a web page or other non-torrent response")
+
 // DownloadError represents an HTTP error during torrent download.
 // It preserves the status code for rate-limit detection and retry logic.
 type DownloadError struct {
 	StatusCode int
 	URL        string
+	RetryAfter string
 }
 
 func (e *DownloadError) Error() string {
@@ -40,6 +47,40 @@ func (e *DownloadError) Error() string {
 func (e *DownloadError) Is(target error) bool {
 	_, ok := target.(*DownloadError)
 	return ok
+}
+
+func (e *DownloadError) HTTPStatusCode() int {
+	return e.StatusCode
+}
+
+func (e *DownloadError) RetryAfterHeader() string {
+	return e.RetryAfter
+}
+
+type responseError struct {
+	Operation  string
+	StatusCode int
+	RetryAfter string
+}
+
+func (e *responseError) Error() string {
+	return fmt.Sprintf("%s returned status %d", e.Operation, e.StatusCode)
+}
+
+func (e *responseError) HTTPStatusCode() int {
+	return e.StatusCode
+}
+
+func (e *responseError) RetryAfterHeader() string {
+	return e.RetryAfter
+}
+
+func newHTTPResponseError(operation string, resp *http.Response) error {
+	return &responseError{
+		Operation:  operation,
+		StatusCode: resp.StatusCode,
+		RetryAfter: resp.Header.Get("Retry-After"),
+	}
 }
 
 // MagnetDownloadError indicates that the download endpoint redirected to a magnet URL.
@@ -72,13 +113,15 @@ type Client struct {
 	timeout    time.Duration
 }
 
+const defaultIndexerTimeoutSeconds = 30
+
 // NewClient creates a new Torznab client for the desired backend
 func NewClient(baseURL, apiKey string, basicUsername, basicPassword *string, backend models.TorznabBackend, timeoutSeconds int) *Client {
 	if backend == "" {
 		backend = models.TorznabBackendJackett
 	}
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 30
+		timeoutSeconds = defaultIndexerTimeoutSeconds
 	}
 
 	c := &Client{
@@ -198,7 +241,7 @@ func (c *Client) Search(ctx context.Context, indexer string, params map[string]s
 
 func (c *Client) searchProwlarr(ctx context.Context, indexerID string, params map[string]string) ([]Result, error) {
 	if c.prowlarr == nil {
-		return nil, fmt.Errorf("prowlarr client not configured")
+		return nil, errors.New("prowlarr client not configured")
 	}
 
 	rss, err := c.prowlarr.SearchIndexer(ctx, indexerID, params)
@@ -210,7 +253,7 @@ func (c *Client) searchProwlarr(ctx context.Context, indexerID string, params ma
 }
 
 // FetchCaps retrieves the Torznab caps document for the configured backend/indexer.
-func (c *Client) FetchCaps(ctx context.Context, indexerID string) (*torznabCaps, error) {
+func (c *Client) FetchCaps(ctx context.Context, indexerID string) (*TorznabCaps, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -227,7 +270,7 @@ func (c *Client) FetchCaps(ctx context.Context, indexerID string) (*torznabCaps,
 	}
 }
 
-func (c *Client) fetchCapsFromJackett(ctx context.Context, indexerID string) (*torznabCaps, error) {
+func (c *Client) fetchCapsFromJackett(ctx context.Context, indexerID string) (*TorznabCaps, error) {
 	baseRoot := strings.TrimRight(c.baseURL, "/")
 	trimmedID := strings.Trim(strings.TrimSpace(indexerID), "/")
 
@@ -245,7 +288,7 @@ func (c *Client) fetchCapsFromJackett(ctx context.Context, indexerID string) (*t
 	}
 
 	if trimmedID == "" {
-		return nil, fmt.Errorf("jackett indexer identifier is required for caps fetch")
+		return nil, errors.New("jackett indexer identifier is required for caps fetch")
 	}
 
 	endpoint, err := url.JoinPath(baseRoot, "api", "v2.0", "indexers", trimmedID, "results", "torznab", "api")
@@ -274,16 +317,16 @@ func (c *Client) fetchCapsFromJackett(ctx context.Context, indexerID string) (*t
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("jackett caps returned status %d", resp.StatusCode)
+		return nil, newHTTPResponseError("jackett caps", resp)
 	}
 
-	return parseTorznabCaps(resp.Body)
+	return parseTorznabCapsResponse(resp.Body, resp.Header.Get("Retry-After"))
 }
 
-func (c *Client) fetchCapsFromProwlarr(ctx context.Context, indexerID string) (*torznabCaps, error) {
+func (c *Client) fetchCapsFromProwlarr(ctx context.Context, indexerID string) (*TorznabCaps, error) {
 	trimmed := strings.TrimSpace(indexerID)
 	if trimmed == "" {
-		return nil, fmt.Errorf("prowlarr indexer identifier is required for caps fetch")
+		return nil, errors.New("prowlarr indexer identifier is required for caps fetch")
 	}
 
 	endpoint, err := url.JoinPath(strings.TrimRight(c.baseURL, "/"), "api", "v1", "indexer", trimmed, "newznab")
@@ -312,16 +355,16 @@ func (c *Client) fetchCapsFromProwlarr(ctx context.Context, indexerID string) (*
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("prowlarr caps returned status %d", resp.StatusCode)
+		return nil, newHTTPResponseError("prowlarr caps", resp)
 	}
 
-	return parseTorznabCaps(resp.Body)
+	return parseTorznabCapsResponse(resp.Body, resp.Header.Get("Retry-After"))
 }
 
-func (c *Client) fetchCapsFromNative(ctx context.Context) (*torznabCaps, error) {
+func (c *Client) fetchCapsFromNative(ctx context.Context) (*TorznabCaps, error) {
 	endpoint := strings.TrimRight(c.baseURL, "/")
 	if endpoint == "" {
-		return nil, fmt.Errorf("native torznab endpoint not configured")
+		return nil, errors.New("native torznab endpoint not configured")
 	}
 
 	parsed, err := url.Parse(endpoint)
@@ -350,16 +393,16 @@ func (c *Client) fetchCapsFromNative(ctx context.Context) (*torznabCaps, error) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("native caps returned status %d", resp.StatusCode)
+		return nil, newHTTPResponseError("native caps", resp)
 	}
 
-	return parseTorznabCaps(resp.Body)
+	return parseTorznabCapsResponse(resp.Body, resp.Header.Get("Retry-After"))
 }
 
 // Download retrieves the raw torrent bytes for the provided download URL.
 func (c *Client) Download(ctx context.Context, downloadURL string) ([]byte, error) {
 	if strings.TrimSpace(downloadURL) == "" {
-		return nil, fmt.Errorf("download URL is required")
+		return nil, errors.New("download URL is required")
 	}
 
 	if ctx == nil {
@@ -411,11 +454,11 @@ func (c *Client) Download(ctx context.Context, downloadURL string) ([]byte, erro
 		if strings.HasPrefix(strings.ToLower(location), "magnet:") {
 			return nil, &MagnetDownloadError{MagnetURL: location}
 		}
-		return nil, &DownloadError{StatusCode: resp.StatusCode, URL: redact.URLString(downloadURL)}
+		return nil, &DownloadError{StatusCode: resp.StatusCode, URL: redact.URLString(downloadURL), RetryAfter: resp.Header.Get("Retry-After")}
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, &DownloadError{StatusCode: resp.StatusCode, URL: redact.URLString(downloadURL)}
+		return nil, &DownloadError{StatusCode: resp.StatusCode, URL: redact.URLString(downloadURL), RetryAfter: resp.Header.Get("Retry-After")}
 	}
 
 	limitedReader := io.LimitReader(resp.Body, maxTorrentDownloadBytes+1)
@@ -425,6 +468,13 @@ func (c *Client) Download(ctx context.Context, downloadURL string) ([]byte, erro
 	}
 	if int64(len(data)) > maxTorrentDownloadBytes {
 		return nil, fmt.Errorf("torrent download exceeded %d bytes limit", maxTorrentDownloadBytes)
+	}
+	mi, parseErr := metainfo.Load(bytes.NewReader(data))
+	if parseErr == nil {
+		_, parseErr = mi.UnmarshalInfo()
+	}
+	if parseErr != nil {
+		return nil, fmt.Errorf("%w (Content-Type: %q)", ErrInvalidTorrentPayload, resp.Header.Get("Content-Type"))
 	}
 
 	return data, nil
@@ -446,7 +496,7 @@ func (c *Client) convertRssToResults(rss gojackett.Rss) []Result {
 			Title:                item.Title,
 			Link:                 item.Enclosure.URL,
 			Details:              item.Comments,
-			GUID:                 item.Guid,
+			GUID:                 item.GUID,
 			Category:             "", // Categories are in item.Category array
 			Size:                 0,
 			DownloadVolumeFactor: 1.0,
@@ -536,7 +586,7 @@ func DiscoverJackettIndexers(ctx context.Context, baseURL, apiKey string, basicU
 		ctx = context.Background()
 	}
 	if baseURL = strings.TrimSpace(baseURL); baseURL == "" {
-		return DiscoveryResult{Indexers: []JackettIndexer{}}, fmt.Errorf("base url is required")
+		return DiscoveryResult{Indexers: []JackettIndexer{}}, errors.New("base url is required")
 	}
 
 	jackettIndexers, failedIDs, jackettErr := discoverJackettIndexers(ctx, baseURL, apiKey, basicUsername, basicPassword)
@@ -615,7 +665,7 @@ func DiscoverJackettIndexers(ctx context.Context, baseURL, apiKey string, basicU
 		return DiscoveryResult{Indexers: indexers, Warnings: warnings}, nil
 	}
 
-	return DiscoveryResult{Indexers: []JackettIndexer{}}, fmt.Errorf("jackett discovery failed: %v; prowlarr discovery failed: %w", jackettErr, prowlarrErr)
+	return DiscoveryResult{Indexers: []JackettIndexer{}}, fmt.Errorf("jackett discovery failed: %w; prowlarr discovery failed: %w", jackettErr, prowlarrErr)
 }
 
 func discoverJackettIndexers(ctx context.Context, baseURL, apiKey string, basicUsername, basicPassword *string) ([]JackettIndexer, []string, error) {
@@ -672,15 +722,15 @@ func discoverJackettIndexers(ctx context.Context, baseURL, apiKey string, basicU
 // capsFetchResult holds the result of a parallel caps fetch
 type capsFetchResult struct {
 	indexerID string
-	caps      *torznabCaps
+	caps      *TorznabCaps
 	err       error
 }
 
 // fetchCapsParallel fetches capabilities and categories for multiple indexers concurrently with retries.
-// Returns a map of indexerID -> torznabCaps and a slice of failed indexer IDs.
+// Returns a map of indexerID -> TorznabCaps and a slice of failed indexer IDs.
 // Failed fetches are logged but don't fail the overall operation.
 // The parent context is used to cancel all in-flight requests if the caller's context is cancelled.
-func fetchCapsParallel(ctx context.Context, baseURL, apiKey string, basicUsername, basicPassword *string, backend models.TorznabBackend, indexerIDs []string) (map[string]*torznabCaps, []string) {
+func fetchCapsParallel(ctx context.Context, baseURL, apiKey string, basicUsername, basicPassword *string, backend models.TorznabBackend, indexerIDs []string) (map[string]*TorznabCaps, []string) {
 	if len(indexerIDs) == 0 {
 		return nil, nil
 	}
@@ -692,7 +742,7 @@ func fetchCapsParallel(ctx context.Context, baseURL, apiKey string, basicUsernam
 		fetchTimeout  = 15 * time.Second
 	)
 
-	results := make(map[string]*torznabCaps)
+	results := make(map[string]*TorznabCaps)
 	resultsChan := make(chan capsFetchResult, len(indexerIDs))
 
 	// Semaphore to limit concurrency
@@ -766,7 +816,7 @@ func fetchCapsParallel(ctx context.Context, baseURL, apiKey string, basicUsernam
 
 // fetchCapsWithRetry attempts to fetch capabilities with retries and exponential backoff.
 // The parent context is used as the base for per-attempt timeouts, allowing cancellation.
-func fetchCapsWithRetry(ctx context.Context, baseURL, apiKey string, basicUsername, basicPassword *string, backend models.TorznabBackend, indexerID string, maxRetries int, retryDelay, timeout time.Duration) (*torznabCaps, error) {
+func fetchCapsWithRetry(ctx context.Context, baseURL, apiKey string, basicUsername, basicPassword *string, backend models.TorznabBackend, indexerID string, maxRetries int, retryDelay, timeout time.Duration) (*TorznabCaps, error) {
 	client := NewClient(baseURL, apiKey, basicUsername, basicPassword, backend, int(timeout.Seconds()))
 
 	var lastErr error
@@ -788,6 +838,10 @@ func fetchCapsWithRetry(ctx context.Context, baseURL, apiKey string, basicUserna
 			return caps, nil
 		}
 		lastErr = err
+		var responseErr interface{ HTTPStatusCode() int }
+		if errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusTooManyRequests {
+			return nil, err
+		}
 
 		// Check if parent context was cancelled
 		if ctx.Err() != nil {

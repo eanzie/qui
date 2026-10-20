@@ -105,11 +105,11 @@ func createTestConfig(t *testing.T, ctx context.Context, store *models.ArrSeedSt
 	}
 
 	cfg, err := store.CreateConfig(ctx, &models.ArrSeedInstanceConfig{
-		ArrInstanceID:       inst.ID,
-		Enabled:             true,
+		ArrInstanceID:        inst.ID,
+		Enabled:              true,
 		TargetQbitInstanceID: 0,
-		Category:            "tv",
-		ScanIntervalMinutes: 1440,
+		Category:             "tv",
+		ScanIntervalMinutes:  1440,
 	})
 	if err != nil {
 		t.Fatalf("store.CreateConfig: %v", err)

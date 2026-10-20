@@ -38,8 +38,9 @@ import {
 import { useInstanceCapabilities } from "@/hooks/useInstanceCapabilities.ts"
 import { useInstanceMetadata } from "@/hooks/useInstanceMetadata"
 import { usePathAutocomplete } from "@/hooks/usePathAutocomplete"
-import { usePersistedStartPaused } from "@/hooks/usePersistedStartPaused"
+import { useAddTorrentPreferences } from "@/hooks/usePreferenceValues"
 import { api } from "@/lib/api"
+import { canOfferManualCrossSeed } from "@/lib/manual-cross-seed"
 import { cn } from "@/lib/utils"
 import type { AddTorrentResponse, Torrent } from "@/types"
 import { useForm } from "@tanstack/react-form"
@@ -50,6 +51,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useDropzone } from "react-dropzone"
 import { toast } from "sonner"
+
+import { ManualCrossSeedDialog } from "./ManualCrossSeedDialog"
 
 // Extract info hash from magnet link
 function extractHashFromMagnet(magnetUrl: string): string | null {
@@ -165,24 +168,25 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
   const [categorySearch, setCategorySearch] = useState("")
   const [tagSearch, setTagSearch] = useState("")
   const [duplicateSummary, setDuplicateSummary] = useState<DuplicateSummary>(() => createEmptyDuplicateSummary())
+  const [manualCrossSeedFile, setManualCrossSeedFile] = useState<File | null>(null)
   const [duplicateCheckStatus, setDuplicateCheckStatus] = useState<"idle" | "pending" | "visible">("idle")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const duplicateCheckRequestRef = useRef(0)
   const duplicateCheckIndicatorTimeoutRef = useRef<number | null>(null)
   const queryClient = useQueryClient()
-  // NOTE: Use localStorage-persisted preference instead of qBittorrent's preference
-  // This works around qBittorrent API not supporting start_paused_enabled setting
-  const [startPausedEnabled] = usePersistedStartPaused(instanceId, false)
 
   // Use controlled state if provided, otherwise use internal state
   const open = controlledOpen !== undefined ? controlledOpen : internalOpen
   const setOpen = onOpenChange || setInternalOpen
 
-  // Fetch metadata (categories, tags, preferences) with single API call
   const { data: metadata } = useInstanceMetadata(instanceId)
   const categories = metadata?.categories
   const availableTags = metadata?.tags
-  const preferences = metadata?.preferences
+  // The dialog seeds the preference defaults twice: once as form defaults, and again
+  // when the preferences arrive after a cold mount.
+  // Fetched again on each open, so that a default changed outside qui shows.
+  const addTorrentPreferences = useAddTorrentPreferences(instanceId, { enabled: open })
+  const preferenceDefaults = addTorrentPreferences.defaults
 
   const { data: capabilities } = useInstanceCapabilities(instanceId)
   const supportsTorrentTmpPath = capabilities?.supportsTorrentTmpPath ?? false
@@ -496,8 +500,8 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
       const autoTMM = data.autoTMM
       // When autoTMM is enabled, temp path settings aren't visible/relevant
       const tempPathChanged =
-        !autoTMM && (data.tempPathEnabled !== (preferences?.temp_path_enabled ?? false) ||
-        (data.tempPathEnabled && data.tempPath !== (preferences?.temp_path || "")))
+        !autoTMM && (data.tempPathEnabled !== preferenceDefaults.tempPathEnabled ||
+        (data.tempPathEnabled && data.tempPath !== preferenceDefaults.tempPath))
 
       const submitData: Parameters<typeof api.addTorrent>[1] = {
         startPaused: data.startPaused,
@@ -600,9 +604,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
       urls: "",
       category: "",
       tags: [] as string[],
-      startPaused: startPausedEnabled,
-      autoTMM: preferences?.auto_tmm_enabled ?? true,
-      savePath: preferences?.save_path || "",
+      ...preferenceDefaults,
       skipHashCheck: false,
       sequentialDownload: false,
       firstLastPiecePrio: false,
@@ -610,10 +612,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
       limitDownloadSpeed: 0,
       limitRatio: 0,
       limitSeedTime: 0,
-      contentLayout: preferences?.torrent_content_layout || "",
       rename: "",
-      tempPathEnabled: preferences?.temp_path_enabled ?? false,
-      tempPath: preferences?.temp_path || "",
       indexerId: undefined as number | undefined,
     },
     onSubmit: async ({ value }) => {
@@ -622,6 +621,25 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
       await mutation.mutateAsync({ ...value, tags: allTags })
     },
   })
+
+  // The dialog can mount before instance metadata resolves (magnet handler route),
+  // where defaultValues fall back to the hardcoded values, and each open fetches the
+  // preferences again. Seed the preference-derived fields each time preferences land,
+  // skipping anything the user already changed.
+  useEffect(() => {
+    if (!addTorrentPreferences.loaded) return
+
+    // Seeding is not a user edit, so leave the field meta pristine.
+    const pristine = (field: keyof typeof preferenceDefaults) => !form.getFieldMeta(field)?.isDirty
+    const opts = { dontUpdateMeta: true }
+
+    if (pristine("autoTMM")) form.setFieldValue("autoTMM", preferenceDefaults.autoTMM, opts)
+    if (pristine("savePath")) form.setFieldValue("savePath", preferenceDefaults.savePath, opts)
+    if (pristine("contentLayout")) form.setFieldValue("contentLayout", preferenceDefaults.contentLayout, opts)
+    if (pristine("tempPathEnabled")) form.setFieldValue("tempPathEnabled", preferenceDefaults.tempPathEnabled, opts)
+    if (pristine("tempPath")) form.setFieldValue("tempPath", preferenceDefaults.tempPath, opts)
+    if (pristine("startPaused")) form.setFieldValue("startPaused", preferenceDefaults.startPaused, opts)
+  }, [form, addTorrentPreferences.loaded, preferenceDefaults])
 
   const setSavePath = useCallback((path: string) => {
     form.setFieldValue("savePath", path)
@@ -639,6 +657,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
     highlightedIndex: saveHighlightedIndex,
     showSuggestions: showSaveSuggestions,
     inputRef: savePathInputRef,
+    listRef: savePathListRef,
   } = usePathAutocomplete(setSavePath, instanceId);
 
   const {
@@ -649,6 +668,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
     highlightedIndex: tempHighlightedIndex,
     showSuggestions: showTempSuggestions,
     inputRef: tempPathInputRef,
+    listRef: tempPathListRef,
   } = usePathAutocomplete(setTempPath, instanceId);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -796,6 +816,17 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
+      <ManualCrossSeedDialog
+        instanceId={instanceId}
+        open={manualCrossSeedFile !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setManualCrossSeedFile(null)
+          }
+        }}
+        initialFile={manualCrossSeedFile}
+        onApplied={() => setOpen(false)}
+      />
       {controlledOpen === undefined && (
         <DialogTrigger asChild>
           <Button>
@@ -1059,6 +1090,32 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
                   </form.Field>
                 )}
 
+                {activeTab === "file" && (
+                  <form.Subscribe selector={(state) => [state.values.torrentFiles, state.values.urls] as const}>
+                    {([files, urls]) => {
+                      if (!files || !canOfferManualCrossSeed({ fileCount: files.length, urlText: urls ?? "" })) {
+                        return null
+                      }
+                      return (
+                        <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">{t("manualCrossSeed.addOptionTitle")}</p>
+                            <p className="text-xs text-muted-foreground">{t("manualCrossSeed.addOptionDescription")}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setManualCrossSeedFile(files[0])}
+                          >
+                            {t("manualCrossSeed.addOptionButton")}
+                          </Button>
+                        </div>
+                      )
+                    }}
+                  </form.Subscribe>
+                )}
+
                 {/* Basic Toggles */}
                 <div className="flex items-center justify-center gap-8">
                   <form.Field name="startPaused">
@@ -1311,7 +1368,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
                                 <Input
                                   id="savePath"
                                   ref={supportsPathAutocomplete ? savePathInputRef : undefined}
-                                  placeholder={preferences?.save_path || t("addTorrentDialog.options.savePathPlaceholder")}
+                                  placeholder={preferenceDefaults.savePath || t("addTorrentDialog.options.savePathPlaceholder")}
                                   autoComplete="off"
                                   spellCheck={false}
                                   value={field.state.value}
@@ -1327,7 +1384,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
 
                                 {supportsPathAutocomplete && showSaveSuggestions && saveSuggestions.length > 0 && (
                                   <div className="relative">
-                                    <div className="absolute z-50 mt-1 left-0 right-0 rounded-md border bg-popover text-popover-foreground shadow-md">
+                                    <div ref={savePathListRef} className="absolute z-50 mt-1 left-0 right-0 rounded-md border bg-popover text-popover-foreground shadow-md">
                                       <div className="max-h-55 overflow-y-auto py-1">
                                         {saveSuggestions.map((entry, idx) => (
                                           <button
@@ -1386,7 +1443,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
                                           <Input
                                             id="tempPath"
                                             ref={supportsPathAutocomplete ? tempPathInputRef : undefined}
-                                            placeholder={preferences?.temp_path || t("addTorrentDialog.options.tempPathPlaceholder")}
+                                            placeholder={preferenceDefaults.tempPath || t("addTorrentDialog.options.tempPathPlaceholder")}
                                             autoComplete="off"
                                             spellCheck={false}
                                             value={field.state.value}
@@ -1402,7 +1459,7 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
 
                                           {supportsPathAutocomplete && showTempSuggestions && tempSuggestions.length > 0 && (
                                             <div className="relative">
-                                              <div className="absolute z-50 mt-1 left-0 right-0 rounded-md border bg-popover text-popover-foreground shadow-md">
+                                              <div ref={tempPathListRef} className="absolute z-50 mt-1 left-0 right-0 rounded-md border bg-popover text-popover-foreground shadow-md">
                                                 <div className="max-h-55 overflow-y-auto py-1">
                                                   {tempSuggestions.map((entry, idx) => (
                                                     <button
@@ -1606,15 +1663,15 @@ export function AddTorrentDialog({ instanceId, open: controlledOpen, onOpenChang
             </Tabs>
 
             {/* Auto-applied Settings Info - Compact */}
-            {(preferences?.add_trackers_enabled && preferences?.add_trackers) || preferences?.excluded_file_names_enabled ? (
+            {addTorrentPreferences.autoAddTrackers || addTorrentPreferences.excludedFileNamesEnabled ? (
               <div className="bg-muted rounded-md p-3 text-xs text-muted-foreground">
                 <p className="font-medium mb-1">{t("addTorrentDialog.options.autoAppliedTitle")}</p>
                 <div className="space-y-0.5">
-                  {preferences?.add_trackers_enabled && preferences?.add_trackers && (
+                  {addTorrentPreferences.autoAddTrackers && (
                     <div>{t("addTorrentDialog.options.autoAddTrackers")}</div>
                   )}
-                  {preferences?.excluded_file_names_enabled && preferences?.excluded_file_names && (
-                    <div>{t("addTorrentDialog.options.fileExclusions", { value: preferences.excluded_file_names })}</div>
+                  {addTorrentPreferences.excludedFileNamesEnabled && addTorrentPreferences.excludedFileNames && (
+                    <div>{t("addTorrentDialog.options.fileExclusions", { value: addTorrentPreferences.excludedFileNames })}</div>
                   )}
                 </div>
               </div>

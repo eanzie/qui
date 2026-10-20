@@ -16,6 +16,8 @@ import (
 	qbt "github.com/autobrr/go-qbittorrent"
 	"github.com/stretchr/testify/require"
 
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/internal/fsops/local"
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/pkg/hardlinktree"
@@ -72,13 +74,14 @@ func TestMatchTorrentsInInstance_ReflinkCandidates(t *testing.T) {
 			}
 			candidate := hardlinkTestCandidate(candidateDir)
 			candidate.Name = tt.candidateName
-			initial := service.determineLocalMatchType(
+			initial, ok := service.localMatchPrefilter(
+				true,
 				source,
 				service.releaseCache.Parse(source.Name),
 				candidate,
 				normalizePathForComparison(source.ContentPath),
-				hardlinkTestMatchCtx(service, sourceDir),
 			)
+			require.True(t, ok)
 			require.Equal(t, tt.wantInitial, initial)
 
 			matches := service.matchTorrentsInInstance(
@@ -124,7 +127,7 @@ func TestLocalLinkedMatchType_HardlinkPrecedesReflink(t *testing.T) {
 	require.Zero(t, queries)
 }
 
-func TestMatchTorrentsInInstance_MetadataLessSkipsLinkedVerification(t *testing.T) {
+func TestMatchTorrentsInInstance_MetadataLessIsNotACrossSeed(t *testing.T) {
 	tests := []struct {
 		name                 string
 		sourceHasContentPath bool
@@ -169,6 +172,7 @@ func TestMatchTorrentsInInstance_MetadataLessSkipsLinkedVerification(t *testing.
 				candidate.ContentPath = ""
 			}
 			matchCtx := hardlinkTestMatchCtx(service, sourceDir)
+			matchCtx.sourceContentPath = source.ContentPath
 
 			matches := service.matchTorrentsInInstance(
 				context.Background(),
@@ -183,8 +187,8 @@ func TestMatchTorrentsInInstance_MetadataLessSkipsLinkedVerification(t *testing.
 				matchCtx,
 			)
 
-			require.Len(t, matches, 1)
-			require.Equal(t, matchTypeName, matches[0].MatchType)
+			// A torrent without metadata holds no data, so it is not a cross-seed.
+			require.Empty(t, matches)
 			require.Zero(t, queries)
 			require.NoError(t, matchCtx.sourceFilesErr)
 			require.NoError(t, matchCtx.candidateFilesErr)
@@ -440,6 +444,49 @@ func TestLocalLinkedMatchType_GatesAndErrors(t *testing.T) {
 	})
 }
 
+// The allocation check is a host syscall, so a source qui reaches through a
+// remote backend must never feed it paths. Identity is local-only today, so
+// FindLocalMatches cannot build a non-local source yet; the context is built by hand.
+func TestLocalLinkedMatchType_SkipsAllocationCheckOffLocal(t *testing.T) {
+	files := qbt.TorrentFiles{{Name: "shared.mkv", Size: 4}}
+	sourceDir, candidateDir := writeIndependentLocalMatchFiles(t, files, files)
+
+	for _, tt := range []struct {
+		name           string
+		sourceLocal    bool
+		candidateLocal bool
+		wantType       string
+		wantQueries    bool
+	}{
+		{name: "local source", sourceLocal: true, candidateLocal: true, wantType: matchTypeReflink, wantQueries: true},
+		{name: "non-local source", sourceLocal: false, candidateLocal: true, wantType: ""},
+		{name: "non-local candidate", sourceLocal: true, candidateLocal: false, wantType: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			service := hardlinkTestService(map[string]qbt.TorrentFiles{
+				normalizeHash(hlSourceHash):    files,
+				normalizeHash(hlCandidateHash): files,
+			})
+			var queries int
+			service.filesShareAllocation = func(string, string) (bool, error) {
+				queries++
+				return true, nil
+			}
+			matchCtx := hardlinkTestMatchCtx(service, sourceDir)
+			matchCtx.sourceLocal = tt.sourceLocal
+
+			matchType := service.localLinkedMatchType(
+				matchCtx,
+				&models.Instance{ID: 1, HasLocalFilesystemAccess: tt.candidateLocal},
+				hardlinkTestCandidate(candidateDir),
+			)
+			require.Equal(t, tt.wantType, matchType)
+			require.Equal(t, tt.wantQueries, queries > 0)
+			require.NoError(t, matchCtx.verificationErr)
+		})
+	}
+}
+
 type reflinkFindLocalMatchesSyncManager struct {
 	localMatchSyncManager
 	source    qbt.Torrent
@@ -474,10 +521,10 @@ func TestFindLocalMatches_ReflinkVerificationErrorPolicy(t *testing.T) {
 	}
 	candidate := *hardlinkTestCandidate(candidateDir)
 	syncManager := &reflinkFindLocalMatchesSyncManager{
-		localMatchSyncManager: localMatchSyncManager{files: map[string]qbt.TorrentFiles{
+		files: map[string]qbt.TorrentFiles{
 			normalizeHash(hlSourceHash):    files,
 			normalizeHash(hlCandidateHash): files,
-		}},
+		},
 		source:    source,
 		candidate: candidate,
 	}
@@ -490,6 +537,7 @@ func TestFindLocalMatches_ReflinkVerificationErrorPolicy(t *testing.T) {
 			return false, queryErr
 		},
 	}
+	service.SetBackendPool(fsops.NewPool(service.instanceStore, local.NewBackend()))
 
 	response, err := service.FindLocalMatches(context.Background(), 1, source.Hash, false)
 	require.NoError(t, err)
@@ -509,7 +557,7 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 
 	cleanRoot, err := filepath.Abs(root)
 	require.NoError(t, err)
-	testRoot, err := os.MkdirTemp(cleanRoot, "qui-crossseed-reflink-") //nolint:gosec // Opt-in test root; containment is verified below.
+	testRoot, err := os.MkdirTemp(cleanRoot, "qui-crossseed-reflink-")
 	require.NoError(t, err)
 	testRoot, err = filepath.Abs(testRoot)
 	require.NoError(t, err)
@@ -518,7 +566,7 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 	require.NotEqual(t, "..", relativeTestRoot)
 	require.False(t, strings.HasPrefix(relativeTestRoot, ".."+string(filepath.Separator)))
 	t.Cleanup(func() {
-		require.NoError(t, os.RemoveAll(testRoot)) //nolint:gosec // Verified test temp directory under cleanRoot.
+		require.NoError(t, os.RemoveAll(testRoot))
 	})
 
 	fileName := "shared.mkv"
@@ -527,7 +575,7 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 	copyDir := filepath.Join(testRoot, "copy")
 	hardlinkDir := filepath.Join(testRoot, "hardlink")
 	for _, dir := range []string{sourceDir, cloneDir, copyDir, hardlinkDir} {
-		require.NoError(t, os.MkdirAll(dir, 0o755)) //nolint:gosec // Path is under verified test temp directory.
+		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
 
 	data := make([]byte, 3*64*1024)
@@ -537,8 +585,8 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 	clonePath := filepath.Join(cloneDir, fileName)
 	copyPath := filepath.Join(copyDir, fileName)
 	hardlinkPath := filepath.Join(hardlinkDir, fileName)
-	require.NoError(t, os.WriteFile(sourcePath, data, 0o600)) //nolint:gosec // Path is under verified test temp directory.
-	require.NoError(t, os.WriteFile(copyPath, data, 0o600))   //nolint:gosec // Path is under verified test temp directory.
+	require.NoError(t, os.WriteFile(sourcePath, data, 0o600))
+	require.NoError(t, os.WriteFile(copyPath, data, 0o600))
 	require.NoError(t, os.Link(sourcePath, hardlinkPath))
 	_, err = reflinktree.Create(&hardlinktree.TreePlan{
 		RootDir: cloneDir,
@@ -572,7 +620,7 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 		hardlinkTestCandidate(hardlinkDir),
 	))
 
-	cloneFile, err := os.OpenFile(clonePath, os.O_WRONLY, 0) //nolint:gosec // Path is under verified test temp directory.
+	cloneFile, err := os.OpenFile(clonePath, os.O_WRONLY, 0)
 	require.NoError(t, err)
 	_, err = cloneFile.WriteAt([]byte{0xff}, 0)
 	require.NoError(t, err)
@@ -587,7 +635,7 @@ func TestLocalLinkedMatchTypeReFS(t *testing.T) {
 	replacement := make([]byte, len(data))
 	_, err = rand.Read(replacement)
 	require.NoError(t, err)
-	cloneFile, err = os.OpenFile(clonePath, os.O_WRONLY, 0) //nolint:gosec // Path is under verified test temp directory.
+	cloneFile, err = os.OpenFile(clonePath, os.O_WRONLY, 0)
 	require.NoError(t, err)
 	_, err = cloneFile.WriteAt(replacement, 0)
 	require.NoError(t, err)
@@ -621,7 +669,7 @@ func writeLocalMatchFiles(t *testing.T, base string, files qbt.TorrentFiles) {
 	t.Helper()
 
 	for _, file := range files {
-		if _, ok := resolveLocalTorrentFile(base, file.Name); !ok {
+		if _, ok := resolveLocalTorrentFile(fsops.HostPaths, base, file.Name); !ok {
 			continue
 		}
 		fullPath := filepath.Join(base, filepath.FromSlash(strings.ReplaceAll(file.Name, `\`, "/")))

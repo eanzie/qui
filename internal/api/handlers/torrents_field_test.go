@@ -16,6 +16,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/autobrr/go-cache/ttlcache"
 	qbt "github.com/autobrr/go-qbittorrent"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,169 @@ func TestGetTorrentField_MagnetURIReturnsSelectedLinks(t *testing.T) {
 	}, response.Values)
 }
 
+// TestGetTorrentField_FullPathReturnsContentPath covers a renamed torrent (issue #3179).
+func TestGetTorrentField_FullPathReturnsContentPath(t *testing.T) {
+	t.Parallel()
+
+	instanceStore, syncManager, instanceIDs := createTorrentFieldTestHarness(t, map[string][]qbt.Torrent{
+		"alpha": {
+			{Name: "Renamed Show", Hash: "aaa", SavePath: "/data/tv", ContentPath: "/data/tv/Show.S01.1080p.WEB-GRP"},
+			{Name: "Pending", Hash: "bbb", SavePath: "/data/tv"},
+		},
+	})
+	handler := NewTorrentsHandler(syncManager, nil, instanceStore)
+
+	for name, body := range map[string]map[string]any{
+		"select all":      {"field": "full_path", "sort": "name", "order": "asc"},
+		"explicit hashes": {"field": "full_path", "hashes": []string{"aaa", "bbb"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			handler.GetTorrentField(rec, newTorrentFieldRequest(t, instanceIDs["alpha"], body))
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var response quiqbt.TorrentFieldResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+			require.Equal(t, []string{"/data/tv/Show.S01.1080p.WEB-GRP"}, response.Values)
+		})
+	}
+}
+
+// TestGetTorrentField_MagnetURIExplicitHashes pins magnet values through the
+// explicit-hash field path. List payloads no longer carry magnet_uri (issue
+// #2328), so this endpoint is the only source for the copy-magnet action.
+func TestGetTorrentField_MagnetURIExplicitHashes(t *testing.T) {
+	t.Parallel()
+
+	instanceStore, syncManager, instanceIDs := createTorrentFieldTestHarness(t, map[string][]qbt.Torrent{
+		"alpha": {
+			{Name: "Alpha", Hash: "aaa", MagnetURI: "magnet:?xt=urn:btih:aaa"},
+			{Name: "Beta", Hash: "bbb", MagnetURI: "magnet:?xt=urn:btih:bbb"},
+			{Name: "Gamma", Hash: "ccc", MagnetURI: "magnet:?xt=urn:btih:ccc"},
+		},
+	})
+
+	handler := NewTorrentsHandler(syncManager, nil, instanceStore)
+	req := newTorrentFieldRequest(t, instanceIDs["alpha"], map[string]any{
+		"field":  "magnet_uri",
+		"hashes": []string{"aaa", "ccc"},
+	})
+
+	rec := httptest.NewRecorder()
+	handler.GetTorrentField(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var response quiqbt.TorrentFieldResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.ElementsMatch(t, []string{
+		"magnet:?xt=urn:btih:aaa",
+		"magnet:?xt=urn:btih:ccc",
+	}, response.Values)
+}
+
+// TestGetTorrentField_MagnetURICrossInstanceFilterScope pins magnet values
+// through the cross-instance filter-scope field path, the third MagnetURI
+// read site (issue #2328).
+func TestGetTorrentField_MagnetURICrossInstanceFilterScope(t *testing.T) {
+	t.Parallel()
+
+	instanceStore, syncManager, instanceIDs := createTorrentFieldTestHarness(t, map[string][]qbt.Torrent{
+		"alpha": {
+			{Name: "Alpha", Hash: "aaa", MagnetURI: "magnet:?xt=urn:btih:aaa"},
+		},
+		"beta": {
+			{Name: "Beta", Hash: "bbb", MagnetURI: "magnet:?xt=urn:btih:bbb"},
+			{Name: "Gamma", Hash: "ccc"},
+		},
+	})
+
+	handler := NewTorrentsHandler(syncManager, nil, instanceStore)
+	req := newTorrentFieldRequest(t, allInstancesID, map[string]any{
+		"field":       "magnet_uri",
+		"instanceIds": []int{instanceIDs["alpha"], instanceIDs["beta"]},
+	})
+
+	rec := httptest.NewRecorder()
+	handler.GetTorrentField(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var response quiqbt.TorrentFieldResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.ElementsMatch(t, []string{
+		"magnet:?xt=urn:btih:aaa",
+		"magnet:?xt=urn:btih:bbb",
+	}, response.Values)
+}
+
+// TestGetTorrentField_CrossInstancePartialResultsRejected pins the filter-scope
+// partial guard for non-tags fields: a truncated magnet list behind a 200 would
+// read as complete, so a failed instance must fail the whole request.
+func TestGetTorrentField_CrossInstancePartialResultsRejected(t *testing.T) {
+	t.Parallel()
+
+	instanceStore, syncManager, instanceIDs := createTorrentFieldTestHarness(t, map[string][]qbt.Torrent{
+		"alpha": {
+			{Name: "Alpha", Hash: "aaa", MagnetURI: "magnet:?xt=urn:btih:aaa"},
+		},
+	})
+
+	// A second instance with no pool client and an unreachable address: its
+	// per-instance fetch errors, which marks the cross-instance aggregate partial.
+	broken, err := instanceStore.Create(context.Background(), "beta", "http://127.0.0.1:1", "user", "pass", nil, nil, false, nil)
+	require.NoError(t, err)
+
+	handler := NewTorrentsHandler(syncManager, nil, instanceStore)
+	req := newTorrentFieldRequest(t, allInstancesID, map[string]any{
+		"field":       "magnet_uri",
+		"instanceIds": []int{instanceIDs["alpha"], broken.ID},
+	})
+
+	rec := httptest.NewRecorder()
+	handler.GetTorrentField(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+}
+
+// TestGetTorrentField_SingleInstanceFormatsLikeUnified pins the single-instance
+// route to the unified formatters: an uppercase hash and a trimmed name, so a
+// copied value matches whichever view it came from. The exclude by v1 hash
+// covers the hybrid case on this route.
+func TestGetTorrentField_SingleInstanceFormatsLikeUnified(t *testing.T) {
+	t.Parallel()
+
+	instanceStore, syncManager, instanceIDs := createTorrentFieldTestHarness(t, map[string][]qbt.Torrent{
+		"alpha": {
+			{Name: "  Alpha  ", Hash: "aaa", InfohashV1: "aaa", AddedOn: 2},
+			{Name: "Hybrid", Hash: "ddd", InfohashV1: "eee", AddedOn: 1},
+		},
+	})
+
+	handler := NewTorrentsHandler(syncManager, nil, instanceStore)
+	for field, want := range map[string][]string{
+		"hash": {"AAA"},
+		"name": {"Alpha"},
+	} {
+		req := newTorrentFieldRequest(t, instanceIDs["alpha"], map[string]any{
+			"field":         field,
+			"excludeHashes": []string{"EEE"},
+		})
+
+		rec := httptest.NewRecorder()
+		handler.GetTorrentField(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var response quiqbt.TorrentFieldResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+		require.Equal(t, want, response.Values, field)
+	}
+}
+
 func TestListCrossInstanceTorrentsSkipsFreshData(t *testing.T) {
 	handler, release := createStaleCrossInstanceReadHarness(t)
 	defer release()
@@ -187,7 +351,7 @@ func createTorrentFieldTestHarness(t *testing.T, torrentsByInstanceName map[stri
 	require.NoError(t, err)
 
 	errorStore := models.NewInstanceErrorStore(db)
-	clientPool, err := quiqbt.NewClientPool(instanceStore, errorStore)
+	clientPool, err := quiqbt.NewClientPool(instanceStore, errorStore, 60*time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = clientPool.Close()
@@ -230,7 +394,7 @@ func createStaleCrossInstanceReadHarness(t *testing.T) (*TorrentsHandler, func()
 	instanceStore, err := models.NewInstanceStore(db, []byte("01234567890123456789012345678901"))
 	require.NoError(t, err)
 	errorStore := models.NewInstanceErrorStore(db)
-	clientPool, err := quiqbt.NewClientPool(instanceStore, errorStore)
+	clientPool, err := quiqbt.NewClientPool(instanceStore, errorStore, 60*time.Second)
 	require.NoError(t, err)
 
 	instance, err := instanceStore.Create(context.Background(), "alpha", srv.URL, "user", "pass", nil, nil, false, nil)
@@ -296,6 +460,7 @@ func newStaleCachedClient(t *testing.T, host string, torrents []qbt.Torrent) *qu
 	setUnexportedField(t, client, "isHealthy", true)
 	setUnexportedField(t, client, "lastHealthCheck", time.Now())
 	setUnexportedField(t, client, "syncManager", syncManager)
+	setUnexportedField(t, client, "optimisticUpdates", ttlcache.New[string, *quiqbt.OptimisticTorrentUpdate]())
 
 	return client
 }

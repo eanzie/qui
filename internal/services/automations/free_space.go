@@ -1,18 +1,14 @@
 // Copyright (c) 2025-2026, s0up and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//go:build !windows
-
 package automations
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/qbittorrent"
@@ -41,8 +37,9 @@ func GetFreeSpaceSourceKey(src *models.FreeSpaceSource) string {
 			return FreeSpaceSourceKeyQBittorrent
 		}
 
-		// Clean path for consistent keys
-		cleanPath := filepath.Clean(trimmed)
+		// path, not filepath: the source is a POSIX path on the host that
+		// holds the disk, which is not the qui host when access is over SSH.
+		cleanPath := path.Clean(trimmed)
 		return "path:" + cleanPath
 	default:
 		return FreeSpaceSourceKeyQBittorrent
@@ -59,52 +56,51 @@ func GetFreeSpaceRuleKey(rule *models.Automation) string {
 	return GetFreeSpaceSourceKey(rule.FreeSpaceSource) + fmt.Sprintf("|rule:%d", rule.ID)
 }
 
-// GetFreeSpaceBytesForSource returns the free space in bytes for the given source.
-// This is the preferred function as it doesn't require a full rule.
-func GetFreeSpaceBytesForSource(
-	ctx context.Context,
-	syncManager *qbittorrent.SyncManager,
-	instance *models.Instance,
-	src *models.FreeSpaceSource,
-) (int64, error) {
+// qbtFreeSpace returns qBittorrent's reported free space for the instance.
+func qbtFreeSpace(ctx context.Context, syncManager *qbittorrent.SyncManager, instance *models.Instance) (int64, error) {
+	if syncManager == nil {
+		return 0, errors.New("syncManager is nil")
+	}
+	if instance == nil {
+		return 0, errors.New("instance required for qBittorrent free space source")
+	}
+	freeSpace, err := syncManager.GetFreeSpace(ctx, instance.ID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get free space from qBittorrent: %w", err)
+	}
+	return freeSpace, nil
+}
+
+// freeSpaceBytes reads the free space of src. Only a path source resolves a
+// backend, and it fails rather than fall back to qBittorrent's value, which
+// can measure a different disk.
+func (s *Service) freeSpaceBytes(ctx context.Context, instance *models.Instance, src *models.FreeSpaceSource) (int64, error) {
 	resolved := resolveFreeSpaceSource(src)
 
 	switch resolved.Type {
 	case models.FreeSpaceSourceQBittorrent, "":
-		// Default: use qBittorrent's reported free space
-		if syncManager == nil {
-			return 0, errors.New("syncManager is nil")
-		}
-		if instance == nil {
-			return 0, errors.New("instance required for qBittorrent free space source")
-		}
-		freeSpace, err := syncManager.GetFreeSpace(ctx, instance.ID)
-		if err != nil {
-			return 0, fmt.Errorf("failed to get free space from qBittorrent: %w", err)
-		}
-		return freeSpace, nil
+		return qbtFreeSpace(ctx, s.syncManager, instance)
 
 	case models.FreeSpaceSourcePath:
-		// Read free space from local filesystem path
-		if instance == nil || !instance.HasLocalFilesystemAccess {
-			return 0, errors.New("path-based free space source requires local filesystem access")
+		// The pool's fresh row decides the mode, not the caller's snapshot.
+		backend, fsInstance, err := s.backendPool.Require(ctx, instance.ID, models.CapabilityRead)
+		if err != nil {
+			return 0, fmt.Errorf("no filesystem backend for free space path: %w", err)
 		}
-		return getLocalFreeSpaceBytes(resolved.Path)
+		if windowsLocalPathSource(fsInstance) {
+			return 0, errors.New("path-based free space source is not supported on Windows")
+		}
+		p := backend.Paths().Clean(strings.TrimSpace(resolved.Path))
+		if p == "" || p == "." {
+			return 0, errors.New("free space source path is empty")
+		}
+		result, err := backend.Statfs(ctx, p)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get filesystem stats for %s: %w", p, err)
+		}
+		return result.BytesAvailable, nil
 
 	default:
-		// Future: add "agentPath" type for remote agent-based free space checks
 		return 0, fmt.Errorf("unsupported free space source type: %s", resolved.Type)
 	}
-}
-
-// getLocalFreeSpaceBytes returns the available bytes on the filesystem containing the given path.
-func getLocalFreeSpaceBytes(path string) (int64, error) {
-	var stat unix.Statfs_t
-	if err := unix.Statfs(path, &stat); err != nil {
-		return 0, fmt.Errorf("failed to get filesystem stats for %s: %w", path, err)
-	}
-	// Bavail is the number of free blocks available to unprivileged users
-	// Bsize is the fundamental block size
-	//nolint:gosec // uint64 to int64 conversion is safe: disk free space won't exceed int64 max (~8 EiB)
-	return int64(stat.Bavail) * int64(stat.Bsize), nil
 }

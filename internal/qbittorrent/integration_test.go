@@ -87,8 +87,8 @@ func TestSyncManager_FilteringAndSorting(t *testing.T) {
 		stats := sm.calculateStats(torrents)
 
 		assert.Equal(t, 10, stats.Total, "Total should be 10")
-		assert.Greater(t, stats.TotalDownloadSpeed, 0, "Should have download speed")
-		assert.Greater(t, stats.TotalUploadSpeed, 0, "Should have upload speed")
+		assert.Positive(t, stats.TotalDownloadSpeed, "Should have download speed")
+		assert.Positive(t, stats.TotalUploadSpeed, "Should have upload speed")
 
 		assert.Positive(t, stats.TotalDownloadData, "Should have session download data")
 		assert.Positive(t, stats.TotalUploadData, "Should have session upload data")
@@ -130,6 +130,21 @@ func TestSyncManager_TorrentIsUnregistered_TrackerUpdating(t *testing.T) {
 
 		assert.False(t, sm.torrentIsUnregistered(&torrent))
 	})
+}
+
+func TestSyncManager_DetermineTrackerHealth_UnknownHTTPError(t *testing.T) {
+	sm := &SyncManager{}
+	// libtorrent reports an HTTP status without a reason phrase as
+	// "<code> (unknown HTTP error)". The tracker failed to answer, so the
+	// torrent is not unregistered.
+	torrent := qbt.Torrent{
+		AddedOn: time.Now().Add(-2 * time.Hour).Unix(),
+		Trackers: []qbt.TorrentTracker{
+			{Status: qbt.TrackerStatusNotWorking, Message: "429 (unknown HTTP error)"},
+		},
+	}
+
+	assert.Equal(t, TrackerHealthDown, sm.determineTrackerHealth(&torrent))
 }
 
 func TestSyncManager_TorrentTrackerIsDown_TrackerUpdating(t *testing.T) {
@@ -905,10 +920,10 @@ func TestSyncManager_SortTorrentsByStatus(t *testing.T) {
 		return out
 	}
 
-	sm.sortTorrentsByStatus(torrents, true, true)
+	sm.sortTorrents(torrents, "state", true, true, nil)
 	assert.Equal(t, []string{"paused_old", "paused", "uploading_old", "uploading", "stalled_dl", "downloading", "down", "unreg"}, hashes(torrents))
 
-	sm.sortTorrentsByStatus(torrents, false, true)
+	sm.sortTorrents(torrents, "state", false, true, nil)
 	assert.Equal(t, []string{"unreg", "down", "downloading", "stalled_dl", "uploading", "uploading_old", "paused", "paused_old"}, hashes(torrents))
 }
 
@@ -934,7 +949,7 @@ func TestSyncManager_SortTorrentsByStatusUsesCachedTrackerHealth(t *testing.T) {
 		return out
 	}
 
-	sm.sortTorrentsByStatusWithTrackerHealth(torrents, false, true, cachedHealth)
+	sm.sortTorrents(torrents, "state", false, true, cachedHealth)
 	assert.Equal(t, []string{"unregistered", "down", "error", "healthy"}, hashes(torrents))
 
 	unsupportedTorrents := []qbt.Torrent{
@@ -944,7 +959,7 @@ func TestSyncManager_SortTorrentsByStatusUsesCachedTrackerHealth(t *testing.T) {
 		{Hash: "error", Name: "bravo", State: qbt.TorrentStateDownloading, AddedOn: 100},
 		{Hash: "healthy", Name: "Alpha", State: qbt.TorrentStateDownloading, AddedOn: 100},
 	}
-	sm.sortTorrentsByStatusWithTrackerHealth(unsupportedTorrents, false, false, cachedHealth)
+	sm.sortTorrents(unsupportedTorrents, "state", false, false, cachedHealth)
 	assert.Equal(t, []string{"healthy", "error", "down", "unregistered"}, hashes(unsupportedTorrents))
 }
 
@@ -974,10 +989,10 @@ func TestSyncManager_SortTorrentsByStatus_TieBreakAddedOn(t *testing.T) {
 		return out
 	}
 
-	sm.sortTorrentsByStatus(torrents, true, false)
+	sm.sortTorrents(torrents, "state", true, false, nil)
 	assert.Equal(t, []string{"older", "newer"}, hashes(torrents))
 
-	sm.sortTorrentsByStatus(torrents, false, false)
+	sm.sortTorrents(torrents, "state", false, false, nil)
 	assert.Equal(t, []string{"newer", "older"}, hashes(torrents))
 }
 
@@ -998,7 +1013,7 @@ func TestSyncManager_SortTorrentsByStatus_StoppedAfterSeeding(t *testing.T) {
 		return out
 	}
 
-	sm.sortTorrentsByStatus(torrents, false, false)
+	sm.sortTorrents(torrents, "state", false, false, nil)
 	assert.Equal(t, []string{"seeding", "stopped", "stalled"}, hashes(torrents))
 }
 
@@ -1068,6 +1083,17 @@ func TestSyncManager_SearchFunctionality(t *testing.T) {
 		for _, result := range results {
 			assert.Contains(t, result.Name, ".iso", "Result should be an ISO file: %s", result.Name)
 		}
+	})
+
+	t.Run("filterTorrentsByGlob episode example skips season packs", func(t *testing.T) {
+		// The search help offers this pattern; ? would also hit a season-only name.
+		results := sm.filterTorrentsByGlob([]qbt.Torrent{
+			{Name: "Some.Show.S02E03.1080p.WEB-DL.DDP5.1.H.264-GRP"},
+			{Name: "Some.Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP"},
+		}, "*S[0-9][0-9]E[0-9][0-9]*")
+
+		assert.Len(t, results, 1)
+		assert.Equal(t, "Some.Show.S02E03.1080p.WEB-DL.DDP5.1.H.264-GRP", results[0].Name)
 	})
 
 	t.Run("normalizeForSearch works correctly", func(t *testing.T) {
@@ -1525,13 +1551,13 @@ func TestSyncManager_ValidatedTrackerMapping_DeepCopy(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 
-	// Get a copy
-	copy := sm.getValidatedTrackerMapping(1)
-	assert.NotNil(t, copy)
+	// Get a mappingCopy
+	mappingCopy := sm.getValidatedTrackerMapping(1)
+	assert.NotNil(t, mappingCopy)
 
-	// Modify the copy
-	copy.HashToDomains["hash1"]["modified.com"] = struct{}{}
-	copy.DomainToHashes["modified.com"] = map[string]struct{}{"hash1": {}}
+	// Modify the mappingCopy
+	mappingCopy.HashToDomains["hash1"]["modified.com"] = struct{}{}
+	mappingCopy.DomainToHashes["modified.com"] = map[string]struct{}{"hash1": {}}
 
 	// Original should be unchanged
 	original := sm.validatedTrackerMapping[1]

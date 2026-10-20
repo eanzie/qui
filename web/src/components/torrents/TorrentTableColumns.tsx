@@ -20,7 +20,7 @@ import {
   getLinuxTags,
   getLinuxTracker
 } from "@/lib/incognito"
-import { isNeverCompletedTimestamp } from "@/lib/dateTimeUtils"
+import { formatTimestamp as formatStoredTimestamp, isNeverCompletedTimestamp } from "@/lib/dateTimeUtils"
 import { formatSpeedWithUnit, type SpeedUnit } from "@/lib/speedUnits"
 import { getStateLabel } from "@/lib/torrent-state-utils"
 import {
@@ -30,8 +30,9 @@ import {
 } from "@/lib/tracker-customizations"
 import { resolveTrackerIconSrc } from "@/lib/tracker-icons"
 import { cn, formatBytes, formatDuration, getRatioColor } from "@/lib/utils"
-import type { AppPreferences, CrossInstanceTorrent, Torrent } from "@/types"
-import type { CellContext, ColumnDef, HeaderContext } from "@tanstack/react-table"
+import type { CrossInstanceTorrent, Torrent } from "@/types"
+import type { CellContext, HeaderContext, RowSelectionState } from "@tanstack/react-table"
+import type { TorrentTableColumnDef, TorrentTableFeatures } from "./tanstackTableFeatures"
 import {
   AlertCircle,
   ArrowDownAZ,
@@ -74,12 +75,12 @@ function formatEta(seconds: number): string {
   return `${secs}s`
 }
 
-function formatReannounce(seconds: number, t?: TFunction): string {
+function formatReannounce(seconds: number, t: TFunction): string {
   // Negative values mean "never" or "not applicable"
   if (seconds < 0) return "-"
 
   // Zero means "now" (just announced or about to announce)
-  if (seconds === 0) return t?.("tableColumns.now") ?? "now"
+  if (seconds === 0) return t("tableColumns.now")
 
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
@@ -185,43 +186,43 @@ const STATUS_SORT_ORDER: Record<string, number> = {
   missingFiles: 81,
 }
 
-const getTrackerAwareStatusLabel = (torrent: Torrent, supportsTrackerHealth: boolean, t?: TFunction): string => {
+const getTrackerAwareStatusLabel = (torrent: Torrent, supportsTrackerHealth: boolean, t: TFunction): string => {
   if (supportsTrackerHealth) {
     if (torrent.tracker_health === "unregistered") {
-      return t?.("tableColumns.unregistered") ?? "Unregistered"
+      return t("tableColumns.unregistered")
     }
     if (torrent.tracker_health === "tracker_down") {
-      return t?.("tableColumns.trackerDown") ?? "Tracker Down"
+      return t("tableColumns.trackerDown")
     }
     if (torrent.tracker_health === "tracker_error") {
-      return t?.("tableColumns.trackerError") ?? "Tracker Error"
+      return t("tableColumns.trackerError")
     }
   }
 
   return getStateLabel(torrent.state, t)
 }
 
-const getTrackerAwareStatusSortMeta = (torrent: Torrent, supportsTrackerHealth: boolean, t?: TFunction) => {
+const getTrackerAwareStatusSortMeta = (torrent: Torrent, supportsTrackerHealth: boolean, t: TFunction) => {
   if (supportsTrackerHealth) {
     if (torrent.tracker_health === "unregistered") {
       return {
         priority: 0,
         statePriority: -1,
-        label: t?.("tableColumns.unregistered") ?? "Unregistered",
+        label: t("tableColumns.unregistered"),
       }
     }
     if (torrent.tracker_health === "tracker_down") {
       return {
         priority: 1,
         statePriority: -1,
-        label: t?.("tableColumns.trackerDown") ?? "Tracker Down",
+        label: t("tableColumns.trackerDown"),
       }
     }
     if (torrent.tracker_health === "tracker_error") {
       return {
         priority: 2,
         statePriority: -1,
-        label: t?.("tableColumns.trackerError") ?? "Tracker Error",
+        label: t("tableColumns.trackerError"),
       }
     }
   }
@@ -299,7 +300,7 @@ const getStatusIcon = (state: string, trackerHealth?: string | null, supportsTra
 
 type StatusBadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
-const compareTrackerAwareStatus = (torrentA: Torrent, torrentB: Torrent, supportsTrackerHealth: boolean, t?: TFunction): number => {
+const compareTrackerAwareStatus = (torrentA: Torrent, torrentB: Torrent, supportsTrackerHealth: boolean, t: TFunction): number => {
   const metaA = getTrackerAwareStatusSortMeta(torrentA, supportsTrackerHealth, t)
   const metaB = getTrackerAwareStatusSortMeta(torrentB, supportsTrackerHealth, t)
 
@@ -333,7 +334,7 @@ const compareTrackerAwareStatus = (torrentA: Torrent, torrentB: Torrent, support
 const getStatusBadgeMeta = (
   torrent: Torrent,
   supportsTrackerHealth: boolean,
-  t?: TFunction
+  t: TFunction
 ): {
   label: string
   variant: StatusBadgeVariant
@@ -366,12 +367,12 @@ const getStatusBadgeMeta = (
 
   if (supportsTrackerHealth) {
     if (trackerHealth === "tracker_down") {
-      label = t?.("tableColumns.trackerDown") ?? "Tracker Down"
+      label = t("tableColumns.trackerDown")
       badgeVariant = "outline"
       badgeClass = "text-yellow-500 border-yellow-500/40 bg-yellow-500/10"
       iconClass = "text-yellow-500"
     } else if (trackerHealth === "unregistered") {
-      label = t?.("tableColumns.unregistered") ?? "Unregistered"
+      label = t("tableColumns.unregistered")
       badgeVariant = "outline"
       badgeClass = "text-destructive border-destructive/40 bg-destructive/10"
       iconClass = "text-destructive"
@@ -407,8 +408,8 @@ const getStatusBadgeMeta = (
 
 export type TableViewMode = "normal" | "dense" | "compact"
 
-export const createColumns = (
-  incognitoMode: boolean,
+interface CreateColumnsParams {
+  incognitoMode: boolean
   selectionEnhancers?: {
     shiftPressedRef: { current: boolean }
     lastSelectedIndexRef: { current: number | null }
@@ -421,29 +422,44 @@ export const createColumns = (
     getSelectionIdentity?: (torrent: Torrent) => string
     isAllSelected?: boolean
     excludedFromSelectAll?: Set<string>
-  },
-  speedUnit: SpeedUnit = "bytes",
-  trackerIcons?: Record<string, string>,
-  formatTimestamp?: (timestamp: number) => string,
-  instancePreferences?: AppPreferences | null,
-  supportsTrackerHealth: boolean = true,
-  showInstanceColumn: boolean = false,
-  viewMode: TableViewMode = "normal",
-  trackerCustomizationLookup?: TrackerCustomizationLookup,
-  includeSelectionColumn: boolean = true,
-  t?: TFunction
-): ColumnDef<Torrent>[] => {
+  }
+  speedUnit?: SpeedUnit
+  trackerIcons?: Record<string, string>
+  formatTimestamp?: (timestamp: number) => string
+  instanceMaxRatio?: number
+  supportsTrackerHealth?: boolean
+  showInstanceColumn?: boolean
+  viewMode?: TableViewMode
+  trackerCustomizationLookup?: TrackerCustomizationLookup
+  includeSelectionColumn?: boolean
+}
+
+export const createColumns = ({
+  incognitoMode,
+  selectionEnhancers,
+  speedUnit = "bytes",
+  trackerIcons,
+  formatTimestamp = formatStoredTimestamp,
+  instanceMaxRatio,
+  supportsTrackerHealth = true,
+  showInstanceColumn = false,
+  viewMode = "normal",
+  trackerCustomizationLookup,
+  includeSelectionColumn = true,
+}: CreateColumnsParams, t: TFunction): TorrentTableColumnDef[] => {
   // Badge padding classes based on view mode
   const badgePadding = viewMode === "dense" ? "px-1.5 py-0" : ""
-  const instanceLabel = t?.("tableColumns.instance") ?? "Instance"
-  const selectionLabel = t?.("tableColumns.selection") ?? "Selection"
-  const selectAllRowsLabel = t?.("tableColumns.selectAllRows") ?? "Select all"
-  const selectRowLabel = t?.("tableColumns.selectRow") ?? "Select row"
-  const priorityLabel = t?.("tableColumns.priority") ?? "Priority"
-  const statusIconLabel = t?.("tableColumns.statusIcon") ?? "Status Icon"
-  const trackerIconLabel = t?.("tableColumns.trackerIcon") ?? "Tracker Icon"
+  // 16px icon plus the row padding of the view mode: px-2 (dense) or px-3 (normal).
+  const iconColumnWidth = 16 + 2 * (viewMode === "dense" ? 8 : 12)
+  const instanceLabel = t("tableColumns.instance")
+  const selectionLabel = t("tableColumns.selection")
+  const selectAllRowsLabel = t("tableColumns.selectAllRows")
+  const selectRowLabel = t("tableColumns.selectRow")
+  const priorityLabel = t("tableColumns.priority")
+  const statusIconLabel = t("tableColumns.statusIcon")
+  const trackerIconLabel = t("tableColumns.trackerIcon")
 
-  const instanceColumn: ColumnDef<Torrent> = {
+  const instanceColumn: TorrentTableColumnDef = {
     id: "instance",
     accessorKey: "instanceName",
     header: instanceLabel,
@@ -463,7 +479,7 @@ export const createColumns = (
   return [
     ...(includeSelectionColumn ? [{
       id: "select",
-      header: ({ table }: HeaderContext<Torrent, unknown>) => (
+      header: ({ table }: HeaderContext<TorrentTableFeatures, Torrent, unknown>) => (
         <div className="flex items-center justify-center p-1 -m-1">
           <Checkbox
             checked={selectionEnhancers?.customSelectAll?.isIndeterminate ? "indeterminate" : selectionEnhancers?.customSelectAll?.isAllSelected || false}
@@ -480,7 +496,7 @@ export const createColumns = (
           />
         </div>
       ),
-      cell: ({ row, table }: CellContext<Torrent, unknown>) => {
+      cell: ({ row, table }: CellContext<TorrentTableFeatures, Torrent, unknown>) => {
         const torrent = row.original
         const hash = torrent.hash
         const selectionIdentity = selectionEnhancers?.getSelectionIdentity?.(torrent) ?? hash
@@ -525,12 +541,16 @@ export const createColumns = (
                       }
                     }
                   } else {
-                    table.setRowSelection((prev: Record<string, boolean>) => {
-                      const next: Record<string, boolean> = { ...prev }
+                    table.setRowSelection((prev: RowSelectionState) => {
+                      const next: RowSelectionState = { ...prev }
                       for (let i = start; i <= end; i++) {
                         const r = allRows[i]
                         if (r) {
-                          next[r.id] = !!checked
+                          if (checked) {
+                            next[r.id] = true
+                          } else {
+                            delete next[r.id]
+                          }
                         }
                       }
                       return next
@@ -605,7 +625,7 @@ export const createColumns = (
     },
     {
       accessorKey: "name",
-      header: t?.("tableColumns.name") ?? "Name",
+      header: t("tableColumns.name"),
       cell: ({ row }) => {
         const displayName = incognitoMode ? getLinuxIsoName(row.original.hash) : row.original.name
         return (
@@ -619,19 +639,19 @@ export const createColumns = (
     ...(showInstanceColumn ? [instanceColumn] : []),
     {
       accessorKey: "size",
-      header: t?.("tableColumns.size") ?? "Size",
+      header: t("tableColumns.size"),
       cell: ({ row }) => <span className="text-sm overflow-hidden whitespace-nowrap">{formatBytes(row.original.size)}</span>,
       size: 85,
     },
     {
       accessorKey: "total_size",
-      header: t?.("tableColumns.totalSize") ?? "Total Size",
+      header: t("tableColumns.totalSize"),
       cell: ({ row }) => <span className="text-sm overflow-hidden whitespace-nowrap">{formatBytes(row.original.total_size)}</span>,
       size: 115,
     },
     {
       accessorKey: "progress",
-      header: t?.("tableColumns.progress") ?? "Progress",
+      header: t("tableColumns.progress"),
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Progress value={row.original.progress * 100} className="w-20" />
@@ -662,7 +682,7 @@ export const createColumns = (
       meta: {
         headerString: statusIconLabel,
       },
-      sortingFn: (rowA, rowB) => compareTrackerAwareStatus(rowA.original, rowB.original, supportsTrackerHealth, t),
+      sortFn: (rowA, rowB) => compareTrackerAwareStatus(rowA.original, rowB.original, supportsTrackerHealth, t),
       cell: ({ row }) => {
         const torrent = row.original
         const StatusIcon = getStatusIcon(torrent.state, torrent.tracker_health ?? null, supportsTrackerHealth)
@@ -678,16 +698,16 @@ export const createColumns = (
           </div>
         )
       },
-      size: 48,
-      minSize: 48,
-      maxSize: 48,
+      size: iconColumnWidth,
+      minSize: iconColumnWidth,
+      maxSize: iconColumnWidth,
       enableResizing: false,
       enableSorting: true,
     },
     {
       accessorKey: "state",
-      header: t?.("tableColumns.status") ?? "Status",
-      sortingFn: (rowA, rowB) => compareTrackerAwareStatus(rowA.original, rowB.original, supportsTrackerHealth, t),
+      header: t("tableColumns.status"),
+      sortFn: (rowA, rowB) => compareTrackerAwareStatus(rowA.original, rowB.original, supportsTrackerHealth, t),
       cell: ({ row }) => {
         const torrent = row.original
         const state = torrent.state
@@ -716,7 +736,7 @@ export const createColumns = (
     },
     {
       accessorKey: "num_seeds",
-      header: t?.("tableColumns.seeds") ?? "Seeds",
+      header: t("tableColumns.seeds"),
       cell: ({ row }) => {
         const connected = row.original.num_seeds >= 0 ? row.original.num_seeds : 0
         const total = row.original.num_complete >= 0 ? row.original.num_complete : 0
@@ -731,7 +751,7 @@ export const createColumns = (
     },
     {
       accessorKey: "num_leechs",
-      header: t?.("tableColumns.peers") ?? "Peers",
+      header: t("tableColumns.peers"),
       cell: ({ row }) => {
         const connected = row.original.num_leechs >= 0 ? row.original.num_leechs : 0
         const total = row.original.num_incomplete >= 0 ? row.original.num_incomplete : 0
@@ -746,7 +766,7 @@ export const createColumns = (
     },
     {
       accessorKey: "dlspeed",
-      header: t?.("tableColumns.downSpeed") ?? "Down Speed",
+      header: t("tableColumns.downSpeed"),
       cell: ({ row }) => {
         const speed = row.original.dlspeed
         return <span className="text-sm overflow-hidden whitespace-nowrap">{speed === 0 ? "-" : formatSpeedWithUnit(speed, speedUnit)}</span>
@@ -755,7 +775,7 @@ export const createColumns = (
     },
     {
       accessorKey: "upspeed",
-      header: t?.("tableColumns.upSpeed") ?? "Up Speed",
+      header: t("tableColumns.upSpeed"),
       cell: ({ row }) => {
         const speed = row.original.upspeed
         return <span className="text-sm overflow-hidden whitespace-nowrap">{speed === 0 ? "-" : formatSpeedWithUnit(speed, speedUnit)}</span>
@@ -764,13 +784,13 @@ export const createColumns = (
     },
     {
       accessorKey: "eta",
-      header: t?.("tableColumns.eta") ?? "ETA",
+      header: t("tableColumns.eta"),
       cell: ({ row }) => <span className="text-sm overflow-hidden whitespace-nowrap">{formatEta(row.original.eta)}</span>,
       size: 80,
     },
     {
       accessorKey: "ratio",
-      header: t?.("tableColumns.ratio") ?? "Ratio",
+      header: t("tableColumns.ratio"),
       cell: ({ row }) => {
         const ratio = incognitoMode ? getLinuxRatio(row.original.hash) : row.original.ratio
         const displayRatio = ratio === -1 ? "∞" : ratio.toFixed(2)
@@ -785,7 +805,7 @@ export const createColumns = (
           </span>
         )
       },
-      sortingFn: (rowA, rowB) => {
+      sortFn: (rowA, rowB) => {
         const ratioA = incognitoMode ? getLinuxRatio(rowA.original.hash) : rowA.original.ratio
         const ratioB = incognitoMode ? getLinuxRatio(rowB.original.hash) : rowB.original.ratio
 
@@ -801,7 +821,7 @@ export const createColumns = (
     },
     {
       accessorKey: "popularity",
-      header: t?.("tableColumns.popularity") ?? "Popularity",
+      header: t("tableColumns.popularity"),
       cell: ({ row }) => {
         return (
           <div className="overflow-hidden whitespace-nowrap text-sm">
@@ -813,7 +833,7 @@ export const createColumns = (
     },
     {
       accessorKey: "category",
-      header: t?.("tableColumns.category") ?? "Category",
+      header: t("tableColumns.category"),
       cell: ({ row }) => {
         const displayCategory = incognitoMode ? getLinuxCategory(row.original.hash) : row.original.category
         return (
@@ -826,7 +846,7 @@ export const createColumns = (
     },
     {
       accessorKey: "tags",
-      header: t?.("tableColumns.tags") ?? "Tags",
+      header: t("tableColumns.tags"),
       cell: ({ row }) => {
         const tags = incognitoMode ? getLinuxTags(row.original.hash) : row.original.tags
         const displayTags = Array.isArray(tags) ? tags.join(", ") : tags || ""
@@ -840,7 +860,7 @@ export const createColumns = (
     },
     {
       accessorKey: "added_on",
-      header: t?.("tableColumns.addedOn") ?? "Added",
+      header: t("tableColumns.addedOn"),
       cell: ({ row }) => {
         const addedOn = row.original.added_on
         if (!addedOn || addedOn === 0) {
@@ -848,14 +868,14 @@ export const createColumns = (
         }
 
         return (
-          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp ? formatTimestamp(addedOn) : new Date(addedOn * 1000).toLocaleString()}</div>
+          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp(addedOn)}</div>
         )
       },
       size: 200,
     },
     {
       accessorKey: "completion_on",
-      header: t?.("tableColumns.completedOn") ?? "Completed On",
+      header: t("tableColumns.completedOn"),
       cell: ({ row }) => {
         const completionOn = row.original.completion_on
         if (isNeverCompletedTimestamp(completionOn)) {
@@ -863,7 +883,7 @@ export const createColumns = (
         }
 
         return (
-          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp ? formatTimestamp(completionOn) : new Date(completionOn * 1000).toLocaleString()}</div>
+          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp(completionOn)}</div>
         )
       },
       size: 200,
@@ -905,15 +925,15 @@ export const createColumns = (
           />
         )
       },
-      size: 48,
-      minSize: 48,
-      maxSize: 48,
+      size: iconColumnWidth,
+      minSize: iconColumnWidth,
+      maxSize: iconColumnWidth,
       enableResizing: false,
       enableSorting: false,
     },
     {
       accessorKey: "tracker",
-      header: t?.("tableColumns.trackerUrl") ?? "Tracker",
+      header: t("tableColumns.trackerUrl"),
       // For client-side sorting in cross-seed mode, use the resolved display name.
       // Return undefined for empty/unknown so sortUndefined: "last" keeps them at the end.
       accessorFn: trackerCustomizationLookup ? (torrent) => {
@@ -963,7 +983,7 @@ export const createColumns = (
     },
     {
       accessorKey: "dl_limit",
-      header: t?.("tableColumns.downLimit") ?? "Down Limit",
+      header: t("tableColumns.downLimit"),
       cell: ({ row }) => {
         const downLimit = row.original.dl_limit
         const displayDownLimit = downLimit === 0 ? "∞" : formatSpeedWithUnit(downLimit, speedUnit)
@@ -980,7 +1000,7 @@ export const createColumns = (
     },
     {
       accessorKey: "up_limit",
-      header: t?.("tableColumns.upLimit") ?? "Up Limit",
+      header: t("tableColumns.upLimit"),
       cell: ({ row }) => {
         const upLimit = row.original.up_limit
         const displayUpLimit = upLimit === 0 ? "∞" : formatSpeedWithUnit(upLimit, speedUnit)
@@ -997,7 +1017,7 @@ export const createColumns = (
     },
     {
       accessorKey: "downloaded",
-      header: t?.("tableColumns.downloaded") ?? "Downloaded",
+      header: t("tableColumns.downloaded"),
       cell: ({ row }) => {
         const downloaded = row.original.downloaded
         return <span className="text-sm overflow-hidden whitespace-nowrap">{downloaded === 0 ? "-" : formatBytes(downloaded)}</span>
@@ -1006,7 +1026,7 @@ export const createColumns = (
     },
     {
       accessorKey: "uploaded",
-      header: t?.("tableColumns.uploaded") ?? "Uploaded",
+      header: t("tableColumns.uploaded"),
       cell: ({ row }) => {
         const uploaded = row.original.uploaded
         return <span className="text-sm overflow-hidden whitespace-nowrap">{uploaded === 0 ? "-" : formatBytes(uploaded)}</span>
@@ -1015,7 +1035,7 @@ export const createColumns = (
     },
     {
       accessorKey: "downloaded_session",
-      header: t?.("tableColumns.downloadedSession") ?? "Session Downloaded",
+      header: t("tableColumns.downloadedSession"),
       cell: ({ row }) => {
         const sessionDownloaded = row.original.downloaded_session
         return <span className="text-sm overflow-hidden whitespace-nowrap">{sessionDownloaded === 0 ? "-" : formatBytes(sessionDownloaded)}</span>
@@ -1024,7 +1044,7 @@ export const createColumns = (
     },
     {
       accessorKey: "uploaded_session",
-      header: t?.("tableColumns.uploadedSession") ?? "Session Uploaded",
+      header: t("tableColumns.uploadedSession"),
       cell: ({ row }) => {
         const sessionUploaded = row.original.uploaded_session
         return <span className="text-sm overflow-hidden whitespace-nowrap">{sessionUploaded === 0 ? "-" : formatBytes(sessionUploaded)}</span>
@@ -1033,7 +1053,7 @@ export const createColumns = (
     },
     {
       accessorKey: "amount_left",
-      header: t?.("tableColumns.amountLeft") ?? "Remaining",
+      header: t("tableColumns.amountLeft"),
       cell: ({ row }) => {
         const amountLeft = row.original.amount_left
         return <span className="text-sm overflow-hidden whitespace-nowrap">{amountLeft === 0 ? "-" : formatBytes(amountLeft)}</span>
@@ -1042,7 +1062,7 @@ export const createColumns = (
     },
     {
       accessorKey: "time_active",
-      header: t?.("tableColumns.timeActive") ?? "Time Active",
+      header: t("tableColumns.timeActive"),
       cell: ({ row }) => {
         const timeActive = row.original.time_active
         return (
@@ -1053,7 +1073,7 @@ export const createColumns = (
     },
     {
       accessorKey: "seeding_time",
-      header: t?.("tableColumns.seedingTime") ?? "Seeding Time",
+      header: t("tableColumns.seedingTime"),
       cell: ({ row }) => {
         const timeSeeded = row.original.seeding_time
         return (
@@ -1064,7 +1084,7 @@ export const createColumns = (
     },
     {
       accessorKey: "save_path",
-      header: t?.("tableColumns.savePath") ?? "Save Path",
+      header: t("tableColumns.savePath"),
       cell: ({ row }) => {
         const displayPath = incognitoMode ? getLinuxSavePath(row.original.hash) : row.original.save_path
         return (
@@ -1077,7 +1097,7 @@ export const createColumns = (
     },
     {
       accessorKey: "completed",
-      header: t?.("tableColumns.completed") ?? "Completed",
+      header: t("tableColumns.completed"),
       cell: ({ row }) => {
         const completed = row.original.completed
         return <span className="text-sm overflow-hidden whitespace-nowrap">{completed === 0 ? "-" : formatBytes(completed)}</span>
@@ -1086,11 +1106,10 @@ export const createColumns = (
     },
     {
       accessorKey: "ratio_limit",
-      header: t?.("tableColumns.ratioLimit") ?? "Ratio Limit",
+      header: t("tableColumns.ratioLimit"),
       cell: ({ row }) => {
         const ratioLimit = row.original.ratio_limit
-        const instanceRatioLimit = instancePreferences?.max_ratio
-        const displayRatioLimit = ratioLimit === -2 ? (instanceRatioLimit === -1 ? "∞" : instanceRatioLimit?.toFixed(2) || "∞") :ratioLimit === -1 ? "∞" :ratioLimit.toFixed(2)
+        const displayRatioLimit = ratioLimit === -2 ? (instanceMaxRatio === -1 ? "∞" : instanceMaxRatio?.toFixed(2) || "∞") :ratioLimit === -1 ? "∞" :ratioLimit.toFixed(2)
 
         return (
           <span
@@ -1104,7 +1123,7 @@ export const createColumns = (
     },
     {
       accessorKey: "seen_complete",
-      header: t?.("tableColumns.seenComplete") ?? "Last Seen Complete",
+      header: t("tableColumns.seenComplete"),
       cell: ({ row }) => {
         const lastSeenComplete = row.original.seen_complete
         if (isNeverCompletedTimestamp(lastSeenComplete)) {
@@ -1112,14 +1131,14 @@ export const createColumns = (
         }
 
         return (
-          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp ? formatTimestamp(lastSeenComplete) : new Date(lastSeenComplete * 1000).toLocaleString()}</div>
+          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp(lastSeenComplete)}</div>
         )
       },
       size: 200,
     },
     {
       accessorKey: "last_activity",
-      header: t?.("tableColumns.lastActivity") ?? "Last Activity",
+      header: t("tableColumns.lastActivity"),
       cell: ({ row }) => {
         const lastActivity = row.original.last_activity
         if (!lastActivity || lastActivity === 0) {
@@ -1127,14 +1146,14 @@ export const createColumns = (
         }
 
         return (
-          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp ? formatTimestamp(lastActivity) : new Date(lastActivity * 1000).toLocaleString()}</div>
+          <div className="overflow-hidden whitespace-nowrap text-sm">{formatTimestamp(lastActivity)}</div>
         )
       },
       size: 200,
     },
     {
       accessorKey: "availability",
-      header: t?.("tableColumns.availability") ?? "Availability",
+      header: t("tableColumns.availability"),
       cell: ({ row }) => {
         const availability = row.original.availability
         return <span className="text-sm overflow-hidden whitespace-nowrap">{availability.toFixed(3)}</span>
@@ -1144,7 +1163,7 @@ export const createColumns = (
     // incomplete save path is not exposed by the API?
     {
       accessorKey: "infohash_v1",
-      header: t?.("tableColumns.infohashV1") ?? "Info Hash v1",
+      header: t("tableColumns.infohashV1"),
       cell: ({ row }) => {
         const original = row.original.infohash_v1
         const maskBase = row.original.hash || row.original.infohash_v1 || row.original.infohash_v2 || row.id
@@ -1159,7 +1178,7 @@ export const createColumns = (
     },
     {
       accessorKey: "infohash_v2",
-      header: t?.("tableColumns.infohashV2") ?? "Info Hash v2",
+      header: t("tableColumns.infohashV2"),
       cell: ({ row }) => {
         const original = row.original.infohash_v2
         const maskBase = row.original.hash || row.original.infohash_v1 || row.original.infohash_v2 || row.id
@@ -1174,7 +1193,7 @@ export const createColumns = (
     },
     {
       accessorKey: "reannounce",
-      header: t?.("tableColumns.reannounce") ?? "Reannounce In",
+      header: t("tableColumns.reannounce"),
       cell: ({ row }) => {
         return (
           <div className="overflow-hidden whitespace-nowrap text-sm">
@@ -1186,11 +1205,11 @@ export const createColumns = (
     },
     {
       accessorKey: "private",
-      header: t?.("tableColumns.private") ?? "Private",
+      header: t("tableColumns.private"),
       cell: ({ row }) => {
         return (
           <div className="overflow-hidden whitespace-nowrap text-sm">
-            {row.original.private ? (t?.("tableColumns.yes") ?? "Yes") : (t?.("tableColumns.no") ?? "No")}
+            {row.original.private ? t("tableColumns.yes") : t("tableColumns.no")}
           </div>
         )
       },

@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/rs/zerolog"
 
+	"github.com/autobrr/qui/internal/fsops"
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/services/jackett"
 	"github.com/autobrr/qui/pkg/fsutil"
@@ -292,7 +293,7 @@ func (inj *arrSeedInjector) tryInject(
 			// completes and verifies the hardlinked files, regardless of how many
 			// files are still missing.
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume after recheck completes")
-			if qErr := inj.svc.queueRecheckResumeWithThreshold(config.TargetQbitInstanceID, parsed.InfoHash, 0.01); qErr != nil {
+			if qErr := inj.svc.queueRecheckResumeWithThreshold(config.TargetQbitInstanceID, parsed.InfoHash, 0.01, arrSeedLinkedPaths(plan), nil); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume for partial upgrade")
 			}
 		}
@@ -306,7 +307,7 @@ func (inj *arrSeedInjector) tryInject(
 			// threshold: resume only when the missing data fits the user's
 			// auto_resume_max_download_mb.
 			l.Info().Str("hash", parsed.InfoHash).Msg("arrseed: recheck triggered, queuing for resume")
-			if qErr := inj.svc.queueRecheckResumeWithBudget(config.TargetQbitInstanceID, parsed.InfoHash, inj.svc.resumeBudgetBytes(ctx), false); qErr != nil {
+			if qErr := inj.svc.queueRecheckResumeWithBudget(config.TargetQbitInstanceID, parsed.InfoHash, inj.svc.resumeBudgetBytes(ctx), false, arrSeedLinkedPaths(plan)); qErr != nil {
 				l.Warn().Err(qErr).Str("hash", parsed.InfoHash).Msg("arrseed: failed to queue recheck resume")
 			}
 		}
@@ -354,7 +355,7 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 	}
 
 	if !allowPartial {
-		plan, err := hardlinktree.BuildPlan(allCandidates, existingFiles, hardlinktree.LayoutOriginal, parsed.Name, savePath)
+		plan, err := hardlinktree.BuildPlan(fsops.HostPaths, allCandidates, existingFiles, hardlinktree.LayoutOriginal, parsed.Name, savePath)
 		return plan, 0, err
 	}
 
@@ -443,7 +444,7 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 			if consumed[idx] {
 				continue
 			}
-			if isSizeWithinTolerance(existingFiles[idx].Size, cf.Size, sizeTolerance) {
+			if (matcher{}).isSizeWithinTolerance(existingFiles[idx].Size, cf.Size, sizeTolerance) {
 				matchedCandidates = append(matchedCandidates, cf)
 				matchedExisting = append(matchedExisting, existingFiles[idx])
 				consumed[idx] = true
@@ -467,11 +468,11 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		Files:   make([]hardlinktree.FilePlan, 0, len(matchedCandidates)),
 	}
 	for i, cf := range matchedCandidates {
-		if err := hardlinktree.ValidateCandidatePath(cf.Path); err != nil {
+		if err := hardlinktree.ValidateCandidatePath(fsops.HostPaths, cf.Path); err != nil {
 			return nil, 0, fmt.Errorf("invalid torrent file path: %w", err)
 		}
 		targetPath := filepath.Join(savePath, filepath.FromSlash(cf.Path))
-		if err := hardlinktree.ValidateTargetInsideBase(targetPath, savePath); err != nil {
+		if err := hardlinktree.ValidateTargetInsideBase(fsops.HostPaths, targetPath, savePath); err != nil {
 			return nil, 0, fmt.Errorf("path traversal detected: %w", err)
 		}
 		plan.Files = append(plan.Files, hardlinktree.FilePlan{
@@ -483,6 +484,19 @@ func (inj *arrSeedInjector) buildHardlinkPlan(item *ArrSeedMediaItem, parsed *ar
 		return plan.Files[i].TargetPath < plan.Files[j].TargetPath
 	})
 	return plan, unmatchedCount, nil
+}
+
+// arrSeedLinkedPaths returns the torrent paths the plan hardlinks, named the way
+// qBittorrent lists files. The recheck-resume worker uses it to refuse a resume
+// that would download into a linked library file (ADR 0004).
+func arrSeedLinkedPaths(plan *hardlinktree.TreePlan) map[string]struct{} {
+	paths := make(map[string]struct{}, len(plan.Files))
+	for _, f := range plan.Files {
+		if rel, err := filepath.Rel(plan.RootDir, f.TargetPath); err == nil {
+			paths[filepath.ToSlash(rel)] = struct{}{}
+		}
+	}
+	return paths
 }
 
 func arrSeedParseTorrentBytes(data []byte) (*arrSeedParsedTorrent, error) {

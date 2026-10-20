@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+import type { ThemeMode } from "@/utils/theme"
+
 export interface ApplicationDatabaseInfo {
   engine: string
   target: string
@@ -29,6 +31,46 @@ export interface ApplicationInfo {
   oidcIssuerHost?: string
   checkForUpdates: boolean
   database: ApplicationDatabaseInfo
+}
+
+export interface VersionInfo {
+  version: string
+  latestVersion?: string
+  updateAvailable: boolean
+  selfUpdate: boolean
+  selfUpdateUnavailableReason: "" | "container" | "disabled" | "development" | "directory"
+  restart: boolean
+}
+
+export interface SelfUpdateResult {
+  version: string
+  rollbackCommand: string
+  backupError: string
+}
+
+// One preference of the catalog view that GET /instances/{id}/preferences returns.
+export interface PreferenceField {
+  key: string
+  value: unknown
+  tab: "behavior" | "downloads" | "connection" | "speed" | "bittorrent" | "rss" | "webui" | "advanced"
+  section: string
+  control: "switch" | "number" | "text" | "password" | "select" | "path" | "list" | "watchFolders"
+  wireUnit?: string
+  displayUnit?: string
+  optionSource?: "fixed" | "pathAutocomplete" | "networkInterfaces" | "interfaceAddresses"
+  options?: unknown[]
+  dependsOn?: string
+  readOnly?: boolean
+  reason?: string
+}
+
+// One network interface that qBittorrent can bind to. The value "" is "Any interface".
+// available is false for a saved interface or address that qBittorrent does not list.
+export interface NetworkBindingInterface {
+  name: string
+  value: string
+  available: boolean
+  addresses: { address: string; available: boolean }[]
 }
 
 export interface AppPreferences {
@@ -103,7 +145,9 @@ export interface AppPreferences {
   save_resume_data_interval: number
 
   // Startup behavior
-  start_paused_enabled: boolean // NOTE: Not supported by qBittorrent API - handled via localStorage
+  // qBittorrent 5.0 renamed start_paused_enabled to add_stopped_enabled. Each version sends one of the two.
+  start_paused_enabled?: boolean
+  add_stopped_enabled?: boolean
 
   // BitTorrent protocol (fully supported)
   dht: boolean
@@ -289,4 +333,26 @@ export interface QBittorrentAppInfo {
 
 export interface QBittorrentProcessInfo {
   launchTime: number
+}
+
+export interface ThemeSettings {
+  themeId: string
+  mode: ThemeMode
+  variation?: string
+}
+
+export type ThemeSlot = "default" | "mobile"
+
+export type ThemeSlots = Partial<Record<ThemeSlot, ThemeSettings>>
+
+export interface BuiltinTheme {
+  id: string
+  name: string
+  description?: string
+  premium: boolean
+  css?: string
+  preview?: {
+    light: Record<string, string>
+    dark: Record<string, string>
+  }
 }

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 
 	"github.com/autobrr/qui/internal/models"
 )
@@ -51,7 +51,7 @@ func ArrSeedSynthesizeSeasonPackName(episodeName string) string {
 }
 
 func arrSeedSynthesizeWithParser(episodeName string) string {
-	r := rls.ParseString(episodeName)
+	r := (matcher{}).parseReleaseName(episodeName)
 	if r.Series == 0 {
 		return ""
 	}

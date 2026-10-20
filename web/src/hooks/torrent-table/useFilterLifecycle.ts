@@ -4,8 +4,8 @@
  */
 
 import type { ColumnFilter } from "@/lib/column-filter-utils"
+import { EMPTY_SIDEBAR_FILTERS } from "@/lib/filter-views"
 import type { TorrentFilters } from "@/types"
-import type { SortingState } from "@tanstack/react-table"
 import type { Virtualizer } from "@tanstack/react-virtual"
 import { useCallback, useEffect, useLayoutEffect, useState, type Dispatch, type SetStateAction } from "react"
 
@@ -16,7 +16,6 @@ export interface UseFilterLifecycleParams {
   sortedTorrentsLength: number
   onFilterChange?: (filters: TorrentFilters) => void
   setColumnFilters: Dispatch<SetStateAction<ColumnFilter[]>>
-  setSorting: Dispatch<SetStateAction<SortingState>>
   /** Shared with useTorrentTableVirtualization — the same loaded-rows window. */
   setLoadedRows: Dispatch<SetStateAction<number>>
   isCrossSeedFiltering?: boolean
@@ -33,7 +32,7 @@ export interface FilterLifecycle {
 /**
  * The filter-clearing state machine. `clearFiltersAtomically` arms a transition;
  * a single pre-paint useLayoutEffect then performs the clear as one atomic
- * transaction (column filters + sorting + virtualizer reset + loaded-rows reset,
+ * transaction (column filters + virtualizer reset + loaded-rows reset,
  * plus the parent onFilterChange when clearing all) before settling back to idle.
  *
  * The effect dep arrays are kept byte-for-byte identical to the pre-extraction
@@ -46,7 +45,6 @@ export function useFilterLifecycle({
   sortedTorrentsLength,
   onFilterChange,
   setColumnFilters,
-  setSorting,
   setLoadedRows,
   isCrossSeedFiltering,
   columnFiltersLength,
@@ -86,7 +84,6 @@ export function useFilterLifecycle({
 
       // Perform clearing operations atomically
       setColumnFilters([])
-      setSorting([])
       virtualizer.scrollToOffset(0)
       virtualizer.measure()
 
@@ -96,17 +93,7 @@ export function useFilterLifecycle({
 
       // Only clear parent filters if clearing all (not just columns)
       if (filterLifecycleState === "clearing-all") {
-        const emptyFilters: TorrentFilters = {
-          status: [],
-          excludeStatus: [],
-          categories: [],
-          excludeCategories: [],
-          tags: [],
-          excludeTags: [],
-          trackers: [],
-          excludeTrackers: [],
-        }
-        onFilterChange?.(emptyFilters)
+        onFilterChange?.(EMPTY_SIDEBAR_FILTERS)
       }
 
       // Transition to cleared state

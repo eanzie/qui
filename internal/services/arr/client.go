@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/qui/internal/buildinfo"
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/pkg/httphelpers"
 )
 
 const (
-	defaultTimeout   = 15 * time.Second
-	defaultUserAgent = "qui/1.0"
+	defaultTimeout = 15 * time.Second
 )
 
 // Client is an HTTP client for communicating with Sonarr/Radarr v3 API
@@ -90,7 +90,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 	// Validate we got a valid response with app name
 	if status.AppName == "" {
-		return fmt.Errorf("invalid response: missing appName")
+		return errors.New("invalid response: missing appName")
 	}
 
 	return nil
@@ -171,14 +171,16 @@ func (c *Client) LookupByTerm(ctx context.Context, term string, year int) (*Exte
 		if err := c.getJSON(ctx, "/api/v3/series/lookup", params, &series); err != nil {
 			return nil, err
 		}
-		return c.sonarrSeriesLookupResult(ctx, selectSonarrLookupMatch(term, year, series)), nil
+		match := selectSonarrLookupMatch(term, year, series)
+		return c.hydrateSonarrSeries(ctx, lookupResultFromSonarrSeries(match), match), nil
 	default:
 		return nil, fmt.Errorf("unsupported instance type: %s", c.instanceType)
 	}
 }
 
-func (c *Client) sonarrSeriesLookupResult(ctx context.Context, series *SonarrSeries) *ExternalIDsLookupResult {
-	result := lookupResultFromSonarrSeries(series)
+// hydrateSonarrSeries merges the full series record (alternate titles) into result
+// when the series is in the library.
+func (c *Client) hydrateSonarrSeries(ctx context.Context, result *ExternalIDsLookupResult, series *SonarrSeries) *ExternalIDsLookupResult {
 	if series == nil || series.ID <= 0 {
 		return result
 	}
@@ -234,8 +236,9 @@ func mergeLookupResults(base, hydrated *ExternalIDsLookupResult) *ExternalIDsLoo
 	}
 
 	result := &ExternalIDsLookupResult{
-		IDs:    mergeExternalIDs(base.IDs, hydrated.IDs),
-		Titles: append([]string(nil), base.Titles...),
+		IDs:        mergeExternalIDs(base.IDs, hydrated.IDs),
+		Titles:     append([]string(nil), base.Titles...),
+		EpisodeMap: base.EpisodeMap,
 	}
 	for _, title := range hydrated.Titles {
 		addUniqueTitle(&result.Titles, title)
@@ -351,7 +354,7 @@ func (c *Client) parseSonarrResponse(ctx context.Context, body io.Reader) (*Exte
 		return nil, fmt.Errorf("failed to decode Sonarr parse response: %w", err)
 	}
 
-	return c.sonarrSeriesLookupResult(ctx, parseResp.Series), nil
+	return c.hydrateSonarrSeries(ctx, parseResp.ExtractLookupResult(), parseResp.Series), nil
 }
 
 // parseRadarrResponse parses a Radarr parse response and extracts external IDs
@@ -367,7 +370,7 @@ func (c *Client) parseRadarrResponse(ctx context.Context, body io.Reader) (*Exte
 // setHeaders sets the required headers for ARR API requests
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("X-Api-Key", c.apiKey)
-	req.Header.Set("User-Agent", defaultUserAgent)
+	req.Header.Set("User-Agent", buildinfo.UserAgent)
 	req.Header.Set("Accept", "application/json")
 	if c.basicUser != "" {
 		req.SetBasicAuth(c.basicUser, c.basicPass)

@@ -5,14 +5,9 @@ package models
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -89,26 +84,12 @@ type TorznabIndexerUpdateParams struct {
 	TimeoutSeconds *int
 }
 
-// TorznabIndexerCapability represents a search capability
-type TorznabIndexerCapability struct {
-	IndexerID      int    `json:"indexer_id"`
-	CapabilityType string `json:"capability_type"`
-}
-
 // TorznabIndexerCategory represents a category supported by an indexer
 type TorznabIndexerCategory struct {
 	IndexerID      int    `json:"indexer_id"`
 	CategoryID     int    `json:"category_id"`
 	CategoryName   string `json:"category_name"`
 	ParentCategory *int   `json:"parent_category_id,omitempty"`
-}
-
-// TorznabIndexerCooldown captures a persisted rate-limit suspension window for an indexer.
-type TorznabIndexerCooldown struct {
-	IndexerID int           `json:"indexer_id"`
-	ResumeAt  time.Time     `json:"resume_at"`
-	Cooldown  time.Duration `json:"cooldown"`
-	Reason    string        `json:"reason,omitempty"`
 }
 
 // TorznabIndexerError represents an error that occurred with an indexer
@@ -120,16 +101,6 @@ type TorznabIndexerError struct {
 	OccurredAt   time.Time  `json:"occurred_at"`
 	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
 	ErrorCount   int        `json:"error_count"`
-}
-
-// TorznabIndexerLatency represents a latency measurement
-type TorznabIndexerLatency struct {
-	ID            int       `json:"id"`
-	IndexerID     int       `json:"indexer_id"`
-	OperationType string    `json:"operation_type"`
-	LatencyMs     int       `json:"latency_ms"`
-	Success       bool      `json:"success"`
-	MeasuredAt    time.Time `json:"measured_at"`
 }
 
 // TorznabIndexerLatencyStats represents aggregated latency statistics
@@ -161,71 +132,40 @@ type TorznabIndexerHealth struct {
 
 // TorznabIndexerStore manages Torznab indexers in the database
 type TorznabIndexerStore struct {
-	db            dbinterface.Querier
-	encryptionKey []byte
+	db     dbinterface.Querier
+	cipher *CredentialCipher
 }
 
 // NewTorznabIndexerStore creates a new TorznabIndexerStore
-func NewTorznabIndexerStore(db dbinterface.Querier, encryptionKey []byte) (*TorznabIndexerStore, error) {
-	if len(encryptionKey) != 32 {
-		return nil, errors.New("encryption key must be 32 bytes")
+func NewTorznabIndexerStore(db dbinterface.Querier, encryptionKey []byte, opts ...CredentialCipherOption) (*TorznabIndexerStore, error) {
+	credentialCipher, err := NewCredentialCipher(encryptionKey, opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	return &TorznabIndexerStore{
-		db:            db,
-		encryptionKey: encryptionKey,
-	}, nil
+	return &TorznabIndexerStore{db: db, cipher: credentialCipher}, nil
 }
 
 // encrypt encrypts a string using AES-GCM
 func (s *TorznabIndexerStore) encrypt(plaintext string) (string, error) {
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return s.cipher.Encrypt(plaintext, nil)
 }
 
 // decrypt decrypts a string encrypted with encrypt
 func (s *TorznabIndexerStore) decrypt(ciphertext string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
-	}
+	return s.cipher.Decrypt(ciphertext, nil)
+}
 
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	if len(data) < gcm.NonceSize() {
-		return "", errors.New("malformed ciphertext")
-	}
-
-	nonce, ciphertextBytes := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return string(plaintext), nil
+// RewriteLegacyCredentials re-encrypts stored Torznab indexer credentials that still
+// carry the pre-HKDF format and reports how many rows it rewrote.
+func (s *TorznabIndexerStore) RewriteLegacyCredentials(ctx context.Context) (int, error) {
+	return s.cipher.rewriteLegacyRows(ctx, s.db, legacyCredentialTable{
+		table: "torznab_indexers",
+		columns: []string{
+			"api_key_encrypted",
+			"basic_password_encrypted",
+		},
+	})
 }
 
 // Create creates a new Torznab indexer
@@ -296,7 +236,7 @@ func (s *TorznabIndexerStore) CreateWithIndexerID(ctx context.Context, name, bas
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Intern strings into string_pool (name, baseURL, optionally indexerID + basic username)
 	toIntern := make([]*string, 0, 4)
@@ -684,7 +624,7 @@ func (s *TorznabIndexerStore) Update(ctx context.Context, id int, params Torznab
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Intern strings into string_pool
 	stringsToIntern := []string{existing.Name, existing.BaseURL}
@@ -805,19 +745,6 @@ func (s *TorznabIndexerStore) GetDecryptedBasicPassword(indexer *TorznabIndexer)
 	return s.decrypt(*indexer.BasicPasswordEncrypted)
 }
 
-// Test tests the connection to a Torznab indexer by querying its capabilities
-func (s *TorznabIndexerStore) Test(ctx context.Context, baseURL, apiKey string) error {
-	// This would be implemented by calling the caps endpoint
-	// For now, just validate the parameters
-	if baseURL == "" {
-		return errors.New("base URL is required")
-	}
-	if apiKey == "" {
-		return errors.New("API key is required")
-	}
-	return nil
-}
-
 // GetCapabilities retrieves all capabilities for an indexer
 func (s *TorznabIndexerStore) GetCapabilities(ctx context.Context, indexerID int) ([]string, error) {
 	query := `
@@ -835,11 +762,11 @@ func (s *TorznabIndexerStore) GetCapabilities(ctx context.Context, indexerID int
 
 	capabilities := make([]string, 0)
 	for rows.Next() {
-		var cap string
-		if err := rows.Scan(&cap); err != nil {
+		var capability string
+		if err := rows.Scan(&capability); err != nil {
 			return nil, fmt.Errorf("failed to scan capability: %w", err)
 		}
-		capabilities = append(capabilities, cap)
+		capabilities = append(capabilities, capability)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -855,7 +782,7 @@ func (s *TorznabIndexerStore) SetCapabilities(ctx context.Context, indexerID int
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete existing capabilities
 	_, err = tx.ExecContext(ctx, "DELETE FROM torznab_indexer_capabilities WHERE indexer_id = ?", indexerID)
@@ -947,7 +874,7 @@ func (s *TorznabIndexerStore) SetCategories(ctx context.Context, indexerID int, 
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete existing categories
 	_, err = tx.ExecContext(ctx, "DELETE FROM torznab_indexer_categories WHERE indexer_id = ?", indexerID)
@@ -1050,7 +977,7 @@ func (s *TorznabIndexerStore) RecordError(ctx context.Context, indexerID int, er
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Intern error message
 	ids, err := dbinterface.InternStrings(ctx, tx, errorMessage)
@@ -1097,19 +1024,6 @@ func (s *TorznabIndexerStore) RecordError(ctx context.Context, indexerID int, er
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return nil
-}
-
-// ResolveErrors marks all unresolved errors for an indexer as resolved
-func (s *TorznabIndexerStore) ResolveErrors(ctx context.Context, indexerID int) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE torznab_indexer_errors
-		SET resolved_at = CURRENT_TIMESTAMP
-		WHERE indexer_id = ? AND resolved_at IS NULL
-	`, indexerID)
-	if err != nil {
-		return fmt.Errorf("failed to resolve errors: %w", err)
-	}
 	return nil
 }
 
@@ -1277,64 +1191,4 @@ func (s *TorznabIndexerStore) CleanupOldLatency(ctx context.Context, olderThan t
 	}
 
 	return rowsAffected, nil
-}
-
-// ListRateLimitCooldowns returns any persisted cooldown windows for Torznab indexers.
-func (s *TorznabIndexerStore) ListRateLimitCooldowns(ctx context.Context) ([]TorznabIndexerCooldown, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT indexer_id, resume_at, cooldown_seconds, COALESCE(reason, '')
-		FROM torznab_indexer_cooldowns
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("list torznab cooldowns: %w", err)
-	}
-	defer rows.Close()
-
-	cooldowns := make([]TorznabIndexerCooldown, 0)
-	for rows.Next() {
-		var (
-			c       TorznabIndexerCooldown
-			seconds int64
-		)
-		if err := rows.Scan(&c.IndexerID, &c.ResumeAt, &seconds, &c.Reason); err != nil {
-			return nil, fmt.Errorf("scan torznab cooldown: %w", err)
-		}
-		c.Cooldown = time.Duration(seconds) * time.Second
-		cooldowns = append(cooldowns, c)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate torznab cooldowns: %w", err)
-	}
-
-	return cooldowns, nil
-}
-
-// UpsertRateLimitCooldown stores or updates the cooldown window for an indexer.
-func (s *TorznabIndexerStore) UpsertRateLimitCooldown(ctx context.Context, indexerID int, resumeAt time.Time, cooldown time.Duration, reason string) error {
-	seconds := max(int64(cooldown.Seconds()), 0)
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO torznab_indexer_cooldowns (indexer_id, resume_at, cooldown_seconds, reason)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(indexer_id)
-		DO UPDATE SET resume_at = excluded.resume_at,
-			cooldown_seconds = excluded.cooldown_seconds,
-			reason = excluded.reason,
-			updated_at = CURRENT_TIMESTAMP
-	`, indexerID, resumeAt.UTC(), seconds, reason)
-	if err != nil {
-		return fmt.Errorf("upsert torznab cooldown: %w", err)
-	}
-	return nil
-}
-
-// DeleteRateLimitCooldown removes any persisted cooldown for the provided indexer ID.
-func (s *TorznabIndexerStore) DeleteRateLimitCooldown(ctx context.Context, indexerID int) error {
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM torznab_indexer_cooldowns WHERE indexer_id = ?
-	`, indexerID)
-	if err != nil {
-		return fmt.Errorf("delete torznab cooldown: %w", err)
-	}
-	return nil
 }

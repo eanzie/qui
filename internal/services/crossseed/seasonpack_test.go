@@ -9,16 +9,19 @@ import (
 	"encoding/base64"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	qbt "github.com/autobrr/go-qbittorrent"
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/internal/fsops/local"
 	"github.com/autobrr/qui/internal/models"
 	internalqb "github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/internal/services/arr"
@@ -180,10 +183,31 @@ func TestSelectSeasonPackBaseDir_ValidatesSingleDirAgainstSources(t *testing.T) 
 		{series: 1, episode: 1}: {sourcePath: sourcePath},
 	}
 
-	selected, err := selectSeasonPackBaseDir(baseDir, localFiles)
+	selected, _, err := selectSeasonPackBaseDir(context.Background(), local.NewBackend(), baseDir, localFiles)
 
 	require.ErrorIs(t, err, errLayoutMismatch)
 	require.Empty(t, selected)
+}
+
+func TestSeasonPackMetadataTitles(t *testing.T) {
+	t.Parallel()
+
+	m := (&Service{releaseCache: NewReleaseCache()}).matcher()
+	tests := []struct {
+		name string
+		pack string
+		want []string
+	}{
+		{name: "numeral-only pack", pack: "[GRP] Cedar Harbor II [BD 1080p HEVC FLAC]", want: []string{"Cedar Harbor II", "Cedar Harbor"}},
+		{name: "numeral and season marker", pack: "Cedar Harbor III S03 1080p BluRay x264-GRP", want: []string{"Cedar Harbor III", "Cedar Harbor"}},
+		{name: "season marker only", pack: "Cedar Harbor S02 1080p BluRay x264-GRP", want: []string{"Cedar Harbor"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, test.want, seasonPackMetadataTitles(m.parseSeasonPackName(test.pack)))
+		})
+	}
 }
 
 func TestCheckSeasonPackWebhook_ReturnsReadyWhenCoveragePasses(t *testing.T) {
@@ -543,6 +567,7 @@ func TestFixC_CRCollection_CheckAndApplyBothReject(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, checkResp.Ready, "check must reject: pack has CR collection, locals have AMZN")
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	applyResp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName, TorrentData: torrentData, InstanceIDs: []int{inst.ID},
 	})
@@ -555,6 +580,7 @@ func TestFixC_CRCollection_CheckAndApplyBothReject(t *testing.T) {
 // locals also carry CR. Check is ready and apply succeeds all the way through the
 // stamped pipeline (resolveSeasonPackLocalFilesForCandidates + buildSeasonPackPlan).
 func TestFixC_CRCollection_CheckAndApplyBothAccept(t *testing.T) {
+	mediaDir := t.TempDir()
 	packName := "Cool.Show.S03.1080p.CR.WEB-DL.x264-GRP"
 	packFiles := []string{
 		"Cool.Show.-.25.1080p.CR.WEB-DL.x264-GRP.mkv",
@@ -571,10 +597,10 @@ func TestFixC_CRCollection_CheckAndApplyBothAccept(t *testing.T) {
 		HardlinkBaseDir:          t.TempDir(),
 	}
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e25", Name: "Cool.Show.-.25.1080p.CR.WEB-DL.x264-GRP", ContentPath: "/media/Cool.Show.-.25.1080p.CR.WEB-DL.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e26", Name: "Cool.Show.-.26.1080p.CR.WEB-DL.x264-GRP", ContentPath: "/media/Cool.Show.-.26.1080p.CR.WEB-DL.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e27", Name: "Cool.Show.-.27.1080p.CR.WEB-DL.x264-GRP", ContentPath: "/media/Cool.Show.-.27.1080p.CR.WEB-DL.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e28", Name: "Cool.Show.-.28.1080p.CR.WEB-DL.x264-GRP", ContentPath: "/media/Cool.Show.-.28.1080p.CR.WEB-DL.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e25", Name: "Cool.Show.-.25.1080p.CR.WEB-DL.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.-.25.1080p.CR.WEB-DL.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e26", Name: "Cool.Show.-.26.1080p.CR.WEB-DL.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.-.26.1080p.CR.WEB-DL.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e27", Name: "Cool.Show.-.27.1080p.CR.WEB-DL.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.-.27.1080p.CR.WEB-DL.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e28", Name: "Cool.Show.-.28.1080p.CR.WEB-DL.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.-.28.1080p.CR.WEB-DL.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -589,7 +615,9 @@ func TestFixC_CRCollection_CheckAndApplyBothAccept(t *testing.T) {
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       &stubSeasonPackRunStore{},
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
 	checkResp, err := svc.CheckSeasonPackWebhook(context.Background(), &SeasonPackCheckRequest{
@@ -598,6 +626,7 @@ func TestFixC_CRCollection_CheckAndApplyBothAccept(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, checkResp.Ready, "check must accept when collections agree")
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	applyResp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName, TorrentData: torrentData, InstanceIDs: []int{inst.ID},
 	})
@@ -625,7 +654,7 @@ func TestFixC_MatchStoresStampedReleaseWithoutMutatingCache(t *testing.T) {
 	svc := &Service{releaseCache: NewReleaseCache()}
 	settings := &models.CrossSeedAutomationSettings{SeasonPackEnabled: true}
 
-	got := svc.matchEpisodeCandidatesDetailed(cached, packRelease, packEpisodes, settings, nil)
+	got := svc.matchEpisodeCandidatesDetailed(cached, "", packRelease, packEpisodes, settings, nil)
 	require.Len(t, got, 1)
 	matches, ok := got[episodeIdentity{series: 3, episode: 25}]
 	require.True(t, ok, "identity must be the stamped one")
@@ -656,7 +685,7 @@ func TestLightCheck_CountsAbsoluteNumberedLocalsForKnownSeasonPack(t *testing.T)
 	svc := &Service{releaseCache: NewReleaseCache()}
 	settings := &models.CrossSeedAutomationSettings{SeasonPackEnabled: true}
 
-	got := svc.matchEpisodeCandidatesDetailed(cached, packRelease, nil, settings, nil)
+	got := svc.matchEpisodeCandidatesDetailed(cached, "", packRelease, nil, settings, nil)
 	require.Len(t, got, 2, "light check must count both seasoned and absolute-numbered locals")
 	_, ok := got[episodeIdentity{series: 3, episode: 1}]
 	require.True(t, ok, "seasoned local must count")
@@ -682,7 +711,7 @@ func TestMatchEpisodeCandidates_ExcludesIncompleteEpisodes(t *testing.T) {
 	svc := &Service{releaseCache: NewReleaseCache()}
 	settings := &models.CrossSeedAutomationSettings{SeasonPackEnabled: true}
 
-	got := svc.matchEpisodeCandidatesDetailed(cached, packRelease, nil, settings, nil)
+	got := svc.matchEpisodeCandidatesDetailed(cached, "", packRelease, nil, settings, nil)
 	require.Len(t, got, 1, "incomplete episode must not count as a candidate")
 	_, ok := got[episodeIdentity{series: 3, episode: 1}]
 	require.True(t, ok, "complete episode must count")
@@ -692,6 +721,15 @@ func TestMatchEpisodeCandidates_ExcludesIncompleteEpisodes(t *testing.T) {
 // candidates. The loop reads every cached episode, so a reason that means "belongs to
 // another show or another pack" must stay off the default level.
 func TestMatchEpisodeCandidates_FilterLogLevels(t *testing.T) {
+	// Run in a separate process so search goroutines cannot race with this test's logger.
+	if os.Getenv("QUI_TEST_FILTER_LOG_LEVELS_CHILD") != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMatchEpisodeCandidates_FilterLogLevels$", "-test.timeout=30s")
+		cmd.Env = append(os.Environ(), "QUI_TEST_FILTER_LOG_LEVELS_CHILD=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+
 	parsedPack := rls.ParseString("Cool.Show.S03.1080p.WEB.x264-GRP")
 	packRelease := &parsedPack
 
@@ -761,7 +799,7 @@ func TestMatchEpisodeCandidates_FilterLogLevels(t *testing.T) {
 			svc := &Service{releaseCache: NewReleaseCache()}
 			settings := &models.CrossSeedAutomationSettings{SeasonPackEnabled: true}
 
-			got := svc.matchEpisodeCandidatesDetailed(cached, packRelease, tt.packEpisodes, settings, nil)
+			got := svc.matchEpisodeCandidatesDetailed(cached, "", packRelease, tt.packEpisodes, settings, nil)
 			require.Len(t, got, 1, "only the fully matching episode may count")
 
 			for _, w := range tt.want {
@@ -1221,6 +1259,7 @@ func TestApplySeasonPackWebhook_ReturnsAlreadyExistsWhenTorrentPresent(t *testin
 		seasonPackRunStore:       store,
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1286,6 +1325,7 @@ func TestApplySeasonPackWebhook_SelectsDeterministicWinner(t *testing.T) {
 	store := &stubSeasonPackRunStore{}
 
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 	inst1 := &models.Instance{
 		ID: 1, Name: "Instance1", IsActive: true,
 		HasLocalFilesystemAccess: true,
@@ -1302,10 +1342,10 @@ func TestApplySeasonPackWebhook_SelectsDeterministicWinner(t *testing.T) {
 	// Both instances have all 4 episodes, so tie on coverage and matched count.
 	// Winner should be instance 1 (lowest ID).
 	allEpisodes := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -1325,9 +1365,12 @@ func TestApplySeasonPackWebhook_SelectsDeterministicWinner(t *testing.T) {
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       store,
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1380,6 +1423,7 @@ func TestApplySeasonPackWebhook_HardFailsWhenCoverageDrifts(t *testing.T) {
 		seasonPackRunStore:       store,
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1405,6 +1449,7 @@ func TestApplySeasonPackWebhook_UsesHardlinkMode(t *testing.T) {
 	fix := newSeasonPackFixture(t)
 	store := &stubSeasonPackRunStore{}
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	inst := &models.Instance{
 		ID: 1, Name: "HardlinkInst", IsActive: true,
@@ -1414,10 +1459,10 @@ func TestApplySeasonPackWebhook_UsesHardlinkMode(t *testing.T) {
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -1434,12 +1479,13 @@ func TestApplySeasonPackWebhook_UsesHardlinkMode(t *testing.T) {
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       store,
-		seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+		seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 			capturedPlan = plan
-			return &hardlinktree.Created{}, nil
+			return &fsops.TreeCreateResult{}, nil
 		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1459,7 +1505,7 @@ func TestApplySeasonPackWebhook_UsesHardlinkMode(t *testing.T) {
 
 	// Verify each file maps from source into a single pack folder (no double nesting).
 	for _, fp := range capturedPlan.Files {
-		require.Contains(t, filepath.ToSlash(fp.SourcePath), "/media/")
+		require.Equal(t, mediaDir, filepath.Dir(fp.SourcePath))
 		require.Equal(t, filepath.Join(baseDir, fix.packName), filepath.Dir(fp.TargetPath))
 	}
 
@@ -1502,6 +1548,7 @@ func TestApplySeasonPackWebhook_SavePathHonorsDirPreset(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fix := newSeasonPackFixture(t)
 			baseDir := t.TempDir()
+			mediaDir := t.TempDir()
 
 			inst := &models.Instance{
 				ID: 1, Name: "HardlinkInst", IsActive: true,
@@ -1512,10 +1559,10 @@ func TestApplySeasonPackWebhook_SavePathHonorsDirPreset(t *testing.T) {
 			}
 
 			episodeTorrents := []qbt.Torrent{
-				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 			}
 
 			baseSM := newMultiFakeSyncManager(
@@ -1531,12 +1578,13 @@ func TestApplySeasonPackWebhook_SavePathHonorsDirPreset(t *testing.T) {
 				syncManager:              sm,
 				releaseCache:             NewReleaseCache(),
 				automationSettingsLoader: defaultSettings(true, 0.75),
-				seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+				seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 					capturedPlan = plan
-					return &hardlinktree.Created{}, nil
+					return &fsops.TreeCreateResult{}, nil
 				},
 			}
 
+			svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 			resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 				TorrentName: fix.packName,
 				TorrentData: fix.torrentData,
@@ -1566,6 +1614,7 @@ func TestApplySeasonPackWebhook_UsesReflinkMode(t *testing.T) {
 	fix := newSeasonPackFixture(t)
 	store := &stubSeasonPackRunStore{}
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	inst := &models.Instance{
 		ID: 1, Name: "ReflinkInst", IsActive: true,
@@ -1575,10 +1624,10 @@ func TestApplySeasonPackWebhook_UsesReflinkMode(t *testing.T) {
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -1594,9 +1643,12 @@ func TestApplySeasonPackWebhook_UsesReflinkMode(t *testing.T) {
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       store,
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1616,6 +1668,7 @@ func TestApplySeasonPackWebhook_UsesReflinkMode(t *testing.T) {
 func TestApplySeasonPackWebhook_UsesResolvedCategory(t *testing.T) {
 	fix := newSeasonPackFixture(t)
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	tests := []struct {
 		name       string
@@ -1708,10 +1761,10 @@ func TestApplySeasonPackWebhook_UsesResolvedCategory(t *testing.T) {
 			}
 
 			episodeTorrents := []qbt.Torrent{
-				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", Category: tt.episodeCat, ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 			}
 
 			baseSM := newMultiFakeSyncManager(
@@ -1728,9 +1781,12 @@ func TestApplySeasonPackWebhook_UsesResolvedCategory(t *testing.T) {
 				automationSettingsLoader: func(context.Context) (*models.CrossSeedAutomationSettings, error) {
 					return tt.settings, nil
 				},
-				seasonPackLinkCreator: func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+				seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+					return &fsops.TreeCreateResult{}, nil
+				},
 			}
 
+			svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 			resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 				TorrentName: fix.packName,
 				TorrentData: fix.torrentData,
@@ -1752,6 +1808,7 @@ func TestApplySeasonPackWebhook_UsesResolvedCategory(t *testing.T) {
 func TestApplySeasonPackWebhook_DemotesSizeMismatchedEpisodeToMissing(t *testing.T) {
 	fix := alignedSeasonPackFixture(t)
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	inst := &models.Instance{
 		ID: 1, Name: "Test", IsActive: true,
@@ -1761,10 +1818,10 @@ func TestApplySeasonPackWebhook_DemotesSizeMismatchedEpisodeToMissing(t *testing
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -1782,12 +1839,13 @@ func TestApplySeasonPackWebhook_DemotesSizeMismatchedEpisodeToMissing(t *testing
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
-		seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+		seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 			capturedPlan = plan
-			return &hardlinktree.Created{}, nil
+			return &fsops.TreeCreateResult{}, nil
 		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1817,6 +1875,7 @@ func TestApplySeasonPackWebhook_DemotesSizeMismatchedEpisodeToMissing(t *testing
 func TestApplySeasonPackWebhook_PieceBoundaryVetoesDemotionOnUnalignedPack(t *testing.T) {
 	fix := newSeasonPackFixture(t) // files share the single 256 KiB piece
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	inst := &models.Instance{
 		ID: 1, Name: "Test", IsActive: true,
@@ -1826,10 +1885,10 @@ func TestApplySeasonPackWebhook_PieceBoundaryVetoesDemotionOnUnalignedPack(t *te
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
-		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E02.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E03.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
+		{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E04.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -1846,9 +1905,12 @@ func TestApplySeasonPackWebhook_PieceBoundaryVetoesDemotionOnUnalignedPack(t *te
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1896,9 +1958,12 @@ func TestApplySeasonPackWebhook_DriftsWhenDemotionDropsCoverageBelowThreshold(t 
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 1.0),
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1954,9 +2019,12 @@ func TestApplySeasonPackWebhook_TriesNextEpisodeCandidateAfterValidationFailure(
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 1.0),
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -1969,6 +2037,7 @@ func TestApplySeasonPackWebhook_TriesNextEpisodeCandidateAfterValidationFailure(
 }
 
 func TestApplySeasonPackWebhook_RejectsUnsafePieceBoundariesInHardlinkMode(t *testing.T) {
+	mediaDir := t.TempDir()
 	packName := "Cool.Show.S01.1080p.WEB.x264-GRP"
 	main := bytes.Repeat([]byte("M"), 53)
 	extra := bytes.Repeat([]byte("E"), 11)
@@ -1986,7 +2055,7 @@ func TestApplySeasonPackWebhook_RejectsUnsafePieceBoundariesInHardlinkMode(t *te
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -2005,9 +2074,12 @@ func TestApplySeasonPackWebhook_RejectsUnsafePieceBoundariesInHardlinkMode(t *te
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName,
 		TorrentData: torrentData,
@@ -2022,6 +2094,7 @@ func TestApplySeasonPackWebhook_RejectsUnsafePieceBoundariesInHardlinkMode(t *te
 }
 
 func TestApplySeasonPackWebhook_RespectsSkipPieceBoundarySafetyCheck(t *testing.T) {
+	mediaDir := t.TempDir()
 	packName := "Cool.Show.S01.1080p.WEB.x264-GRP"
 	main := bytes.Repeat([]byte("M"), 53)
 	extra := bytes.Repeat([]byte("E"), 11)
@@ -2039,7 +2112,7 @@ func TestApplySeasonPackWebhook_RespectsSkipPieceBoundarySafetyCheck(t *testing.
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -2064,10 +2137,13 @@ func TestApplySeasonPackWebhook_RespectsSkipPieceBoundarySafetyCheck(t *testing.
 				SkipPieceBoundarySafetyCheck: true,
 			}, nil
 		},
-		seasonPackLinkCreator: func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
-		recheckResumeChan:     make(chan *pendingResume, 1),
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
+		recheckResumeChan: make(chan *pendingResume, 1),
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName,
 		TorrentData: torrentData,
@@ -2118,6 +2194,7 @@ func TestApplySeasonPackWebhook_RejectsInstanceWithoutLinkMode(t *testing.T) {
 		seasonPackRunStore:       store,
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -2132,6 +2209,7 @@ func TestApplySeasonPackWebhook_RejectsInstanceWithoutLinkMode(t *testing.T) {
 func TestApplySeasonPackWebhook_AllowsPartialPackAndQueuesRecheck(t *testing.T) {
 	store := &stubSeasonPackRunStore{}
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	packName := "Cool.Show.S01.1080p.WEB.x264-GRP"
 	packFiles := []string{
@@ -2157,9 +2235,9 @@ func TestApplySeasonPackWebhook_AllowsPartialPackAndQueuesRecheck(t *testing.T) 
 
 	// Only 3 of 4 episodes on the instance, but coverage=75% meets threshold.
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/ep01.mkv", Progress: 1.0},
-		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/ep02.mkv", Progress: 1.0},
-		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/ep03.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "ep01.mkv"), Progress: 1.0},
+		{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "ep02.mkv"), Progress: 1.0},
+		{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "ep03.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -2179,10 +2257,13 @@ func TestApplySeasonPackWebhook_AllowsPartialPackAndQueuesRecheck(t *testing.T) 
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       store,
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
-		recheckResumeChan:        make(chan *pendingResume, 1),
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
+		recheckResumeChan: make(chan *pendingResume, 1),
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName,
 		TorrentData: torrentData,
@@ -2214,6 +2295,7 @@ func TestApplySeasonPackWebhook_AllowsPartialPackAndQueuesRecheck(t *testing.T) 
 }
 
 func TestApplySeasonPackWebhook_PausesForSafeExtrasAndQueuesRecheck(t *testing.T) {
+	mediaDir := t.TempDir()
 	packName := "Cool.Show.S01.1080p.WEB.x264-GRP"
 	main := bytes.Repeat([]byte("M"), 64)
 	extra := bytes.Repeat([]byte("E"), 11)
@@ -2231,7 +2313,7 @@ func TestApplySeasonPackWebhook_PausesForSafeExtrasAndQueuesRecheck(t *testing.T
 	}
 
 	episodeTorrents := []qbt.Torrent{
-		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv", Progress: 1.0},
+		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP.mkv"), Progress: 1.0},
 	}
 
 	baseSM := newMultiFakeSyncManager(
@@ -2250,10 +2332,13 @@ func TestApplySeasonPackWebhook_PausesForSafeExtrasAndQueuesRecheck(t *testing.T
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
-		recheckResumeChan:        make(chan *pendingResume, 1),
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
+		recheckResumeChan: make(chan *pendingResume, 1),
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName,
 		TorrentData: torrentData,
@@ -2285,6 +2370,7 @@ func TestApplySeasonPackWebhook_ResolvesEpisodeFileFromDirectoryContentPath(t *t
 		packFile: bytes.Repeat([]byte("M"), 64),
 	}))
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 
 	inst := &models.Instance{
 		ID: 1, Name: "Test", IsActive: true,
@@ -2293,7 +2379,7 @@ func TestApplySeasonPackWebhook_ResolvesEpisodeFileFromDirectoryContentPath(t *t
 		HardlinkBaseDir:          baseDir,
 	}
 
-	contentDir := "/media/Cool.Show.S01E01.1080p.WEB.x264-GRP"
+	contentDir := filepath.Join(mediaDir, "Cool.Show.S01E01.1080p.WEB.x264-GRP")
 	episodeTorrents := []qbt.Torrent{
 		{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: contentDir, Progress: 1.0},
 	}
@@ -2316,12 +2402,13 @@ func TestApplySeasonPackWebhook_ResolvesEpisodeFileFromDirectoryContentPath(t *t
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 1.0),
-		seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+		seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 			capturedPlan = plan
-			return &hardlinktree.Created{}, nil
+			return &fsops.TreeCreateResult{}, nil
 		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName,
 		TorrentData: torrentData,
@@ -2732,6 +2819,7 @@ func TestCheckSeasonPackWebhook_KeepsAliasesWhenSeasonTotalUnavailable(t *testin
 // alias titles too, or a pack that checks ready fails every apply with a release
 // mismatch.
 func TestApplySeasonPackWebhook_MatchesEpisodesViaARRAlternateTitles(t *testing.T) {
+	mediaDir := t.TempDir()
 	packName := "Jidou.Hanbaiki.S01.1080p.WEB.x264-GRP"
 	packFiles := []string{
 		"Jidou.Hanbaiki.S01E01.1080p.WEB.x264-GRP.mkv",
@@ -2758,7 +2846,7 @@ func TestApplySeasonPackWebhook_MatchesEpisodesViaARRAlternateTitles(t *testing.
 	for i, name := range localNames {
 		episodeTorrents = append(episodeTorrents, qbt.Torrent{
 			Hash: hashes[i], Name: name,
-			ContentPath: "/media/" + name + ".mkv",
+			ContentPath: filepath.Join(mediaDir, name+".mkv"),
 			Progress:    1.0,
 		})
 	}
@@ -2793,8 +2881,10 @@ func TestApplySeasonPackWebhook_MatchesEpisodesViaARRAlternateTitles(t *testing.
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 0.75),
 		seasonPackRunStore:       &stubSeasonPackRunStore{},
-		seasonPackLinkCreator:    func(_ *hardlinktree.TreePlan) (*hardlinktree.Created, error) { return &hardlinktree.Created{}, nil },
-		arrService:               spy,
+		seasonPackLinkCreator: func(context.Context, *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
+			return &fsops.TreeCreateResult{}, nil
+		},
+		arrService: spy,
 	}
 
 	checkResp, err := svc.CheckSeasonPackWebhook(context.Background(), &SeasonPackCheckRequest{
@@ -2804,6 +2894,7 @@ func TestApplySeasonPackWebhook_MatchesEpisodesViaARRAlternateTitles(t *testing.
 	require.True(t, checkResp.Ready, "check must accept via ARR alternate titles")
 	require.Equal(t, 1, spy.seasonCalls, "check must make exactly one season lookup")
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	applyResp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: packName, TorrentData: torrentData, InstanceIDs: []int{inst.ID},
 	})
@@ -2839,7 +2930,7 @@ func TestMatchEpisodeCandidates_MultiEpisodeLocalStaysAnEpisodeSource(t *testing
 	svc := &Service{releaseCache: NewReleaseCache()}
 	settings := &models.CrossSeedAutomationSettings{SeasonPackEnabled: true}
 
-	got := svc.matchEpisodeCandidatesDetailed(cached, packRelease, packEpisodes, settings, nil)
+	got := svc.matchEpisodeCandidatesDetailed(cached, "", packRelease, packEpisodes, settings, nil)
 	require.Len(t, got, 1)
 	matches, ok := got[episodeIdentity{series: 3, episode: 25}]
 	require.True(t, ok, "range local must be identified by its first episode")

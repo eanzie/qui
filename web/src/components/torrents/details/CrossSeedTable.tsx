@@ -21,11 +21,10 @@ import type { Instance } from "@/types"
 import {
   createColumnHelper,
   flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
+  useTable,
   type SortingState
 } from "@tanstack/react-table"
+import { sortableDetailsTableFeatures } from "../tanstackTableFeatures"
 import type { TFunction } from "i18next"
 import { Copy, Loader2, Trash2 } from "lucide-react"
 import { memo, useMemo, useState } from "react"
@@ -35,6 +34,7 @@ import { toast } from "sonner"
 interface CrossSeedTableProps {
   matches: CrossSeedTorrent[]
   loading: boolean
+  loadFailed: boolean
   incognitoMode: boolean
   selectedTorrents: Set<string>
   onToggleSelection: (key: string) => void
@@ -46,7 +46,7 @@ interface CrossSeedTableProps {
   onNavigateToTorrent?: (instanceId: number, torrentHash: string) => void
 }
 
-const columnHelper = createColumnHelper<CrossSeedTorrent>()
+const columnHelper = createColumnHelper<typeof sortableDetailsTableFeatures, CrossSeedTorrent>()
 
 function getStatusInfo(match: CrossSeedTorrent, t: TFunction): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string } {
   const trackerHealth = match.tracker_health ?? null
@@ -115,6 +115,7 @@ function getMatchTypeLabel(matchType: string, t: (key: string, options?: Record<
 export const CrossSeedTable = memo(function CrossSeedTable({
   matches,
   loading,
+  loadFailed,
   incognitoMode,
   selectedTorrents,
   onToggleSelection,
@@ -140,7 +141,7 @@ export const CrossSeedTable = memo(function CrossSeedTable({
     return map
   }, [trackerCustomizations])
 
-  const columns = useMemo(() => [
+  const columns = useMemo(() => columnHelper.columns([
     columnHelper.display({
       id: "select",
       header: () => null,
@@ -320,15 +321,14 @@ export const CrossSeedTable = memo(function CrossSeedTable({
       },
       size: 130,
     }),
-  ], [incognitoMode, selectedTorrents, onToggleSelection, trackerDisplayNames, trackerIcons, instanceById, t])
+  ]), [incognitoMode, selectedTorrents, onToggleSelection, trackerDisplayNames, trackerIcons, instanceById, t])
 
-  const table = useReactTable({
+  const table = useTable({
+    features: sortableDetailsTableFeatures,
     data: matches,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   })
 
   if (loading && matches.length === 0) {
@@ -339,10 +339,18 @@ export const CrossSeedTable = memo(function CrossSeedTable({
     )
   }
 
+  if (loadFailed) {
+    return (
+      <div className="flex items-center justify-center h-full text-destructive text-sm">
+        {t("crossSeedTable.loadFailed")}
+      </div>
+    )
+  }
+
   if (matches.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        {t("crossSeedTable.noMatches", { defaultValue: "No matching torrents found on other instances" })}
+        {t("crossSeedTable.noMatches")}
       </div>
     )
   }
@@ -443,7 +451,7 @@ export const CrossSeedTable = memo(function CrossSeedTable({
                     }
                   }}
                 >
-                  {row.getVisibleCells().map((cell) => (
+                  {row.getAllCells().map((cell) => (
                     <td
                       key={cell.id}
                       className="px-2 py-1.5"

@@ -1,44 +1,66 @@
 ---
 sidebar_position: 2
-title: Rules
+title: Cross-seed matching rules
+sidebar_label: Matching rules
+description: "Rules that decide which cross-seed candidates qui adds: matching, search categories, category naming, source tags, and auto-start limits."
 ---
 
-# Cross-Seed Rules
+# Cross-seed matching rules
 
-Configure matching behavior in the **Rules** tab on the Cross-Seed page.
+The settings that apply to every cross-seed source sit in three sections of the Cross-Seed page: **Matching rules**, **Categories and tags**, and **After injection**. Settings that belong to one source, such as its tags, live on that source's tab: **RSS**, **Webhook**, **Completion**, **Library**, or **Season packs**.
 
 ## Matching
 
-- **Find individual episodes** - When enabled, season packs also match individual episodes. When disabled, season packs only match other season packs. Episodes are added with AutoTMM disabled to prevent save path conflicts.
-- **Skip recheck** - When enabled, skips any cross-seed that would require a recheck (alignment needed, extra files, filesystem fallback, or disc layouts like `BDMV`/`VIDEO_TS`). Applies to all modes including hardlink/reflink.
-- **Rescue title mismatches** - Disabled by default. This rule can try exact-size results when only the title differs. Each source search can try at most three rescue downloads across all indexers. After download, every usable file must have one exact-size partner. qui adds a rescued torrent paused. It starts only after a full qBittorrent recheck reaches 100%. A rescue that fails still counts as a download on your tracker. **Skip recheck** turns off this rule. Manual search, Library Scan, and completion search use it. RSS, webhooks, and direct apply requests do not use it.
-- **Skip piece boundary safety check** - Enabled by default. When enabled, allows cross-seeds even if extra files share torrent pieces with content files. **Warning:** This may corrupt your existing seeded data if content differs. Uncheck this to enable the safety check, or use reflink mode which safely handles these cases.
+These settings sit in **Matching rules**.
+
+- **Cross-seed episodes from packs**: If enabled, season packs also match individual episodes. If disabled, season packs only match other season packs. qui adds episodes with AutoTMM disabled to prevent save path conflicts.
+- **Skip recheck**: If enabled, qui skips any cross-seed that requires a recheck. See [Skip cross-seeds with extra files](#skip-cross-seeds-with-extra-files).
+- **Rescue title mismatches**: Disabled by default. If only the title differs and the positive reported size matches, this rule tests that result. Each source search tries at most three rescue downloads across all indexers. RSS and autobrr use this rule only when the announcement provides an exact size. qui adds rescued torrents in a paused state and starts them only after a full qBittorrent recheck reaches 100%. **Skip recheck** disables this rule.
+- **Piece boundary safety check**: Off by default. Turn the switch on to block cross-seeds whose extra files share torrent pieces with content files. With the switch off, qBittorrent can corrupt your existing seeded data if the content differs. Reflink mode protects the original files. If hardlink or reflink mode falls back to regular mode, qui runs the check even when the switch is off. This fallback check covers matches that are not exact, need renames, or have extra files.
 
 :::note
-Filesystem fallback and disc layouts (`BDMV`/`VIDEO_TS`) are treated more strictly: they only auto-resume after a full recheck reaches 100%.
+If a torrent uses filesystem fallback, disc layouts (`BDMV`/`VIDEO_TS`), title rescue, or exact-size season, episode, or release-group matches, qui auto-resumes it only after a full recheck reaches 100%. With **Skip recheck** on, a byte-complete filesystem fallback is the exception. qui renames the paths if necessary and adds it without a recheck. If **Auto-resume after injection** is on, qui then resumes it.
 :::
+
+### Skip cross-seeds with extra files
+
+To stop qui from adding a cross-seed that has extra files, such as samples, `.nfo` files, or subtitles, enable **Skip recheck**. qBittorrent must download the extra files that you do not have, and the torrent needs a recheck. With **Skip recheck** on, qui does not add the torrent.
+
+**Skip recheck** also skips the other matches that require a recheck: renamed paths, filesystem fallback, disc layouts, title rescue, and exact-size matches with different season, episode, or release-group details. A byte-complete match is the exception. In a byte-complete match, each file has a file of the same size, and the torrent has no extra files. The paths are the same (an exact match), or only the paths differ (a rename-only match). If two or more files have the same size and their names do not show which file is which, the match is not a byte-complete match. A sidecar file, such as an `.nfo` file or a subtitle, matches only by name, not by size. An episode in a season pack, a disc layout, and a title rescue are never byte-complete matches. An exact-size match with different season, episode, or release-group details is also never a byte-complete match. qui renames the paths of a byte-complete match if necessary and adds the torrent without a recheck. This rule applies to regular, hardlink, and reflink modes. You get fewer cross-seeds. In the row details of a search run, these matches have the `skipped_recheck` status. See [Cross-seed search run statuses](./troubleshooting.md#cross-seed-search-run-statuses).
+
+### Reported-size fallback
+
+Strict release matching runs first. If qui finds an exact positive reported byte count, it relaxes approved name differences.
+
+Reported size does not prove that two torrents contain the same bytes. qui still checks the torrent metadata, files, paths, layout, and piece boundaries.
+
+If torrents have title, season, episode, or split release-group differences, qui requires a full piece check. qui adds these torrents paused and resumes them only at 100%.
+
+Soft descriptive differences keep the normal fast path. These differences include codec, source, HDR, edition, and one-sided checksum data.
+
+**Skip recheck** removes only matches that need verification. RSS and autobrr reject those matches before the planned torrent download.
 
 ## Search Category Rules
 
-qui reads the torrent name to find the content type. It then corrects that guess with the file extensions inside the torrent. Both signals can be wrong.
+qui reads the torrent name to find the content type. It then corrects that guess with the file extensions inside the torrent. Both signals can fail.
 
-A search category rule forces the content type for every torrent in a qBittorrent category. The rule wins over the name and over the file extensions.
+A search category rule forces the content type for every torrent in a qBittorrent category. The rule overrides the name and the file extensions.
 
-The content type decides which Torznab categories qui asks for, and which search mode it uses. It therefore decides which indexers can answer the search.
+The content type decides which Torznab categories qui requests, and which search mode it uses. As a result, it decides which indexers can answer the search.
 
 ### When a rule helps
 
 File extensions cannot always correct the name:
 
-- A disc image holds one `.iso` file. This extension is neither audio nor video, so the extensions give no signal and the name decides alone.
-- An ebook is one `.epub` or `.pdf` file. A name such as `Author Name - Book Title (2021)` can parse as music or as a movie.
+- A disc image contains one `.iso` file. Because this extension is neither audio nor video, the extensions give no signal and the name decides alone.
+- An ebook contains one `.epub` or `.pdf` file. A name such as `Author Name - Book Title (2021)` can parse as music or as a movie.
 
-In both examples the torrent is in a category that you control. A rule on that category gives qui the correct content type.
+In both examples, the torrent is in a category that you control. A rule on that category gives qui the correct content type.
 
 ### Add a rule
 
-1. Open the **Rules** tab on the Cross-Seed page.
-2. Find **Search category rules** in the **Matching behavior** card.
+1. Open **Matching rules** on the Cross-Seed page.
+2. Find **Search category rules**.
 3. Select **Add rule**.
 4. Select or type one or more qBittorrent categories.
 5. Select the content type in the **search as** list.
@@ -49,136 +71,151 @@ The content types are Movie, TV, Music, Audiobook, Book, Comic, Game, and App.
 
 One rule can hold more than one category. A torrent in any of those categories gets the content type of that rule.
 
-The match is exact and case-sensitive, because qBittorrent categories are case-sensitive. A rule for `ebooks` does not match a torrent in `Ebooks`.
+The match is exact and case-sensitive because qBittorrent categories are case-sensitive. A rule for `ebooks` does not match a torrent in `Ebooks`.
 
 If two rules name the same category, the first rule keeps it. When qui saves the settings, it removes that category from the later rule. If this empties the later rule, qui removes that rule.
 
 :::note
-Manual search, Library Scan, and completion search use these rules. RSS, webhooks, and direct apply requests do not use them. Those flows have no qBittorrent source torrent, so they have no category to match. Dir Scan has its own detection and does not use these rules.
+Manual search, Library Scan, completion search, RSS matching, and autobrr matching apply these rules to local source torrents. Dir Scan uses its own detection.
 :::
 
 :::note
-Audiobook and Music ask the indexers for the same categories, and both send an artist and an album parameter. Only the text of the search query differs.
+Audiobook and Music request the same categories from indexers, and both send an artist and an album parameter. Only the text of the search query differs.
 :::
 
-## Season Pack Threshold
+## Season packs
 
-The season-pack webhook uses a separate coverage threshold (default 75%) to decide whether enough local data exists to inject a pack. Season episode totals are sourced from Sonarr first, then TVDB or TVMaze when Sonarr cannot resolve the release. When torrent data is available, qui never uses a total lower than the playable file count in the pack torrent. Incomplete packs are added paused, rechecked, then resumed automatically when qBittorrent reports progress at or above the season-pack threshold. This is configured in **Rules > Season packs**. Instances must have local filesystem access and hardlink or reflink mode enabled to qualify. See [Season Packs](./season-packs.md) for details.
-
-Season-pack matching rules live in **Rules > Season packs** and affect only the season-pack webhook flow.
+Season pack settings have their own **Season packs** tab. See [Season Packs](./season-packs.md).
 
 ## Categories
 
-These modes set the category that qui gives to a new cross-seed. To choose the search content type from the category of the source torrent, see [Search Category Rules](#search-category-rules).
+These modes sit in **Categories and tags**. They set the category that qui gives to a new cross-seed. To choose the search content type from the category of the source torrent, see [Search Category Rules](#search-category-rules).
 
-Choose one of three mutually exclusive category modes:
+Choose one of four mutually exclusive category modes:
+
+### Reuse matched torrent category
+
+Keeps the category of the matched torrent unchanged. qui adds no affix.
 
 ### Category Affix (default)
 
-Adds a configurable affix to the matched torrent's category. Prevents Sonarr/Radarr from importing cross-seeded files as duplicates. In **regular mode** (no hardlink/reflink), AutoTMM is inherited from the matched torrent.
+Adds a configurable affix to the category of the matched torrent. This prevents Sonarr and Radarr from importing cross-seeded files as duplicates. If you use **regular mode** (no hardlink/reflink), the cross-seed inherits AutoTMM from the matched torrent.
 
 **Affix Mode:**
-- **Suffix** (default): Appends the affix to the category (e.g., `movies` → `movies.cross`)
-- **Prefix**: Prepends the affix to the category (e.g., `movies` → `cross/movies`)
+
+- **Suffix** (default): Appends the affix to the category (for example `movies` → `movies.cross`)
+- **Prefix**: Prepends the affix to the category (for example `movies` → `cross/movies`)
 
 **Affix Value:** The text to add (default: `.cross`). Common examples:
-- `.cross` using suffix mode → `tv.cross`, `movies.cross`
-- `cross/` using prefix mode → `cross/tv`, `cross/movies`
+
+- `.cross` with suffix mode → `tv.cross`, `movies.cross`
+- `cross/` with prefix mode → `cross/tv`, `cross/movies`
 
 :::tip
-Prefix mode with a trailing `/` creates nested categories<sup>1</sup> in qBittorrent, making it easy to group all cross-seeds under a parent category. Filtering by `cross` returns all cross-seeds (`cross/movies`, `cross/tv`, etc.).
+If you use prefix mode with a trailing `/`, qBittorrent creates nested categories<sup>1</sup>. This groups all cross-seeds under a parent category. A filter on `cross` returns all cross-seeds (`cross/movies`, `cross/tv`, and more).
 :::
 
 :::warning
-Avoid using a leading `/` in suffix mode (e.g., `/cross-seed`). This creates the cross-seed as a **child** of the original category<sup>1</sup>, so setting your category to `movies` in Radarr would also return `movies/cross-seed` torrents, potentially causing conflicts.
+Do not use a leading `/` in suffix mode (for example `/cross-seed`). This creates the cross-seed as a **child** of the original category<sup>1</sup>. A `movies` category in Radarr then also returns `movies/cross-seed` torrents. This causes conflicts.
 
-Use prefix mode instead if you want nested categories.
+If you want nested categories, use prefix mode instead.
 :::
 
-*<sup>1</sup> Nested categories require subcategories to be enabled (Instance Preferences → Files → Enable Subcategories).*
+*<sup>1</sup> Nested categories require you to enable subcategories (Instance Preferences → Files → Enable Subcategories).*
 
 ### Use indexer name as category
 
-Sets category to the indexer name (e.g., `TorrentDB`). AutoTMM is always disabled; uses explicit save paths.
+Sets the category to the indexer name (for example `TorrentDB`). qui always disables AutoTMM and uses explicit save paths.
 
 ### Custom category
 
-Uses a fixed category name for all cross-seeds (e.g., `cross-seed`). AutoTMM is always disabled; uses explicit save paths.
+Uses a fixed category name for all cross-seeds (for example `cross-seed`). qui always disables AutoTMM and uses explicit save paths.
 
 ## Source Tagging
 
-Configure tags applied to cross-seed torrents based on how they were discovered:
+Each source tab has a **Cross-seed tags** field for the torrents that source adds. The default is `cross-seed` for every source.
 
-| Tag Setting | Description | Default |
-|-------------|-------------|---------|
-| RSS Automation Tags | Torrents added via RSS feed polling | `["cross-seed"]` |
-| Seeded Search Tags | Torrents added via seeded torrent search | `["cross-seed"]` |
-| Completion Search Tags | Torrents added via completion-triggered search | `["cross-seed"]` |
-| Webhook Tags | Torrents added via `/apply` webhook | `["cross-seed"]` |
-| Inherit source torrent tags | Also copy tags from the matched source torrent | - |
+| Source | Where |
+|--------|-------|
+| RSS automation | **RSS** tab |
+| `/apply` webhook | **Webhook** tab, "Webhook / autobrr" card |
+| Completion-triggered search | **Completion** tab, "On completion" card |
+| Library Scan | **Library** tab |
+| Season packs | **Season packs** tab |
+
+**Inherit source torrent tags** in **Categories and tags** also copies the tags of the matched source torrent. It applies to every source.
+
+The **RSS**, **Webhook**, **Completion**, and **Library** tabs each have an **Auto-resume after injection** switch. When it is off, torrents from that source stay paused for review.
 
 ## Max Auto-Start Download
 
-After a recheck, qui reads how much data the new cross-seed still misses. qui starts the torrent only when the missing data is at or below **Max auto-start download** (default: 50 MiB). Torrents that miss more data stay paused for manual review. Set 0 to start only fully complete torrents.
+This limit sits in **After injection**. After a recheck, qui reads how much data the new cross-seed still lacks. If the missing data is at or below **Max auto-start download** (default: 50 MiB), qui starts the torrent. Torrents that lack more data stay paused for manual review. Set 0 to start only fully complete torrents.
 
-When only ignorable files are missing (samples, `.nfo`, subtitles, and similar sidecar files), qui starts the torrent anyway. This exception has a fixed 200 MiB ceiling.
+If only ignorable files are missing (samples, `.nfo`, subtitles, and similar sidecar files), qui starts the torrent anyway. This exception has a fixed 200 MiB ceiling.
 
-This limit applies to new cross-seed additions from RSS, seeded search, completion search, and the webhooks. The season-pack flow and Dir Scan use their own resume rules and are not affected.
+This limit applies to new cross-seed additions from RSS, seeded search, completion search, and the webhooks. The season-pack flow and Dir Scan use their own resume rules and ignore this limit.
 
 ## External Program
 
-Optionally run an external program after successfully injecting a cross-seed torrent.
+In **After injection**, qui can run an external program after it injects a cross-seed torrent.
 
 ## Category Behavior Details
 
 ### autoTMM (Auto Torrent Management)
 
-autoTMM behavior depends on which category mode is active:
+The active category mode determines autoTMM behavior:
 
 | Category Mode | autoTMM Behavior |
 |---------------|------------------|
-| **Category Affix** | Inherited from matched torrent (regular mode only; hardlink/reflink disables autoTMM) |
+| **Reuse matched category** | Inherited from matched torrent (regular mode only, hardlink/reflink disables autoTMM) |
+| **Category Affix** | Inherited from matched torrent when the affix category has the same save path (regular mode only, hardlink/reflink disables autoTMM) |
 | **Indexer name** | Always disabled (explicit save paths) |
 | **Custom** | Always disabled (explicit save paths) |
 
-When autoTMM is inherited (affix mode):
-- If matched torrent uses autoTMM, cross-seed uses autoTMM
-- If matched torrent has manual path, cross-seed uses same manual path
+If the cross-seed inherits autoTMM in reuse or affix mode:
 
-When autoTMM is disabled (indexer/custom modes), cross-seeds always use explicit save paths derived from the matched torrent's location.
+- If the matched torrent uses autoTMM, the cross-seed uses autoTMM
+- If the matched torrent has a manual path, the cross-seed uses the same manual path
+
+If autoTMM is disabled (indexer and custom modes), qui gives cross-seeds explicit save paths derived from the location of the matched torrent.
 
 :::note
-Hardlink/reflink mode always adds torrents with an explicit `savepath` pointing at the link tree, which forces autoTMM off.
+Hardlink/reflink mode always adds torrents with an explicit `savepath` that points at the link tree. This forces autoTMM off.
 Dir Scan injections are separate from cross-seed rules and also always add with explicit `savepath` (autoTMM off).
 :::
 
-### Save Path Determination
+### Save path determination
 
 Priority order:
+
 1. Base category's explicit save path (if configured in qBittorrent)
 2. Matched torrent's current save path (fallback)
 
 **Examples:**
 
 *Suffix mode (default):*
-- `tv` category has save path `/data/tv`
-- Cross-seed gets `tv.cross` category with save path `/data/tv`
-- Files are found because they're in the same location
+
+- The `tv` category has save path `/data/tv`
+- The cross-seed gets the `tv.cross` category with save path `/data/tv`
+- qui finds the files because they are in the same location
 
 *Prefix mode:*
-- `movies` category has save path `/data/movies`
-- Cross-seed gets `cross/movies` category with save path `/data/movies`
-- Nested `cross/` parent in qBittorrent groups all cross-seeds together
 
-## Best Practices
+- The `movies` category has save path `/data/movies`
+- The cross-seed gets the `cross/movies` category with save path `/data/movies`
+- The nested `cross/` parent in qBittorrent groups all cross-seeds together
+
+## Best practices
 
 **Do:**
+
 - Use autoTMM consistently across your torrents
 - Let qui create cross-seed categories automatically
 - Keep category structures simple
-- Use prefix mode with `/` (e.g., `cross/`) if you want all cross-seeds grouped under one parent category
+- If you want all cross-seeds grouped under one parent category, use prefix mode with `/` (for example `cross/`)
 
-**Don't:**
-- Manually move torrent files after adding them
+**Do not:**
+
+- Manually move torrent files after you add them
 - Create cross-seed categories manually with different paths
 - Mix autoTMM and manual paths for the same content type

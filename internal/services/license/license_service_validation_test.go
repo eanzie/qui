@@ -5,7 +5,6 @@ package license
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -16,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/autobrr/qui/internal/database"
+	"github.com/autobrr/qui/internal/dodo"
 	"github.com/autobrr/qui/internal/models"
-	"github.com/autobrr/qui/internal/polar"
 	"github.com/autobrr/qui/internal/testutil/testdb"
 )
 
 func TestValidateLicenses_NetworkTimeoutDoesNotInvalidate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := testdb.NewMigratedSQLite(t, "license-validation")
 
@@ -30,35 +29,35 @@ func TestValidateLicenses_NetworkTimeoutDoesNotInvalidate(t *testing.T) {
 
 	now := time.Now()
 	license := &models.ProductLicense{
-		LicenseKey:        "QUI-TEST-KEY",
-		ProductName:       ProductNamePremium,
-		Status:            models.LicenseStatusActive,
-		ActivatedAt:       now.Add(-time.Hour),
-		LastValidated:     now.Add(-time.Hour),
-		Provider:          models.LicenseProviderPolar,
-		PolarActivationID: "activation-id",
-		Username:          "tester",
-		CreatedAt:         now.Add(-time.Hour),
-		UpdatedAt:         now.Add(-time.Hour),
+		LicenseKey:     "QUI-TEST-KEY",
+		ProductName:    ProductNamePremium,
+		Status:         models.LicenseStatusActive,
+		ActivatedAt:    now.Add(-time.Hour),
+		LastValidated:  now.Add(-time.Hour),
+		Provider:       models.LicenseProviderDodo,
+		DodoInstanceID: "inst-id",
+		Username:       "tester",
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now.Add(-time.Hour),
 	}
 
 	require.NoError(t, repo.StoreLicense(ctx, license))
 
 	timeoutErr := context.DeadlineExceeded
-	client := polar.NewClient(
-		polar.WithOrganizationID("test-org"),
-		polar.WithHTTPClient(&http.Client{
+	client := dodo.NewClient(
+		dodo.WithBaseURL("http://dodo.test"),
+		dodo.WithHTTPClient(&http.Client{
 			Transport: roundTripper(func(*http.Request) (*http.Response, error) {
 				return nil, timeoutErr
 			}),
 		}),
 	)
 
-	service := NewLicenseService(repo, client, nil, t.TempDir())
+	service := NewLicenseService(repo, client, t.TempDir())
 
 	valid, err := service.ValidateLicenses(ctx)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, timeoutErr))
+	require.ErrorIs(t, err, timeoutErr)
 	assert.True(t, valid, "transient errors should not mark the license invalid")
 
 	stored, err := repo.GetLicenseByKey(ctx, license.LicenseKey)
@@ -67,7 +66,7 @@ func TestValidateLicenses_NetworkTimeoutDoesNotInvalidate(t *testing.T) {
 }
 
 func TestValidateLicenses_OfflineBeyondGraceDoesNotInvalidate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := testdb.NewMigratedSQLite(t, "license-validation")
 
@@ -75,31 +74,31 @@ func TestValidateLicenses_OfflineBeyondGraceDoesNotInvalidate(t *testing.T) {
 
 	now := time.Now()
 	license := &models.ProductLicense{
-		LicenseKey:        "QUI-TEST-KEY",
-		ProductName:       ProductNamePremium,
-		Status:            models.LicenseStatusActive,
-		ActivatedAt:       now.Add(-time.Hour),
-		LastValidated:     now.Add(-(offlineGracePeriod + time.Hour)),
-		Provider:          models.LicenseProviderPolar,
-		PolarActivationID: "activation-id",
-		Username:          "tester",
-		CreatedAt:         now.Add(-time.Hour),
-		UpdatedAt:         now.Add(-time.Hour),
+		LicenseKey:     "QUI-TEST-KEY",
+		ProductName:    ProductNamePremium,
+		Status:         models.LicenseStatusActive,
+		ActivatedAt:    now.Add(-time.Hour),
+		LastValidated:  now.Add(-(offlineGracePeriod + time.Hour)),
+		Provider:       models.LicenseProviderDodo,
+		DodoInstanceID: "inst-id",
+		Username:       "tester",
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now.Add(-time.Hour),
 	}
 
 	require.NoError(t, repo.StoreLicense(ctx, license))
 
 	timeoutErr := context.DeadlineExceeded
-	client := polar.NewClient(
-		polar.WithOrganizationID("test-org"),
-		polar.WithHTTPClient(&http.Client{
+	client := dodo.NewClient(
+		dodo.WithBaseURL("http://dodo.test"),
+		dodo.WithHTTPClient(&http.Client{
 			Transport: roundTripper(func(*http.Request) (*http.Response, error) {
 				return nil, timeoutErr
 			}),
 		}),
 	)
 
-	service := NewLicenseService(repo, client, nil, t.TempDir())
+	service := NewLicenseService(repo, client, t.TempDir())
 
 	valid, err := service.ValidateLicenses(ctx)
 	require.Error(t, err)
@@ -112,7 +111,7 @@ func TestValidateLicenses_OfflineBeyondGraceDoesNotInvalidate(t *testing.T) {
 }
 
 func TestValidateLicenses_InvalidThenTransientStillReturnsInvalid(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := testdb.NewMigratedSQLite(t, "license-validation")
 
@@ -120,40 +119,40 @@ func TestValidateLicenses_InvalidThenTransientStillReturnsInvalid(t *testing.T) 
 
 	now := time.Now()
 	licenseBad := &models.ProductLicense{
-		LicenseKey:        "QUI-BAD",
-		ProductName:       ProductNamePremium,
-		Status:            models.LicenseStatusActive,
-		ActivatedAt:       now.Add(-time.Hour),
-		LastValidated:     now.Add(-time.Hour),
-		Provider:          models.LicenseProviderPolar,
-		PolarActivationID: "activation-bad",
-		Username:          "tester",
-		CreatedAt:         now.Add(-time.Hour),
-		UpdatedAt:         now.Add(-time.Hour),
+		LicenseKey:     "QUI-BAD",
+		ProductName:    ProductNamePremium,
+		Status:         models.LicenseStatusActive,
+		ActivatedAt:    now.Add(-time.Hour),
+		LastValidated:  now.Add(-time.Hour),
+		Provider:       models.LicenseProviderDodo,
+		DodoInstanceID: "inst-bad",
+		Username:       "tester",
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now.Add(-time.Hour),
 	}
 	licenseSlow := &models.ProductLicense{
-		LicenseKey:        "QUI-SLOW",
-		ProductName:       ProductNamePremium,
-		Status:            models.LicenseStatusActive,
-		ActivatedAt:       now.Add(-time.Hour),
-		LastValidated:     now.Add(-time.Hour),
-		Provider:          models.LicenseProviderPolar,
-		PolarActivationID: "activation-slow",
-		Username:          "tester",
-		CreatedAt:         now.Add(-time.Hour),
-		UpdatedAt:         now.Add(-time.Hour),
+		LicenseKey:     "QUI-SLOW",
+		ProductName:    ProductNamePremium,
+		Status:         models.LicenseStatusActive,
+		ActivatedAt:    now.Add(-time.Hour),
+		LastValidated:  now.Add(-time.Hour),
+		Provider:       models.LicenseProviderDodo,
+		DodoInstanceID: "inst-slow",
+		Username:       "tester",
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now.Add(-time.Hour),
 	}
 
 	require.NoError(t, repo.StoreLicense(ctx, licenseBad))
 	require.NoError(t, repo.StoreLicense(ctx, licenseSlow))
 
-	client := polar.NewClient(
-		polar.WithOrganizationID("test-org"),
-		polar.WithHTTPClient(&http.Client{
+	client := dodo.NewClient(
+		dodo.WithBaseURL("http://dodo.test"),
+		dodo.WithHTTPClient(&http.Client{
 			Transport: roundTripper(func(req *http.Request) (*http.Response, error) {
-				// First call (bad license) returns revoked, second returns timeout
+				// First call (bad license) returns invalid, second returns timeout
 				if strings.Contains(req.URL.Path, "validate") && strings.Contains(string(mustRead(req.Body)), "QUI-BAD") {
-					body := `{"status":"revoked"}`
+					body := `{"valid":false}`
 					return &http.Response{
 						StatusCode: http.StatusOK,
 						Body:       io.NopCloser(strings.NewReader(body)),
@@ -165,7 +164,7 @@ func TestValidateLicenses_InvalidThenTransientStillReturnsInvalid(t *testing.T) 
 		}),
 	)
 
-	service := NewLicenseService(repo, client, nil, t.TempDir())
+	service := NewLicenseService(repo, client, t.TempDir())
 
 	valid, err := service.ValidateLicenses(ctx)
 	require.NoError(t, err, "transient error should be suppressed when invalid licenses were found")
@@ -181,7 +180,7 @@ func TestValidateLicenses_InvalidThenTransientStillReturnsInvalid(t *testing.T) 
 }
 
 func TestValidateLicenses_InvalidStatusMarksLicenseInvalid(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	db := testdb.NewMigratedSQLite(t, "license-validation")
 
@@ -189,25 +188,25 @@ func TestValidateLicenses_InvalidStatusMarksLicenseInvalid(t *testing.T) {
 
 	now := time.Now()
 	license := &models.ProductLicense{
-		LicenseKey:        "QUI-TEST-KEY",
-		ProductName:       ProductNamePremium,
-		Status:            models.LicenseStatusActive,
-		ActivatedAt:       now.Add(-time.Hour),
-		LastValidated:     now.Add(-time.Hour),
-		Provider:          models.LicenseProviderPolar,
-		PolarActivationID: "activation-id",
-		Username:          "tester",
-		CreatedAt:         now.Add(-time.Hour),
-		UpdatedAt:         now.Add(-time.Hour),
+		LicenseKey:     "QUI-TEST-KEY",
+		ProductName:    ProductNamePremium,
+		Status:         models.LicenseStatusActive,
+		ActivatedAt:    now.Add(-time.Hour),
+		LastValidated:  now.Add(-time.Hour),
+		Provider:       models.LicenseProviderDodo,
+		DodoInstanceID: "inst-id",
+		Username:       "tester",
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now.Add(-time.Hour),
 	}
 
 	require.NoError(t, repo.StoreLicense(ctx, license))
 
-	client := polar.NewClient(
-		polar.WithOrganizationID("test-org"),
-		polar.WithHTTPClient(&http.Client{
+	client := dodo.NewClient(
+		dodo.WithBaseURL("http://dodo.test"),
+		dodo.WithHTTPClient(&http.Client{
 			Transport: roundTripper(func(*http.Request) (*http.Response, error) {
-				body := `{"status":"revoked"}`
+				body := `{"valid":false}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),
@@ -217,7 +216,7 @@ func TestValidateLicenses_InvalidStatusMarksLicenseInvalid(t *testing.T) {
 		}),
 	)
 
-	service := NewLicenseService(repo, client, nil, t.TempDir())
+	service := NewLicenseService(repo, client, t.TempDir())
 
 	valid, err := service.ValidateLicenses(ctx)
 	require.NoError(t, err)

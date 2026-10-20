@@ -107,9 +107,10 @@ func runSearchLoopToCompletion(t *testing.T, svc *Service, state *searchRunState
 		close(done)
 	}()
 
+	// Gazelle-only runs wait minSearchIntervalSecondsGazelleOnly after a candidate that sent a request.
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("search run loop did not finish")
 	}
 }
@@ -161,25 +162,23 @@ func TestSearchRunLoop_OneFailedCandidateDoesNotFailWholeRun(t *testing.T) {
 	require.NoError(t, err)
 
 	svc, state := newSearchRunLoopFixture(t, "crossseed-runloop-partial-failure", &hashFilteringSyncManager{
-		gazelleSkipHashSyncManager: gazelleSkipHashSyncManager{
-			torrents: []qbt.Torrent{brokenTorrent, sourceTorrent},
-			filesByHash: map[string]qbt.TorrentFiles{
-				sourceHashNorm: sourceFiles,
-				strings.ToLower(cachedCandidate.Hash): {
-					{Name: "During - LMK (2024 WF)/01 - Durante - Track.flac", Size: 123},
-				},
+		torrents: []qbt.Torrent{brokenTorrent, sourceTorrent},
+		filesByHash: map[string]qbt.TorrentFiles{
+			sourceHashNorm: sourceFiles,
+			strings.ToLower(cachedCandidate.Hash): {
+				{Name: "During - LMK (2024 WF)/01 - Durante - Track.flac", Size: 123},
 			},
-			cachedInstanceTorrents: []internalqb.CrossInstanceTorrentView{
-				{
-					TorrentView: &internalqb.TorrentView{
-						Torrent: &cachedCandidate,
-					},
-					InstanceID:   1,
-					InstanceName: "Local Node",
-				},
-			},
-			exportedTorrent: torrentBytes,
 		},
+		cachedInstanceTorrents: []internalqb.CrossInstanceTorrentView{
+			{
+				TorrentView: &internalqb.TorrentView{
+					Torrent: &cachedCandidate,
+				},
+				InstanceID:   1,
+				InstanceName: "Local Node",
+			},
+		},
+		exportedTorrent: torrentBytes,
 	})
 
 	runSearchLoopToCompletion(t, svc, state)
@@ -229,9 +228,7 @@ func TestSearchRunLoop_AllCandidatesFailedMarksRunFailed(t *testing.T) {
 	}
 
 	svc, state := newSearchRunLoopFixture(t, "crossseed-runloop-total-failure", &hashFilteringSyncManager{
-		gazelleSkipHashSyncManager: gazelleSkipHashSyncManager{
-			torrents: []qbt.Torrent{brokenTorrent},
-		},
+		torrents: []qbt.Torrent{brokenTorrent},
 	})
 
 	runSearchLoopToCompletion(t, svc, state)
@@ -249,4 +246,55 @@ func TestSearchRunLoop_AllCandidatesFailedMarksRunFailed(t *testing.T) {
 		"a run where every candidate failed must not be reported as success")
 	require.NotNil(t, errorMessage)
 	require.Contains(t, *errorMessage, "all 1 searched candidates failed")
+}
+
+// The per-candidate write must not grow with the run: counters land on every
+// persist, the results blob only every searchResultsFlushEvery entries and on
+// finalize (#2572).
+func TestPersistSearchRun_FlushesResultsEveryN(t *testing.T) {
+	ctx := t.Context()
+	db := testdb.NewMigratedSQLite(t, "search-run-flush")
+	store, err := models.NewCrossSeedStore(db, make([]byte, 32))
+	require.NoError(t, err)
+	instanceStore, err := models.NewInstanceStore(db, []byte("01234567890123456789012345678901"))
+	require.NoError(t, err)
+	instance, err := instanceStore.Create(ctx, "Test", "http://localhost:8080", "user", "pass", nil, nil, false, nil)
+	require.NoError(t, err)
+	run, err := store.CreateSearchRun(ctx, &models.CrossSeedSearchRun{
+		InstanceID: instance.ID,
+		Status:     models.CrossSeedSearchRunStatusRunning,
+		StartedAt:  time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	svc := &Service{automationStore: store}
+	state := &searchRunState{run: run}
+	svc.searchState = state
+
+	storedRun := func() *models.CrossSeedSearchRun {
+		stored, err := store.GetSearchRun(ctx, run.ID)
+		require.NoError(t, err)
+		return stored
+	}
+	skipped := models.CrossSeedSearchResult{TorrentHash: "hash", Status: models.CrossSeedSearchResultStatusSkipped, ProcessedAt: time.Now().UTC()}
+
+	for range searchResultsFlushEvery - 1 {
+		state.run.Processed++
+		svc.appendSearchResult(state, skipped)
+		svc.persistSearchRun(state)
+	}
+	stored := storedRun()
+	require.Equal(t, searchResultsFlushEvery-1, stored.Processed, "counters persist on every candidate")
+	require.Empty(t, stored.Results, "results blob stays untouched below the flush threshold")
+
+	svc.appendSearchResult(state, skipped)
+	svc.persistSearchRun(state)
+	require.Len(t, storedRun().Results, searchResultsFlushEvery, "results blob flushed at the threshold")
+
+	svc.appendSearchResult(state, skipped)
+	svc.persistSearchRun(state)
+	require.Len(t, storedRun().Results, searchResultsFlushEvery, "next candidate goes back to a counters-only write")
+
+	svc.finalizeSearchRun(state, false)
+	require.Len(t, storedRun().Results, searchResultsFlushEvery+1, "finalize writes the full row")
 }

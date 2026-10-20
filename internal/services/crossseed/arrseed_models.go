@@ -6,12 +6,12 @@ package crossseed
 // ArrSeedMediaItem represents a single media file discovered from an ARR instance.
 type ArrSeedMediaItem struct {
 	ConfigID          int
-	ArrInstanceType   string // "sonarr" or "radarr"
-	ItemType          string // "episode", "movie", or "season_pack"
-	ArrFileID         int    // Episode file ID or movie file ID
-	ReleaseName       string // sceneName or history sourceTitle
-	ArrFilePath       string // Docker path from ARR API
-	HostFilePath      string // Mapped host path (first file for season packs)
+	ArrInstanceType   string     // "sonarr" or "radarr"
+	ItemType          string     // "episode", "movie", or "season_pack"
+	ArrFileID         int        // Episode file ID or movie file ID
+	ReleaseName       string     // sceneName or history sourceTitle
+	ArrFilePath       string     // Docker path from ARR API
+	HostFilePath      string     // Mapped host path (first file for season packs)
 	HostFiles         []HostFile // All files for season packs (nil for single-file items)
 	FileSize          int64
 	Title             string // Series/movie title for display

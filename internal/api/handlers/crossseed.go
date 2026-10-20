@@ -14,12 +14,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/autobrr/qui/internal/domain"
 	"github.com/autobrr/qui/internal/models"
 	"github.com/autobrr/qui/internal/services/crossseed"
+	"github.com/autobrr/qui/internal/services/crossseed/gazellemusic"
 	"github.com/autobrr/qui/internal/services/jackett"
 )
 
@@ -29,56 +32,54 @@ type CrossSeedHandler struct {
 	completionStore    *models.InstanceCrossSeedCompletionStore
 	instanceStore      *models.InstanceStore
 	seasonPackRunStore *models.SeasonPackRunStore
+	gazelleBaseURL     string // tests point the Gazelle key check at a stub tracker
 }
 
 var infoHashRegex = regexp.MustCompile(`^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$`)
 
 type automationSettingsRequest struct {
-	Enabled                      bool                            `json:"enabled"`
-	RunIntervalMinutes           int                             `json:"runIntervalMinutes"`
-	StartPaused                  bool                            `json:"startPaused"`
-	Category                     *string                         `json:"category"`
-	TargetInstanceIDs            []int                           `json:"targetInstanceIds"`
-	TargetIndexerIDs             []int                           `json:"targetIndexerIds"`
-	MaxResultsPerRun             int                             `json:"maxResultsPerRun"` // Deprecated: automation now processes full feeds and ignores this value
-	FindIndividualEpisodes       bool                            `json:"findIndividualEpisodes"`
-	AutoResumeMaxDownloadMB      *int                            `json:"autoResumeMaxDownloadMb"` // nil keeps the default; 0 = only complete torrents
-	UseCategoryFromIndexer       bool                            `json:"useCategoryFromIndexer"`
-	UseCrossCategoryAffix        bool                            `json:"useCrossCategoryAffix"`
-	CategoryAffixMode            string                          `json:"categoryAffixMode"`
-	CategoryAffix                string                          `json:"categoryAffix"`
-	UseCustomCategory            bool                            `json:"useCustomCategory"`
-	CustomCategory               string                          `json:"customCategory"`
-	RunExternalProgramID         *int                            `json:"runExternalProgramId"`
-	SkipRecheck                  bool                            `json:"skipRecheck"`
-	RescueTitleMismatches        bool                            `json:"rescueTitleMismatches"`
-	SeasonPackEnabled            bool                            `json:"seasonPackEnabled"`
-	SeasonPackAutomationEnabled  bool                            `json:"seasonPackAutomationEnabled"`
-	SeasonPackSkipRepackCompare  bool                            `json:"seasonPackSkipRepackCompare"`
-	SeasonPackSimplifyHDRCompare bool                            `json:"seasonPackSimplifyHdrCompare"`
-	SeasonPackSimplifyWEBCompare bool                            `json:"seasonPackSimplifyWebCompare"`
-	SeasonPackSkipYearCompare    bool                            `json:"seasonPackSkipYearCompare"`
-	SeasonPackCoverageThreshold  float64                         `json:"seasonPackCoverageThreshold"`
-	SeasonPackTags               []string                        `json:"seasonPackTags"`
-	SeasonPackCategory           string                          `json:"seasonPackCategory"`
-	SeasonPackCategoryRules      []models.SeasonPackCategoryRule `json:"seasonPackCategoryRules"`
-	CategoryMappingRules         []models.CategoryMappingRule    `json:"categoryMappingRules"`
+	Enabled                        bool                            `json:"enabled"`
+	RunIntervalMinutes             int                             `json:"runIntervalMinutes"`
+	TargetInstanceIDs              []int                           `json:"targetInstanceIds"`
+	TargetIndexerIDs               []int                           `json:"targetIndexerIds"`
+	MaxResultsPerRun               int                             `json:"maxResultsPerRun"` // Deprecated: automation now processes full feeds and ignores this value
+	FindIndividualEpisodes         bool                            `json:"findIndividualEpisodes"`
+	AutoResumeMaxDownloadMB        *int                            `json:"autoResumeMaxDownloadMb"` // nil keeps the default; 0 = only complete torrents
+	PooledPartialCompletionEnabled bool                            `json:"pooledPartialCompletionEnabled"`
+	UseCategoryFromIndexer         bool                            `json:"useCategoryFromIndexer"`
+	UseCrossCategoryAffix          bool                            `json:"useCrossCategoryAffix"`
+	CategoryAffixMode              string                          `json:"categoryAffixMode"`
+	CategoryAffix                  string                          `json:"categoryAffix"`
+	UseCustomCategory              bool                            `json:"useCustomCategory"`
+	CustomCategory                 string                          `json:"customCategory"`
+	RunExternalProgramID           *int                            `json:"runExternalProgramId"`
+	SkipRecheck                    bool                            `json:"skipRecheck"`
+	RescueTitleMismatches          bool                            `json:"rescueTitleMismatches"`
+	SeasonPackEnabled              bool                            `json:"seasonPackEnabled"`
+	SeasonPackAutomationEnabled    bool                            `json:"seasonPackAutomationEnabled"`
+	SeasonPackSkipRepackCompare    bool                            `json:"seasonPackSkipRepackCompare"`
+	SeasonPackSimplifyHDRCompare   bool                            `json:"seasonPackSimplifyHdrCompare"`
+	SeasonPackSimplifyWEBCompare   bool                            `json:"seasonPackSimplifyWebCompare"`
+	SeasonPackSkipYearCompare      bool                            `json:"seasonPackSkipYearCompare"`
+	SeasonPackCoverageThreshold    float64                         `json:"seasonPackCoverageThreshold"`
+	SeasonPackTags                 []string                        `json:"seasonPackTags"`
+	SeasonPackCategory             string                          `json:"seasonPackCategory"`
+	SeasonPackCategoryRules        []models.SeasonPackCategoryRule `json:"seasonPackCategoryRules"`
+	CategoryMappingRules           []models.CategoryMappingRule    `json:"categoryMappingRules"`
 	// Gazelle (OPS/RED) cross-seed settings.
-	GazelleEnabled       bool   `json:"gazelleEnabled"`
-	RedactedAPIKey       string `json:"redactedApiKey"`
-	OrpheusAPIKey        string `json:"orpheusApiKey"`
-	SeasonPackTVDBAPIKey string `json:"seasonPackTvdbApiKey"`
-	SeasonPackTVDBPIN    string `json:"seasonPackTvdbPin"`
+	GazelleEnabled       bool    `json:"gazelleEnabled"`
+	RedactedAPIKey       *string `json:"redactedApiKey"`
+	OrpheusAPIKey        *string `json:"orpheusApiKey"`
+	SeasonPackTVDBAPIKey *string `json:"seasonPackTvdbApiKey"`
+	SeasonPackTVDBPIN    *string `json:"seasonPackTvdbPin"`
 }
 
 type automationSettingsPatchRequest struct {
-	Enabled            *bool          `json:"enabled,omitempty"`
-	RunIntervalMinutes *int           `json:"runIntervalMinutes,omitempty"`
-	StartPaused        *bool          `json:"startPaused,omitempty"`
-	Category           optionalString `json:"category"`
-	TargetInstanceIDs  *[]int         `json:"targetInstanceIds,omitempty"`
-	TargetIndexerIDs   *[]int         `json:"targetIndexerIds,omitempty"`
-	MaxResultsPerRun   *int           `json:"maxResultsPerRun,omitempty"` // Deprecated: automation now processes full feeds and ignores this value
+	Enabled            *bool  `json:"enabled,omitempty"`
+	RunIntervalMinutes *int   `json:"runIntervalMinutes,omitempty"`
+	TargetInstanceIDs  *[]int `json:"targetInstanceIds,omitempty"`
+	TargetIndexerIDs   *[]int `json:"targetIndexerIds,omitempty"`
+	MaxResultsPerRun   *int   `json:"maxResultsPerRun,omitempty"` // Deprecated: automation now processes full feeds and ignores this value
 	// RSS source filtering: filter which local torrents to search when checking RSS feeds
 	RSSSourceCategories        *[]string `json:"rssSourceCategories,omitempty"`
 	RSSSourceTags              *[]string `json:"rssSourceTags,omitempty"`
@@ -91,6 +92,7 @@ type automationSettingsPatchRequest struct {
 	WebhookSourceExcludeTags       *[]string   `json:"webhookSourceExcludeTags,omitempty"`
 	FindIndividualEpisodes         *bool       `json:"findIndividualEpisodes,omitempty"`
 	AutoResumeMaxDownloadMB        *int        `json:"autoResumeMaxDownloadMb,omitempty"`
+	PooledPartialCompletionEnabled *bool       `json:"pooledPartialCompletionEnabled,omitempty"`
 	UseCategoryFromIndexer         *bool       `json:"useCategoryFromIndexer,omitempty"`
 	UseCrossCategoryAffix          *bool       `json:"useCrossCategoryAffix,omitempty"`
 	CategoryAffixMode              *string     `json:"categoryAffixMode,omitempty"`
@@ -133,25 +135,6 @@ type automationSettingsPatchRequest struct {
 	SeasonPackTVDBPIN            *string                          `json:"seasonPackTvdbPin,omitempty"`
 }
 
-type optionalString struct {
-	Set   bool
-	Value *string
-}
-
-func (o *optionalString) UnmarshalJSON(data []byte) error {
-	o.Set = true
-	if string(data) == "null" {
-		o.Value = nil
-		return nil
-	}
-	var value string
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
-	}
-	o.Value = &value
-	return nil
-}
-
 type optionalInt struct {
 	Set   bool
 	Value *int
@@ -192,8 +175,6 @@ func (r searchSettingsPatchRequest) isEmpty() bool {
 func (r automationSettingsPatchRequest) isEmpty() bool {
 	return r.Enabled == nil &&
 		r.RunIntervalMinutes == nil &&
-		r.StartPaused == nil &&
-		!r.Category.Set &&
 		r.TargetInstanceIDs == nil &&
 		r.TargetIndexerIDs == nil &&
 		r.MaxResultsPerRun == nil &&
@@ -207,6 +188,7 @@ func (r automationSettingsPatchRequest) isEmpty() bool {
 		r.WebhookSourceExcludeTags == nil &&
 		r.FindIndividualEpisodes == nil &&
 		r.AutoResumeMaxDownloadMB == nil &&
+		r.PooledPartialCompletionEnabled == nil &&
 		r.UseCategoryFromIndexer == nil &&
 		r.UseCrossCategoryAffix == nil &&
 		r.CategoryAffixMode == nil &&
@@ -252,21 +234,6 @@ func applyAutomationSettingsPatch(settings *models.CrossSeedAutomationSettings, 
 	if patch.RunIntervalMinutes != nil {
 		settings.RunIntervalMinutes = *patch.RunIntervalMinutes
 	}
-	if patch.StartPaused != nil {
-		settings.StartPaused = *patch.StartPaused
-	}
-	if patch.Category.Set {
-		if patch.Category.Value == nil {
-			settings.Category = nil
-		} else {
-			trimmed := strings.TrimSpace(*patch.Category.Value)
-			if trimmed == "" {
-				settings.Category = nil
-			} else {
-				settings.Category = &trimmed
-			}
-		}
-	}
 	if patch.TargetInstanceIDs != nil {
 		settings.TargetInstanceIDs = *patch.TargetInstanceIDs
 	}
@@ -307,6 +274,9 @@ func applyAutomationSettingsPatch(settings *models.CrossSeedAutomationSettings, 
 	}
 	if patch.AutoResumeMaxDownloadMB != nil {
 		settings.AutoResumeMaxDownloadMB = *patch.AutoResumeMaxDownloadMB
+	}
+	if patch.PooledPartialCompletionEnabled != nil {
+		settings.PooledPartialCompletionEnabled = *patch.PooledPartialCompletionEnabled
 	}
 	if patch.UseCategoryFromIndexer != nil {
 		settings.UseCategoryFromIndexer = *patch.UseCategoryFromIndexer
@@ -407,18 +377,20 @@ func applyAutomationSettingsPatch(settings *models.CrossSeedAutomationSettings, 
 	if patch.GazelleEnabled != nil {
 		settings.GazelleEnabled = *patch.GazelleEnabled
 	}
-	if patch.RedactedAPIKey != nil {
-		settings.RedactedAPIKey = strings.TrimSpace(*patch.RedactedAPIKey)
+	settings.RedactedAPIKey = patchSecret(patch.RedactedAPIKey)
+	settings.OrpheusAPIKey = patchSecret(patch.OrpheusAPIKey)
+	settings.SeasonPackTVDBAPIKey = patchSecret(patch.SeasonPackTVDBAPIKey)
+	settings.SeasonPackTVDBPIN = patchSecret(patch.SeasonPackTVDBPIN)
+}
+
+// patchSecret keeps the stored secret when the request leaves the field out.
+// GetSettings leaves out a secret it cannot decrypt, so a client that sends the
+// settings back would otherwise clear the stored ciphertext.
+func patchSecret(value *string) string {
+	if value == nil {
+		return domain.RedactedStr
 	}
-	if patch.OrpheusAPIKey != nil {
-		settings.OrpheusAPIKey = strings.TrimSpace(*patch.OrpheusAPIKey)
-	}
-	if patch.SeasonPackTVDBAPIKey != nil {
-		settings.SeasonPackTVDBAPIKey = strings.TrimSpace(*patch.SeasonPackTVDBAPIKey)
-	}
-	if patch.SeasonPackTVDBPIN != nil {
-		settings.SeasonPackTVDBPIN = strings.TrimSpace(*patch.SeasonPackTVDBPIN)
-	}
+	return strings.TrimSpace(*value)
 }
 
 var validSeasonPackRuleSources = map[string]struct{}{
@@ -524,8 +496,8 @@ type searchRunRequest struct {
 	// torrent bypasses it, so newly added indexers still backfill everything.
 	MaxAddedAgeDays int `json:"maxAddedAgeDays"`
 
-	// TODO: Surface remaining crossseed.SearchRunOptions fields (e.g. FindIndividualEpisodes,
-	// StartPaused, and category/tag overrides) when the API needs to expose them per run.
+	// TODO: Expose per-run overrides of the seeded search settings (find individual
+	// episodes, start paused, category, tags) when the API needs them.
 }
 
 type CrossSeedBlocklistRequest struct {
@@ -586,6 +558,12 @@ func (h *CrossSeedHandler) Routes(r chi.Router, authMiddleware func(http.Handler
 			r.Post("/run", h.StartSearchRun)
 			r.Post("/run/cancel", h.CancelSearchRun)
 			r.Get("/runs", h.ListSearchRunHistory)
+		})
+		r.With(authMiddleware).Route("/manual", func(r chi.Router) {
+			r.Post("/proposals", h.ManualMatchProposals)
+			r.Post("/apply", h.ManualMatchApply)
+			r.Post("/assemble/check", h.ManualAssembleCheck)
+			r.Post("/assemble", h.ManualAssembleApply)
 		})
 		r.With(authMiddleware).Route("/completion", func(r chi.Router) {
 			r.Get("/{instanceID}", h.GetInstanceCompletionSettings)
@@ -741,6 +719,7 @@ func (h *CrossSeedHandler) GetLocalMatches(w http.ResponseWriter, r *http.Reques
 // @Param request body crossseed.TorrentSearchOptions false "Optional search configuration"
 // @Success 200 {object} crossseed.TorrentSearchResponse
 // @Failure 400 {object} httphelpers.ErrorResponse
+// @Failure 429 {object} httphelpers.ErrorResponse
 // @Failure 500 {object} httphelpers.ErrorResponse
 // @Security ApiKeyAuth
 // @Router /api/cross-seed/torrents/{instanceID}/{hash}/search [post]
@@ -775,6 +754,9 @@ func (h *CrossSeedHandler) SearchTorrentMatches(w http.ResponseWriter, r *http.R
 	opts.TitleRescueResultLimit = 3
 	response, err := h.service.SearchTorrentMatches(ctx, instanceID, hash, opts)
 	if err != nil {
+		if respondRateLimitError(w, err, err.Error()) {
+			return
+		}
 		status := mapCrossSeedErrorStatus(err)
 		log.Error().
 			Err(err).
@@ -828,6 +810,7 @@ func (h *CrossSeedHandler) AutobrrApply(w http.ResponseWriter, r *http.Request) 
 
 	log.Debug().
 		Str("source", "cross-seed.webhook").
+		Str("announcedName", req.TorrentName).
 		Str("torrentName", torrentName).
 		Str("torrentHash", torrentHash).
 		Int64("size", totalSize).
@@ -921,6 +904,50 @@ func mapCrossSeedErrorStatus(err error) int {
 	}
 }
 
+// automationSettingsSaveResponse is the saved settings plus a warning when qui
+// could not check a Gazelle API key.
+type automationSettingsSaveResponse struct {
+	*models.CrossSeedAutomationSettings
+	WarningResponse
+}
+
+// checkGazelleKeys sends one request with each new OPS or RED key. A key the
+// tracker rejects is an error. Any other failure must not block the save, so
+// that case is a warning.
+func (h *CrossSeedHandler) checkGazelleKeys(ctx context.Context, settings *models.CrossSeedAutomationSettings) (string, error) {
+	// The card resends a typed key on every save, so a banned user must still
+	// be able to turn Gazelle off.
+	if !settings.GazelleEnabled {
+		return "", nil
+	}
+	var warnings []string
+	for _, site := range []struct{ host, key string }{
+		{"redacted.sh", settings.RedactedAPIKey},
+		{"orpheus.network", settings.OrpheusAPIKey},
+	} {
+		// The form sends a stored key back as the placeholder.
+		if site.key == "" || domain.IsRedactedString(site.key) {
+			continue
+		}
+		client, err := gazellemusic.NewClient(site.host, h.gazelleBaseURL, site.key)
+		if err != nil {
+			return "", err
+		}
+		// Each tracker gets its own cap, so a hung RED cannot leave OPS unchecked.
+		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err = client.CheckKey(checkCtx)
+		cancel()
+		if errors.Is(err, gazellemusic.ErrAccessDenied) {
+			return "", fmt.Errorf("%s %w", client.SourceFlag(), err)
+		}
+		if err != nil {
+			log.Warn().Err(err).Str("host", site.host).Msg("Could not check the Gazelle API key")
+			warnings = append(warnings, fmt.Sprintf("qui could not check the %s API key. The log has the details.", client.SourceFlag()))
+		}
+	}
+	return strings.Join(warnings, "; "), nil
+}
+
 // GetAutomationSettings returns scheduler configuration.
 // GetAutomationSettings godoc
 // @Summary Get cross-seed automation settings
@@ -950,7 +977,7 @@ func (h *CrossSeedHandler) GetAutomationSettings(w http.ResponseWriter, r *http.
 // @Accept json
 // @Produce json
 // @Param request body automationSettingsRequest true "Automation settings"
-// @Success 200 {object} models.CrossSeedAutomationSettings
+// @Success 200 {object} automationSettingsSaveResponse
 // @Failure 400 {object} httphelpers.ErrorResponse
 // @Failure 500 {object} httphelpers.ErrorResponse
 // @Security ApiKeyAuth
@@ -960,16 +987,6 @@ func (h *CrossSeedHandler) UpdateAutomationSettings(w http.ResponseWriter, r *ht
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
-	}
-
-	category := req.Category
-	if category != nil {
-		trimmed := strings.TrimSpace(*category)
-		if trimmed == "" {
-			category = nil
-		} else {
-			category = &trimmed
-		}
 	}
 
 	// Validate categoryAffixMode if provided OR if UseCrossCategoryAffix is enabled
@@ -1037,40 +1054,45 @@ func (h *CrossSeedHandler) UpdateAutomationSettings(w http.ResponseWriter, r *ht
 	}
 
 	settings := &models.CrossSeedAutomationSettings{
-		Enabled:                      req.Enabled,
-		RunIntervalMinutes:           req.RunIntervalMinutes,
-		StartPaused:                  req.StartPaused,
-		Category:                     category,
-		TargetInstanceIDs:            req.TargetInstanceIDs,
-		TargetIndexerIDs:             req.TargetIndexerIDs,
-		MaxResultsPerRun:             req.MaxResultsPerRun,
-		FindIndividualEpisodes:       req.FindIndividualEpisodes,
-		AutoResumeMaxDownloadMB:      autoResumeMaxDownloadMB,
-		UseCategoryFromIndexer:       req.UseCategoryFromIndexer,
-		UseCrossCategoryAffix:        req.UseCrossCategoryAffix,
-		CategoryAffixMode:            req.CategoryAffixMode,
-		CategoryAffix:                req.CategoryAffix,
-		UseCustomCategory:            req.UseCustomCategory,
-		CustomCategory:               req.CustomCategory,
-		RunExternalProgramID:         req.RunExternalProgramID,
-		SkipRecheck:                  req.SkipRecheck,
-		RescueTitleMismatches:        req.RescueTitleMismatches,
-		SeasonPackEnabled:            req.SeasonPackEnabled,
-		SeasonPackAutomationEnabled:  req.SeasonPackAutomationEnabled,
-		SeasonPackSkipRepackCompare:  req.SeasonPackSkipRepackCompare,
-		SeasonPackSimplifyHDRCompare: req.SeasonPackSimplifyHDRCompare,
-		SeasonPackSimplifyWEBCompare: req.SeasonPackSimplifyWEBCompare,
-		SeasonPackSkipYearCompare:    req.SeasonPackSkipYearCompare,
-		SeasonPackCoverageThreshold:  req.SeasonPackCoverageThreshold,
-		SeasonPackTags:               req.SeasonPackTags,
-		SeasonPackCategory:           strings.TrimSpace(req.SeasonPackCategory),
-		SeasonPackCategoryRules:      normalizeSeasonPackCategoryRules(req.SeasonPackCategoryRules),
-		CategoryMappingRules:         normalizeCategoryMappingRules(req.CategoryMappingRules),
-		GazelleEnabled:               req.GazelleEnabled,
-		RedactedAPIKey:               strings.TrimSpace(req.RedactedAPIKey),
-		OrpheusAPIKey:                strings.TrimSpace(req.OrpheusAPIKey),
-		SeasonPackTVDBAPIKey:         strings.TrimSpace(req.SeasonPackTVDBAPIKey),
-		SeasonPackTVDBPIN:            strings.TrimSpace(req.SeasonPackTVDBPIN),
+		Enabled:                        req.Enabled,
+		RunIntervalMinutes:             req.RunIntervalMinutes,
+		TargetInstanceIDs:              req.TargetInstanceIDs,
+		TargetIndexerIDs:               req.TargetIndexerIDs,
+		MaxResultsPerRun:               req.MaxResultsPerRun,
+		FindIndividualEpisodes:         req.FindIndividualEpisodes,
+		AutoResumeMaxDownloadMB:        autoResumeMaxDownloadMB,
+		PooledPartialCompletionEnabled: req.PooledPartialCompletionEnabled,
+		UseCategoryFromIndexer:         req.UseCategoryFromIndexer,
+		UseCrossCategoryAffix:          req.UseCrossCategoryAffix,
+		CategoryAffixMode:              req.CategoryAffixMode,
+		CategoryAffix:                  req.CategoryAffix,
+		UseCustomCategory:              req.UseCustomCategory,
+		CustomCategory:                 req.CustomCategory,
+		RunExternalProgramID:           req.RunExternalProgramID,
+		SkipRecheck:                    req.SkipRecheck,
+		RescueTitleMismatches:          req.RescueTitleMismatches,
+		SeasonPackEnabled:              req.SeasonPackEnabled,
+		SeasonPackAutomationEnabled:    req.SeasonPackAutomationEnabled,
+		SeasonPackSkipRepackCompare:    req.SeasonPackSkipRepackCompare,
+		SeasonPackSimplifyHDRCompare:   req.SeasonPackSimplifyHDRCompare,
+		SeasonPackSimplifyWEBCompare:   req.SeasonPackSimplifyWEBCompare,
+		SeasonPackSkipYearCompare:      req.SeasonPackSkipYearCompare,
+		SeasonPackCoverageThreshold:    req.SeasonPackCoverageThreshold,
+		SeasonPackTags:                 req.SeasonPackTags,
+		SeasonPackCategory:             strings.TrimSpace(req.SeasonPackCategory),
+		SeasonPackCategoryRules:        normalizeSeasonPackCategoryRules(req.SeasonPackCategoryRules),
+		CategoryMappingRules:           normalizeCategoryMappingRules(req.CategoryMappingRules),
+		GazelleEnabled:                 req.GazelleEnabled,
+		RedactedAPIKey:                 patchSecret(req.RedactedAPIKey),
+		OrpheusAPIKey:                  patchSecret(req.OrpheusAPIKey),
+		SeasonPackTVDBAPIKey:           patchSecret(req.SeasonPackTVDBAPIKey),
+		SeasonPackTVDBPIN:              patchSecret(req.SeasonPackTVDBPIN),
+	}
+
+	warning, err := h.checkGazelleKeys(r.Context(), settings)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	updated, err := h.service.UpdateAutomationSettings(r.Context(), settings)
@@ -1085,7 +1107,7 @@ func (h *CrossSeedHandler) UpdateAutomationSettings(w http.ResponseWriter, r *ht
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, updated)
+	RespondJSON(w, http.StatusOK, automationSettingsSaveResponse{CrossSeedAutomationSettings: updated, Warning: warning})
 }
 
 // PatchAutomationSettings merges updates into the existing cross-seed configuration.
@@ -1096,7 +1118,7 @@ func (h *CrossSeedHandler) UpdateAutomationSettings(w http.ResponseWriter, r *ht
 // @Accept json
 // @Produce json
 // @Param request body automationSettingsPatchRequest true "Automation settings fields to update"
-// @Success 200 {object} models.CrossSeedAutomationSettings
+// @Success 200 {object} automationSettingsSaveResponse
 // @Failure 400 {object} httphelpers.ErrorResponse
 // @Failure 500 {object} httphelpers.ErrorResponse
 // @Security ApiKeyAuth
@@ -1199,6 +1221,12 @@ func (h *CrossSeedHandler) PatchAutomationSettings(w http.ResponseWriter, r *htt
 		return
 	}
 
+	warning, err := h.checkGazelleKeys(r.Context(), &merged)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	updated, err := h.service.UpdateAutomationSettings(r.Context(), &merged)
 	if err != nil {
 		status := mapCrossSeedErrorStatus(err)
@@ -1211,7 +1239,7 @@ func (h *CrossSeedHandler) PatchAutomationSettings(w http.ResponseWriter, r *htt
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, updated)
+	RespondJSON(w, http.StatusOK, automationSettingsSaveResponse{CrossSeedAutomationSettings: updated, Warning: warning})
 }
 
 // GetAutomationStatus returns scheduler state and latest run metadata.

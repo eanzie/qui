@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+import { isStreamUsable } from "@/lib/sync-stream-state"
 import { useSyncStream } from "@/contexts/SyncStreamContext"
 import { useDelayedVisibility } from "@/hooks/useDelayedVisibility"
 import { useInstanceCapabilities } from "@/hooks/useInstanceCapabilities"
@@ -12,8 +13,8 @@ import { api } from "@/lib/api"
 import { applyStreamDelta, mergeStreamedCrossInstanceFirstPage, normalizeStreamedSnapshot } from "@/lib/cross-instance-torrents"
 import { isAllInstancesScope } from "@/lib/instances"
 import { mergeStreamedFirstPage } from "@/lib/stream-merge"
+import { isCrossSeedExpr } from "@/lib/torrent-filters"
 import type {
-  AppPreferences,
   CrossInstanceTorrent,
   QBittorrentAppInfo,
   Torrent,
@@ -69,7 +70,7 @@ function dedupeRows<T>(rows: T[], keyOf: (row: T) => string): T[] {
 // Combine the per-page responses of a loaded window (pages 0..N of one view) into a
 // single response shaped like one oversized page. The last page is the base so hasMore
 // reflects whether rows remain past the window; list metadata (counts, categories,
-// tags, serverState, preferences) is computed from the full filtered set on the
+// tags, serverState) is computed from the full filtered set on the
 // backend regardless of offset, so the base carries it for the whole window.
 // windowPageCount marks the response as window-shaped so the processing effect knows
 // it may replace the whole list with it.
@@ -108,8 +109,7 @@ interface UseTorrentsListOptions {
 /**
  * Loads a paginated torrent list and keeps page 0 current with SSE when possible.
  * The hook updates shared instance metadata from stream/REST responses, preserves
- * cached preferences and sidebar counts when stream frames omit them, clears
- * preferences on explicit null responses, and falls back to REST polling when
+ * sidebar counts when stream frames omit them, and falls back to REST polling when
  * streaming is disabled or disconnected. Stream frames are scoped to the last
  * committed view identity so frames from a previous filter/search/sort cannot
  * repopulate rows after a reset, while abandoned renders cannot suppress the
@@ -181,53 +181,19 @@ export function useTorrentsList(
 
   const updateMetadataCache = useCallback(
     (source?: TorrentResponse | null) => {
-      if (!source) {
+      // A cross-instance response has no categories or tags of one instance.
+      if (!source || source.isCrossInstance === true) {
         return
       }
 
-      const hasPreferences = Object.prototype.hasOwnProperty.call(source, "preferences")
-      const isCrossInstanceSource = source.isCrossInstance === true
-
-      if (isCrossInstanceSource && !hasPreferences) {
-        return
-      }
-
-      queryClient.setQueryData<InstanceMetadata | undefined>(
-        metadataQueryKey,
-        previous => {
-          // Treat omitted tags/categories as empty for regular instance responses:
-          // backend omitempty drops empty collections, and those should clear stale
-          // sidebar values. Omitted preferences are different because stale stream
-          // frames may not carry them; only an explicit preferences property updates
-          // or clears preference caches.
-          const nextCategories = isCrossInstanceSource? (previous?.categories ?? {}): (source.categories ?? {})
-          const nextTags = isCrossInstanceSource? (previous?.tags ?? []): (source.tags ?? [])
-          const nextPreferences =
-            hasPreferences? ((source.preferences as AppPreferences | null | undefined) ?? undefined): previous?.preferences
-
-          const next: InstanceMetadata = {
-            categories: nextCategories,
-            tags: nextTags,
-            preferences: nextPreferences,
-          }
-
-          return next
-        }
-      )
-
-      if (hasPreferences) {
-        const nextPreferences = (source.preferences as AppPreferences | null | undefined) ?? undefined
-        if (nextPreferences !== undefined) {
-          queryClient.setQueryData<AppPreferences | undefined>(
-            ["instance-preferences", instanceId],
-            nextPreferences
-          )
-        } else if (!isCrossInstanceSource) {
-          queryClient.removeQueries({ queryKey: ["instance-preferences", instanceId], exact: true })
-        }
-      }
+      // Treat omitted tags/categories as empty: backend omitempty drops empty
+      // collections, and those should clear stale sidebar values.
+      queryClient.setQueryData<InstanceMetadata>(metadataQueryKey, {
+        categories: source.categories ?? {},
+        tags: source.tags ?? [],
+      })
     },
-    [instanceId, metadataQueryKey, queryClient]
+    [metadataQueryKey, queryClient]
   )
 
   const updateAppInfoCache = useCallback(
@@ -261,10 +227,7 @@ export function useTorrentsList(
     )
   }, [])
 
-  // Detect if this is cross-seed filtering based on expression content
-  const isCrossSeedFiltering = useMemo(() => {
-    return filters?.expr?.includes("Hash ==") && filters?.expr?.includes("||")
-  }, [filters?.expr])
+  const isCrossSeedFiltering = isCrossSeedExpr(filters?.expr)
   const useCrossInstanceEndpoint = isAllInstancesView || isCrossSeedFiltering
 
   const instanceIdsKey = useMemo(
@@ -345,6 +308,11 @@ export function useTorrentsList(
     }
   }, [enabled, filters, instanceId, useCrossInstanceEndpoint, isCrossSeedFiltering, streamInstanceIds, order, pageSize, search, sort])
 
+  const listQueryKey = useMemo(
+    () => ["torrents-list", instanceId, instanceIdsKey, currentPage, filters, search, sort, order, useCrossInstanceEndpoint, isCrossSeedFiltering] as const,
+    [instanceId, instanceIdsKey, currentPage, filters, search, sort, order, useCrossInstanceEndpoint, isCrossSeedFiltering]
+  )
+
   const handleStreamPayload = useCallback(
     (payload: TorrentStreamPayload) => {
       if (!payload?.data) {
@@ -387,6 +355,11 @@ export function useTorrentsList(
       } else {
         data = normalizeStreamedSnapshot(payload.data)
       }
+
+      // REST owns the list until this listener has a usable stream baseline. Once
+      // a frame arrives, abort any in-flight fallback before committing the frame
+      // so a slower REST response cannot overwrite the newer stream snapshot.
+      void queryClient.cancelQueries({ queryKey: streamQueryKey, exact: true })
 
       // Publish through the query cache FIRST and adopt its structurally-shared
       // result as the single object lineage for every sink. setQueryData applies
@@ -463,7 +436,13 @@ export function useTorrentsList(
     onMessage: handleStreamPayload,
   })
 
-  const shouldDisablePolling = Boolean(streamParams) && streamState.connected && !streamState.error
+  const hasBaselineForCurrentView =
+    lastStreamSnapshotScopeRef.current === viewScopeKey &&
+    lastFullSnapshotRef.current !== null
+  const shouldDisablePolling =
+    Boolean(streamParams) &&
+    isStreamUsable(streamState) &&
+    hasBaselineForCurrentView
   const preferCachedQuery = currentPage === 0 && shouldDisablePolling
   // Polls the scrolled-in window while a recheck/move is in progress anywhere
   // in it; stops on its own once every row settles. Not gated on the stream:
@@ -477,9 +456,7 @@ export function useTorrentsList(
   // still connecting (e.g. behind a buffering reverse proxy that delays the init
   // event) streamState.error is null but no data is arriving, so gating on error
   // alone would disable REST entirely and the first page would never load.
-  const queryEnabled =
-    enabled &&
-    (currentPage > 0 || !streamParams || !streamState.connected || Boolean(streamState.error))
+  const queryEnabled = enabled && (currentPage > 0 || !shouldDisablePolling)
 
   // Reset state when instanceId, filters, search, or sort changes
   // Use JSON.stringify to avoid resetting on every object reference change during polling
@@ -507,11 +484,6 @@ export function useTorrentsList(
       return previous === next ? previous : next
     })
   }, [allTorrents.length, lastKnownTotal])
-
-  const listQueryKey = useMemo(
-    () => ["torrents-list", instanceId, instanceIdsKey, currentPage, filters, search, sort, order, useCrossInstanceEndpoint, isCrossSeedFiltering] as const,
-    [instanceId, instanceIdsKey, currentPage, filters, search, sort, order, useCrossInstanceEndpoint, isCrossSeedFiltering]
-  )
 
   // Query for torrents - backend handles stale-while-revalidate
   const { data, isLoading, isFetching, isPlaceholderData } = useQuery<TorrentResponse>({
@@ -564,15 +536,10 @@ export function useTorrentsList(
     gcTime: 300000, // Keep in React Query cache for 5 minutes for navigation
     // Reuse the previous page's data while the next page is loading so the UI doesn't flash empty state
     placeholderData: currentPage > 0 ? ((previousData) => previousData) : undefined,
-    // Only poll the first page to get fresh data - don't poll pagination pages
-    // Reduce polling frequency for cross-instance calls since they're more expensive.
-    // When the SSE stream is connected we disable polling entirely on the first page.
-    refetchInterval:
-      currentPage === 0? (
-        pollingEnabled && !shouldDisablePolling? (useCrossInstanceEndpoint ? 10000 : TORRENT_STREAM_POLL_INTERVAL_MS): false
-      ): (
-        pollingEnabled && hasTransientRows? (useCrossInstanceEndpoint ? 10000 : TORRENT_STREAM_POLL_INTERVAL_MS): false
-      ),
+    // Fallback refreshes the loaded window; healthy streams still need REST for transient later rows.
+    refetchInterval: pollingEnabled && (!shouldDisablePolling || (currentPage > 0 && hasTransientRows))
+      ? (useCrossInstanceEndpoint ? 10000 : TORRENT_STREAM_POLL_INTERVAL_MS)
+      : false,
     refetchIntervalInBackground, // Controls background polling behavior
     refetchOnWindowFocus: currentPage === 0 && pollingEnabled,
     enabled: queryEnabled,
@@ -787,7 +754,7 @@ export function useTorrentsList(
     isStaleData,
     cacheAge: cacheMetadata?.age,
     isStreaming: shouldDisablePolling,
-    streamConnected: streamState.connected,
+    streamConnected: isStreamUsable(streamState),
     streamError: streamState.error,
     streamMeta: streamState.lastMeta,
     streamRetrying: streamState.retrying,

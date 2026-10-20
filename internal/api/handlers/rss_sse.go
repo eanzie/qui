@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	qbt "github.com/autobrr/go-qbittorrent"
 	"github.com/rs/zerolog/log"
 
 	"github.com/autobrr/qui/internal/qbittorrent"
@@ -19,7 +20,8 @@ import (
 
 // RSSSSEHandler manages Server-Sent Events for RSS updates
 type RSSSSEHandler struct {
-	syncManager *qbittorrent.SyncManager
+	getRSSItems func(context.Context, int, bool) (qbt.RSSItems, error)
+	shutdown    <-chan struct{}
 
 	// Client management
 	mu      sync.RWMutex
@@ -47,6 +49,8 @@ type rssSSEEvent struct {
 const (
 	rssEventConnected   = "connected"
 	rssEventFeedsUpdate = "feeds_update"
+	rssPollInterval     = 5 * time.Second
+	rssMaxPollInterval  = 5 * time.Minute
 )
 
 // FeedsUpdatePayload contains the full RSS items tree
@@ -56,10 +60,11 @@ type FeedsUpdatePayload struct {
 	Timestamp  int64           `json:"timestamp"`
 }
 
-// NewRSSSSEHandler creates a new RSS SSE handler
-func NewRSSSSEHandler(syncManager *qbittorrent.SyncManager) *RSSSSEHandler {
+// NewRSSSSEHandler creates a new RSS SSE handler. Every stream ends when shutdown closes.
+func NewRSSSSEHandler(syncManager *qbittorrent.SyncManager, shutdown <-chan struct{}) *RSSSSEHandler {
 	return &RSSSSEHandler{
-		syncManager: syncManager,
+		getRSSItems: syncManager.GetRSSItems,
+		shutdown:    shutdown,
 		clients:     make(map[int]map[*rssSSEClient]struct{}),
 		pollers:     make(map[int]context.CancelFunc),
 	}
@@ -81,7 +86,7 @@ func (h *RSSSSEHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Don't report SSE as "connected" until we know RSS polling can succeed at least once.
 	// This avoids a confusing "SSE Live" UI state when the instance is disabled or RSS fetch fails.
-	if _, err := h.syncManager.GetRSSItems(r.Context(), instanceID, true); err != nil {
+	if _, err := h.getRSSItems(r.Context(), instanceID, false); err != nil {
 		if respondIfInstanceDisabled(w, err, instanceID, "GetRSSItems") {
 			return
 		}
@@ -129,6 +134,8 @@ func (h *RSSSSEHandler) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-client.done:
+			return
+		case <-h.shutdown:
 			return
 		case event := <-client.events:
 			if err := h.sendEvent(w, flusher, event); err != nil {
@@ -188,7 +195,7 @@ func (h *RSSSSEHandler) removeClient(instanceID int, client *rssSSEClient) {
 	}
 	h.mu.Unlock()
 
-	// Stop poller outside of h.mu to avoid lock-order inversions with h.pollerMu.
+	// Stop poller outside of h.mu: stopPoller takes h.mu under h.pollerMu.
 	if shouldStopPoller {
 		h.stopPoller(instanceID)
 	}
@@ -233,6 +240,16 @@ func (h *RSSSSEHandler) stopPoller(instanceID int) {
 	h.pollerMu.Lock()
 	defer h.pollerMu.Unlock()
 
+	// A viewer can join between removeClient dropping the last one and this
+	// stop; its ensurePoller saw the old poller, so keep it. Lock order is
+	// pollerMu, then mu.
+	h.mu.RLock()
+	hasClients := len(h.clients[instanceID]) > 0
+	h.mu.RUnlock()
+	if hasClients {
+		return
+	}
+
 	if cancel, exists := h.pollers[instanceID]; exists {
 		cancel()
 		delete(h.pollers, instanceID)
@@ -244,47 +261,53 @@ func (h *RSSSSEHandler) pollLoop(ctx context.Context, instanceID int) {
 	log.Debug().Int("instanceID", instanceID).Msg("RSS SSE poll loop started")
 
 	var lastItems []byte
-
-	// Initial poll
-	lastItems = h.pollAndBroadcast(ctx, instanceID, lastItems)
-
-	// Poll every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	pollInterval := rssPollInterval
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Debug().Int("instanceID", instanceID).Msg("RSS SSE poll loop stopped")
 			return
-		case <-ticker.C:
-			lastItems = h.pollAndBroadcast(ctx, instanceID, lastItems)
+		case <-timer.C:
+			var unchanged bool
+			lastItems, unchanged = h.pollAndBroadcast(ctx, instanceID, lastItems)
+			pollInterval = nextRSSPollInterval(pollInterval, unchanged)
+			timer.Reset(pollInterval)
 		}
 	}
 }
 
-func (h *RSSSSEHandler) pollAndBroadcast(ctx context.Context, instanceID int, lastItems []byte) []byte {
-	items, err := h.syncManager.GetRSSItems(ctx, instanceID, true)
+func nextRSSPollInterval(current time.Duration, unchanged bool) time.Duration {
+	if !unchanged {
+		return rssPollInterval
+	}
+	return min(current*2, rssMaxPollInterval)
+}
+
+func (h *RSSSSEHandler) pollAndBroadcast(ctx context.Context, instanceID int, lastItems []byte) ([]byte, bool) {
+	items, err := h.getRSSItems(ctx, instanceID, true)
 	if err != nil {
 		// Context cancellation is expected during shutdown
 		if ctx.Err() != nil {
 			log.Debug().Int("instanceID", instanceID).Msg("RSS SSE poll cancelled")
-			return lastItems
+			return lastItems, false
 		}
 		log.Warn().Err(err).Int("instanceID", instanceID).Msg("RSS SSE poll failed")
-		return lastItems
+		return lastItems, false
 	}
 
 	// Serialize for comparison
 	currentItems, err := json.Marshal(items)
 	if err != nil {
 		log.Error().Err(err).Int("instanceID", instanceID).Msg("failed to marshal RSS items for SSE comparison")
-		return lastItems
+		return lastItems, false
 	}
 
 	// Check for changes
 	if bytes.Equal(currentItems, lastItems) {
-		return lastItems // No changes
+		return lastItems, true
 	}
 
 	log.Debug().Int("instanceID", instanceID).Msg("RSS SSE broadcasting update")
@@ -299,5 +322,5 @@ func (h *RSSSSEHandler) pollAndBroadcast(ctx context.Context, instanceID int, la
 		},
 	})
 
-	return currentItems
+	return currentItems, false
 }

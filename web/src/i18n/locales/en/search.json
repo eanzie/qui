@@ -1,6 +1,6 @@
 {
   "pageTitle": "Search Indexers",
-  "pageDescription": "Search across all enabled indexers. Pick a query type or leave Auto to have categories detected automatically.",
+  "pageDescription": "Search across all enabled indexers. Choose a search type.",
   "indexerSummary": {
     "label": "Indexers",
     "noEnabled": "No enabled indexers",
@@ -44,11 +44,6 @@
     "indexersPage": "Indexers page"
   },
   "searchTypes": {
-    "auto": {
-      "label": "Auto detect",
-      "description": "Automatically infer the right categories",
-      "placeholder": "Try: \"Sample Movie 2024\", \"tt1234567\", \"tvdb 123456\", or \"Example Artist – Example Album\""
-    },
     "movies": {
       "label": "Movies",
       "placeholder": "e.g., \"Sample Movie 2024\", \"Another Film 1999\", \"tt1234567\""
@@ -127,13 +122,11 @@
     "cacheSource": "Source: {{source}} · Scope: {{scope}}",
     "refreshReadyIn": "Ready in {{seconds}}s",
     "refreshFromIndexers": "Refresh from indexers",
-    "noValue": "-",
     "categoryFallback": "Category {{id}}",
     "noResultsFor": "No results found for \"{{query}}\"",
     "enterQuery": "Enter a search query to get started",
     "free": "Free",
-    "freeNeutral": "Neutral",
-    "noInfoUrlAvailable": "No info URL available"
+    "freeNeutral": "Neutral"
   },
   "historyMeta": "{{type}} · {{count}} results · {{timestamp}}",
   "table": {

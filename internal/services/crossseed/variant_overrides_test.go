@@ -6,7 +6,7 @@ package crossseed
 import (
 	"testing"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 	"github.com/stretchr/testify/require"
 
 	"github.com/autobrr/qui/pkg/stringutils"
@@ -57,7 +57,7 @@ func TestVariantOverridesReleaseVariants(t *testing.T) {
 }
 
 func TestReleasesMatch_StrictVariantsMustMatch(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	base := rls.Release{
 		Title:      "The Conjuring Last Rites",
@@ -87,7 +87,7 @@ func TestReleasesMatch_StrictVariantsMustMatch(t *testing.T) {
 }
 
 func TestReleasesMatch_IMAXVsHybridMismatch(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	imaxRelease := rls.Release{
 		Title:      "The Conjuring Last Rites",
@@ -109,7 +109,7 @@ func TestReleasesMatch_IMAXVsHybridMismatch(t *testing.T) {
 }
 
 func TestReleasesMatch_REPACKAllowedForSeasonPacks(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	// Season pack without REPACK
 	seasonPack := rls.Release{
@@ -140,7 +140,7 @@ func TestReleasesMatch_REPACKAllowedForSeasonPacks(t *testing.T) {
 }
 
 func TestReleasesMatch_REPACKBlockedForEpisodes(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	// Individual episode without REPACK
 	episode := rls.Release{
@@ -175,7 +175,7 @@ func TestReleasesMatch_REPACKBlockedForEpisodes(t *testing.T) {
 }
 
 func TestReleasesMatch_PROPERBlockedForMovies(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	movie := rls.Release{
 		Title:      "The Movie",
@@ -201,8 +201,17 @@ func TestReleasesMatch_PROPERBlockedForMovies(t *testing.T) {
 		"PROPER movie should NOT match vanilla movie")
 }
 
+func TestVariantMismatchReasonIsDeterministic(t *testing.T) {
+	source := &rls.Release{Collection: "IMAX", Other: []string{"HYBRID"}}
+	candidate := &rls.Release{}
+
+	for range 100 {
+		require.Equal(t, "HYBRID", strictVariantOverrides.findMismatch(source, candidate))
+	}
+}
+
 func TestReleasesMatch_IMAXBlockedEvenForSeasonPacks(t *testing.T) {
-	s := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	s := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	// Season pack without IMAX
 	seasonPack := rls.Release{

@@ -22,7 +22,7 @@ import {
   Settings2,
   Square,
   Trash2,
-  XCircle,
+  XCircle
 } from "lucide-react"
 
 import {
@@ -33,7 +33,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialogTitle
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,7 +42,7 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from "@/components/ui/card"
 import {
   Dialog,
@@ -50,20 +50,23 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
+  DialogTitle
 } from "@/components/ui/dialog"
+import { SourceTagsField } from "@/components/cross-seed/SourceCardFields"
 import { FieldHelp } from "@/components/ui/field-help"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SaveFooter } from "@/components/ui/save-footer"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { usePatchCrossSeedSettings } from "@/hooks/useCrossSeedSettings"
 import { useDateTimeFormatters } from "@/hooks/useDateTimeFormatters"
 import {
   useArrSeedConfigs,
@@ -78,19 +81,20 @@ import {
   useStopArrSeedScan,
   useTriggerArrSeedScan,
   useUpdateArrSeedConfig,
-  useUpdateArrSeedSettings,
+  useUpdateArrSeedSettings
 } from "@/hooks/useArrSeed"
 import { api } from "@/lib/api"
 import type { ArrInstance } from "@/types/arr"
 import type { ArrSeedConfigCreate, ArrSeedInstanceConfig, ArrSeedProgress } from "@/types/arrseed"
-import type { Instance } from "@/types"
+import type { CrossSeedAutomationSettings, Instance } from "@/types"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
 interface ArrSeedTabProps {
   instances: Instance[]
+  crossSeedSettings: CrossSeedAutomationSettings
 }
 
-export function ArrSeedTab({ instances }: ArrSeedTabProps) {
+export function ArrSeedTab({ instances, crossSeedSettings }: ArrSeedTabProps) {
   const { t } = useTranslation("crossseed")
   const { formatDate } = useDateTimeFormatters()
   const { data: settings, isLoading: settingsLoading } = useArrSeedSettings()
@@ -159,6 +163,8 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
         </CardHeader>
       </Card>
 
+      <ArrSeedTagsCard settings={crossSeedSettings} />
+
       {/* Instance Configs */}
       <Card>
         <CardHeader>
@@ -213,6 +219,28 @@ export function ArrSeedTab({ instances }: ArrSeedTabProps) {
         settings={settings}
       />
     </div>
+  )
+}
+
+function ArrSeedTagsCard({ settings }: { settings: CrossSeedAutomationSettings }) {
+  const { t } = useTranslation("crossseed")
+  const patchSettings = usePatchCrossSeedSettings()
+  const [arrSeedTags, setArrSeedTags] = useState<string[]>(settings.arrSeedTags)
+
+  return (
+    <Card>
+      <CardContent>
+        <SourceTagsField
+          id="arr-seed-tags"
+          suggestions={[{ label: t("rules.tagging.tagArrSeed"), value: "arr-seed" }]}
+          selected={arrSeedTags}
+          onChange={setArrSeedTags}
+          placeholder={t("rules.tagging.selectArrScanTags")}
+          help={t("rules.tagging.arrScanTagsDescription")}
+        />
+      </CardContent>
+      <SaveFooter pending={patchSettings.isPending} onSave={() => patchSettings.mutate({ arrSeedTags })} label={t("rules.saveChanges")} />
+    </Card>
   )
 }
 

@@ -17,10 +17,10 @@ Full documentation available at **[getqui.com](https://getqui.com)**
 ```bash
 # Download and extract the latest release
 wget $(curl -s https://api.github.com/repos/autobrr/qui/releases/latest | grep browser_download_url | grep linux_x86_64 | cut -d\" -f4)
-tar -C /usr/local/bin -xzf qui*.tar.gz
+sudo tar -C /usr/local/bin -xzf qui*.tar.gz qui
 
 # Run
-./qui serve
+qui serve
 ```
 
 The web interface will be available at http://localhost:7476
@@ -34,19 +34,6 @@ docker run -d \
   ghcr.io/autobrr/qui:latest
 ```
 
-### macOS Container
-First, install Container from the official source: https://github.com/apple/container/releases
-Second, create the /config and /downloads folders where you would like them.
-Third, run the command below:
-
-```bash
-container run -d \
-  -p 7476:7476 \
-  -v $(pwd)/config:/config \
-  -v $(pwd)/downloads:/downloads \
-  ghcr.io/autobrr/qui:latest
-```
-
 ## Features
 
 - **Single Binary**: No dependencies, just download and run
@@ -56,7 +43,7 @@ container run -d \
 - **Automations**: Rule-based torrent management with conditions and actions
 - **Backups & Restore**: Scheduled snapshots with multiple restore modes
 - **Reverse Proxy**: Transparent qBittorrent proxy for external apps
-- **Multi-Language**: Available in English, German, French, Italian, Czech, Ukrainian, Korean, Brazilian Portuguese, and Simplified Chinese, with automatic browser-language detection
+- **Multi-Language**: Available in English, German, French, Italian, Czech, Ukrainian, Korean, Brazilian Portuguese, Simplified Chinese, Traditional Chinese, and Catalan, with automatic browser-language detection
 
 ## Community
 
@@ -73,8 +60,9 @@ qui is developed and maintained by volunteers. Your support helps us continue im
 
 ### Premium Themes
 
-Purchase premium themes directly from Settings → Themes in your qui instance. Your license key is delivered instantly after checkout.
+Purchase premium themes from **Settings → Premium Themes** in your qui instance. The checkout page shows your license key.
 If you donate with crypto, verify your transaction at [crypto.getqui.com](https://crypto.getqui.com/) to receive a 100% discount code for premium themes.
+A license also unlocks custom themes, which you can write yourself or take from [qui-community-themes](https://github.com/autobrr/qui-community-themes).
 
 ### Donations
 

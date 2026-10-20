@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 4.5
 title: Arr Scan
 description: Scan Sonarr and Radarr libraries to find cross-seed opportunities.
 ---

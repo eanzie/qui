@@ -5,7 +5,8 @@
 
 // Speed units utilities for toggling between B/s and bps display
 
-import { useEffect, useState } from "react"
+import { useClientSetting } from "@/lib/client-settings"
+import { BIT_LADDER, BYTE_SPEED_LADDER, formatValueWithUnit, scaleToUnit } from "@/lib/unit-format"
 
 // Speed unit types
 export type SpeedUnit = "bytes" | "bits"
@@ -13,39 +14,22 @@ export type SpeedUnit = "bytes" | "bits"
 // Storage key for speed units preference
 const SPEED_UNITS_STORAGE_KEY = "qui-speed-units"
 
-// Custom hook for managing speed units state with localStorage persistence
+const parseSpeedUnit = (raw: string): SpeedUnit => (raw === "bits" ? "bits" : "bytes")
+
+// Custom hook for managing the DB-backed speed units preference
 export function useSpeedUnits(): [SpeedUnit, (unit: SpeedUnit) => void] {
-  const [speedUnit, setSpeedUnitState] = useState<SpeedUnit>(() => {
-    const stored = localStorage.getItem(SPEED_UNITS_STORAGE_KEY) as SpeedUnit
-    return stored === "bits" ? "bits" : "bytes" // Default to bytes
+  return useClientSetting<SpeedUnit>(SPEED_UNITS_STORAGE_KEY, {
+    defaultValue: "bytes",
+    parse: parseSpeedUnit,
+    serialize: String,
   })
-
-  // Listen for storage changes to sync speed units across components
-  useEffect(() => {
-    const handleStorageChange = () => {
-      const stored = localStorage.getItem(SPEED_UNITS_STORAGE_KEY) as SpeedUnit
-      setSpeedUnitState(stored === "bits" ? "bits" : "bytes")
-    }
-
-    // Listen for both storage events (cross-tab) and custom events (same-tab)
-    window.addEventListener("storage", handleStorageChange)
-    window.addEventListener("speed-units-changed", handleStorageChange)
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange)
-      window.removeEventListener("speed-units-changed", handleStorageChange)
-    }
-  }, [])
-
-  const setSpeedUnit = (unit: SpeedUnit) => {
-    setSpeedUnitState(unit)
-    localStorage.setItem(SPEED_UNITS_STORAGE_KEY, unit)
-    // Dispatch custom event for same-tab updates
-    window.dispatchEvent(new Event("speed-units-changed"))
-  }
-
-  return [speedUnit, setSpeedUnit]
 }
+
+// Narrower values get more decimals so a speed column stays the same width.
+const speedDecimals = (value: number): number => (value >= 100 ? 0 : value >= 10 ? 1 : 2)
+
+const zeroSpeed = (unit: SpeedUnit, compact: boolean): string =>
+  compact ? "0" : formatValueWithUnit(0, unit === "bits" ? "b" : "B", { perSecond: true })
 
 // Format speed with unit preference
 export function formatSpeedWithUnit(
@@ -54,37 +38,21 @@ export function formatSpeedWithUnit(
   compact: boolean = false
 ): string {
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
-    if (compact) return "0"
-    return unit === "bits" ? "0 bps" : "0 B/s"
+    return zeroSpeed(unit, compact)
   }
 
-  if (unit === "bits") {
-    // Convert bytes to bits (multiply by 8)
-    const bitsPerSecond = bytesPerSecond * 8
-    const k = 1000 // Use decimal for bits (standard networking convention)
-    const sizes = compact ? ["bps", "Kbps", "Mbps", "Gbps", "Tbps"] : ["bps", "Kbps", "Mbps", "Gbps", "Tbps"]
-    const rawIndex = Math.log(bitsPerSecond) / Math.log(k)
-    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(rawIndex)))
-    const value = bitsPerSecond / Math.pow(k, i)
-    const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2
-    const formatted = Number(value.toFixed(decimals))
-    if (formatted === 0) {
-      return compact ? "0" : "0 bps"
-    }
-    return `${formatted} ${sizes[i]}`
-  } else {
-    // Use existing bytes format
-    const k = 1024
-    const sizes = compact ? ["B", "KiB", "MiB", "GiB", "TiB"] : ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
-    const rawIndex = Math.log(bytesPerSecond) / Math.log(k)
-    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(rawIndex)))
-    const value = bytesPerSecond / Math.pow(k, i)
-    const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2
-    const formatted = Number(value.toFixed(decimals))
-    if (formatted === 0) {
-      if (compact) return "0"
-      return "0 B/s"
-    }
-    return `${formatted}${compact ? "" : " "}${sizes[i]}`
+  // Bits are decimal by networking convention; bytes stay binary.
+  const scaled = unit === "bits"? scaleToUnit(bytesPerSecond * 8, BIT_LADDER, 1000): scaleToUnit(bytesPerSecond, BYTE_SPEED_LADDER, 1024)
+  const decimals = speedDecimals(scaled.value)
+  if (Number(scaled.value.toFixed(decimals)) === 0) {
+    return zeroSpeed(unit, compact)
   }
+
+  // compact drops the rate suffix and the space, which only the byte columns are narrow
+  // enough to need.
+  return formatValueWithUnit(scaled.value, scaled.unit, {
+    fractionDigits: decimals,
+    perSecond: true,
+    compact: compact && unit === "bytes",
+  })
 }

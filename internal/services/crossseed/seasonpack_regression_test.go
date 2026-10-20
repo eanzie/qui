@@ -4,17 +4,22 @@
 package crossseed
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	qbt "github.com/autobrr/go-qbittorrent"
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 	"github.com/stretchr/testify/require"
 
+	"github.com/autobrr/qui/internal/fsops"
+	"github.com/autobrr/qui/internal/fsops/local"
 	"github.com/autobrr/qui/internal/models"
 	internalqb "github.com/autobrr/qui/internal/qbittorrent"
 	"github.com/autobrr/qui/pkg/hardlinktree"
@@ -68,9 +73,9 @@ func TestFilterLinkEligible_RequiresConfiguredBaseDirs(t *testing.T) {
 func TestResolveSeasonPackSourcePath_RejectsEscapingRelativePaths(t *testing.T) {
 	files := qbt.TorrentFiles{{Name: "Show.S01E01.1080p.WEB.x264-GRP.mkv", Size: 1}}
 
-	require.Empty(t, resolveSeasonPackSourcePath("/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "../escape.mkv"))
-	require.Empty(t, resolveSeasonPackSourcePath("/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "/escape.mkv"))
-	require.Empty(t, resolveSeasonPackSourcePath("/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "subdir/../../escape.mkv"))
+	require.Empty(t, resolveSeasonPackSourcePath(fsops.HostPaths, "/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "../escape.mkv"))
+	require.Empty(t, resolveSeasonPackSourcePath(fsops.HostPaths, "/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "/escape.mkv"))
+	require.Empty(t, resolveSeasonPackSourcePath(fsops.HostPaths, "/downloads/Show.S01E01.1080p.WEB.x264-GRP.mkv", files, "subdir/../../escape.mkv"))
 }
 
 func TestRollbackSeasonPackTree_PreservesUnrelatedFilesInRoot(t *testing.T) {
@@ -81,7 +86,7 @@ func TestRollbackSeasonPackTree_PreservesUnrelatedFilesInRoot(t *testing.T) {
 	require.NoError(t, os.WriteFile(plannedFile, []byte("planned"), 0o600))
 	require.NoError(t, os.WriteFile(unrelatedFile, []byte("keep"), 0o600))
 
-	err := rollbackSeasonPackTree(&hardlinktree.Created{
+	err := rollbackSeasonPackTree(context.Background(), local.NewBackend(), &fsops.TreeCreateResult{
 		Files: []string{plannedFile},
 	}, rootDir)
 
@@ -89,6 +94,27 @@ func TestRollbackSeasonPackTree_PreservesUnrelatedFilesInRoot(t *testing.T) {
 	require.NoFileExists(t, plannedFile)
 	require.FileExists(t, unrelatedFile)
 	require.DirExists(t, rootDir)
+}
+
+func TestRollbackSeasonPackTree_RunsUnderCancelledContext(t *testing.T) {
+	// A cancelled run must still roll back its partial tree — the fsops
+	// methods early-return on ctx.Err(), so this pins the WithoutCancel
+	// wrapping inside rollbackSeasonPackTree.
+	rootDir := filepath.Join(t.TempDir(), "pack")
+	plannedFile := filepath.Join(rootDir, "Show.S01E01.1080p.WEB.x264-GRP.mkv")
+	require.NoError(t, os.MkdirAll(rootDir, 0o755))
+	require.NoError(t, os.WriteFile(plannedFile, []byte("planned"), 0o600))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := rollbackSeasonPackTree(ctx, local.NewBackend(), &fsops.TreeCreateResult{
+		Files: []string{plannedFile},
+	}, rootDir)
+
+	require.NoError(t, err)
+	require.NoFileExists(t, plannedFile)
+	require.NoDirExists(t, rootDir)
 }
 
 func TestBuildSeasonPackPlan_RejectsEscapingTargetPaths(t *testing.T) {
@@ -102,19 +128,34 @@ func TestBuildSeasonPackPlan_RejectsEscapingTargetPaths(t *testing.T) {
 		},
 	}
 
-	_, err := buildSeasonPackPlan(
-		qbt.TorrentFiles{{Name: "../Show.S01E01.1080p.WEB.x264-GRP.mkv", Size: 10}},
-		&packRelease,
-		"Show.S01.1080p.WEB.x264-GRP",
-		t.TempDir(),
-		localFiles,
-		seasonPackNormalizer(nil),
-		nil,
-		nil,
-	)
+	// POSIX and Windows forms are rejected on every host, and so are the two
+	// shapes link mode already refuses: a backslash inside a name and a
+	// non-canonical path. The plan goes through hardlinktree's validator.
+	for _, name := range []string{
+		"../Show.S01E01.1080p.WEB.x264-GRP.mkv",
+		"/Show.S01E01.1080p.WEB.x264-GRP.mkv",
+		`\Show.S01E01.1080p.WEB.x264-GRP.mkv`,
+		"C:/Show.S01E01.1080p.WEB.x264-GRP.mkv",
+		"//server/share/Show.S01E01.1080p.WEB.x264-GRP.mkv",
+		`Show.S01\Show.S01E01.1080p.WEB.x264-GRP.mkv`,
+		"Show.S01//Show.S01E01.1080p.WEB.x264-GRP.mkv",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := matcher{}.buildSeasonPackPlan(
+				fsops.HostPaths,
+				qbt.TorrentFiles{{Name: name, Size: 10}},
+				&packRelease,
+				"Show.S01.1080p.WEB.x264-GRP",
+				t.TempDir(),
+				localFiles,
+				nil,
+				nil,
+			)
 
-	require.ErrorIs(t, err, errLayoutMismatch)
-	require.ErrorContains(t, err, "invalid pack target path")
+			require.ErrorIs(t, err, errLayoutMismatch)
+			require.ErrorContains(t, err, "invalid pack target path")
+		})
+	}
 }
 
 // TestSeasonPack_PunctuationOnlySequelTitles documents the deliberate tradeoff from
@@ -126,14 +167,14 @@ func TestBuildSeasonPackPlan_RejectsEscapingTargetPaths(t *testing.T) {
 // file is demoted to pending (downloaded, never linked); with no other files the
 // plan comes up empty and the pack fails.
 func TestSeasonPack_PunctuationOnlySequelTitles(t *testing.T) {
-	matcher := &Service{stringNormalizer: stringutils.NewDefaultNormalizer()}
+	matcher := matcher{stringNormalizer: stringutils.NewDefaultNormalizer()}
 
 	packRelease := rls.ParseString("K-On! S01 1080p BluRay FLAC x264-Fansub")
 	local := rls.ParseString("[Fansub] K-On!! - 05 (1080p) [ABC12345]")
 	// matchEpisodeCandidatesDetailed stamps the pack season onto seasonless locals.
 	local.Series = packRelease.Series
 
-	ok, reason := matcher.seasonPackReleasesMatchWithReason(&packRelease, &local, true, nil, nil)
+	ok, reason := matcher.seasonPackReleasesMatchWithReason(&packRelease, &local, "", "", true, nil, nil)
 	require.True(t, ok, "expected punctuation-only titles to conflate, got reason %q", reason)
 
 	localFiles := map[episodeIdentity]seasonPackLocalFile{
@@ -144,13 +185,13 @@ func TestSeasonPack_PunctuationOnlySequelTitles(t *testing.T) {
 		},
 	}
 
-	_, err := buildSeasonPackPlan(
+	_, err := matcher.buildSeasonPackPlan(
+		fsops.HostPaths,
 		qbt.TorrentFiles{{Name: "K-On! S01 1080p BluRay/[Fansub] K-On! - 05 (1080p) [DEF67890].mkv", Size: 20}},
 		&packRelease,
 		"K-On! S01 1080p BluRay",
 		t.TempDir(),
 		localFiles,
-		seasonPackNormalizer(nil),
 		nil,
 		nil,
 	)
@@ -187,7 +228,8 @@ func TestBuildSeasonPackPlan_DemotesUnlinkableFilesToPending(t *testing.T) {
 		},
 	}
 
-	build, err := buildSeasonPackPlan(
+	build, err := matcher{}.buildSeasonPackPlan(
+		fsops.HostPaths,
 		qbt.TorrentFiles{
 			{Name: "Show.S01.1080p.WEB.x264-GRP/Show.S01E01.1080p.WEB.x264-GRP.mkv", Size: 10},
 			{Name: "Show.S01.1080p.WEB.x264-GRP/Show.S01E02.1080p.WEB.x264-GRP.mkv", Size: 10},
@@ -197,7 +239,6 @@ func TestBuildSeasonPackPlan_DemotesUnlinkableFilesToPending(t *testing.T) {
 		"Show.S01.1080p.WEB.x264-GRP",
 		t.TempDir(),
 		localFiles,
-		seasonPackNormalizer(nil),
 		nil,
 		nil,
 	)
@@ -260,12 +301,13 @@ func TestApplySeasonPackWebhook_SelectsConcreteBaseDirFromCommaSeparatedConfig(t
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 1.0),
 		seasonPackRunStore:       store,
-		seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+		seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 			capturedPlan = plan
-			return &hardlinktree.Created{}, nil
+			return &fsops.TreeCreateResult{}, nil
 		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -317,6 +359,7 @@ func TestApplySeasonPackWebhook_ReturnsOperationalFailureWhenExistingHashCheckFa
 		seasonPackRunStore:       store,
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -398,6 +441,7 @@ func TestApplySeasonPackWebhook_ReturnsOperationalFailureWhenCoverageLookupFails
 		seasonPackRunStore:       store,
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -447,6 +491,7 @@ func TestApplySeasonPackWebhook_ClassifiesFileBatchErrorsAsOperationalFailures(t
 		automationSettingsLoader: defaultSettings(true, 1.0),
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -462,6 +507,7 @@ func TestApplySeasonPackWebhook_ClassifiesFileBatchErrorsAsOperationalFailures(t
 func TestApplySeasonPackWebhook_RollsBackPartialTreeWhenLinkCreationFails(t *testing.T) {
 	fix := newSeasonPackFixture(t)
 	baseDir := t.TempDir()
+	mediaDir := t.TempDir()
 	inst := &models.Instance{
 		ID:                       1,
 		Name:                     "Test",
@@ -474,10 +520,10 @@ func TestApplySeasonPackWebhook_RollsBackPartialTreeWhenLinkCreationFails(t *tes
 	baseSM := newMultiFakeSyncManager(
 		map[int][]qbt.Torrent{
 			inst.ID: {
-				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: "/media/e01.mkv", Progress: 1.0},
-				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: "/media/e02.mkv", Progress: 1.0},
-				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: "/media/e03.mkv", Progress: 1.0},
-				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: "/media/e04.mkv", Progress: 1.0},
+				{Hash: "e01", Name: "Cool.Show.S01E01.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "e01.mkv"), Progress: 1.0},
+				{Hash: "e02", Name: "Cool.Show.S01E02.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "e02.mkv"), Progress: 1.0},
+				{Hash: "e03", Name: "Cool.Show.S01E03.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "e03.mkv"), Progress: 1.0},
+				{Hash: "e04", Name: "Cool.Show.S01E04.1080p.WEB.x264-GRP", ContentPath: filepath.Join(mediaDir, "e04.mkv"), Progress: 1.0},
 			},
 		},
 		map[int]*models.Instance{inst.ID: inst},
@@ -492,17 +538,18 @@ func TestApplySeasonPackWebhook_RollsBackPartialTreeWhenLinkCreationFails(t *tes
 		syncManager:              sm,
 		releaseCache:             NewReleaseCache(),
 		automationSettingsLoader: defaultSettings(true, 1.0),
-		seasonPackLinkCreator: func(plan *hardlinktree.TreePlan) (*hardlinktree.Created, error) {
+		seasonPackLinkCreator: func(_ context.Context, plan *hardlinktree.TreePlan) (*fsops.TreeCreateResult, error) {
 			require.NotEmpty(t, plan.Files)
 			require.NoError(t, os.MkdirAll(filepath.Dir(plan.Files[0].TargetPath), 0o755))
 			require.NoError(t, os.WriteFile(plan.Files[0].TargetPath, []byte("partial"), 0o600))
-			return &hardlinktree.Created{
+			return &fsops.TreeCreateResult{
 				Files: []string{plan.Files[0].TargetPath},
 				Dirs:  []string{filepath.Dir(plan.Files[0].TargetPath)},
 			}, errors.New("link creator failed")
 		},
 	}
 
+	svc.SetBackendPool(fsops.NewPool(svc.instanceStore, local.NewBackend()))
 	resp, err := svc.ApplySeasonPackWebhook(context.Background(), &SeasonPackApplyRequest{
 		TorrentName: fix.packName,
 		TorrentData: fix.torrentData,
@@ -514,4 +561,274 @@ func TestApplySeasonPackWebhook_RollsBackPartialTreeWhenLinkCreationFails(t *tes
 	require.Equal(t, "link_failed", resp.Reason)
 	_, statErr := os.Stat(filepath.Join(baseDir, fix.packName))
 	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+// cancelOnAddSeasonPackSyncManager cancels the run's context from inside
+// AddTorrent and then fails the add, so the rollback that follows runs under a
+// cancelled context. It records how many entries the base dir held at that
+// moment, which keeps the "pack dir is gone" assertion non-vacuous.
+type cancelOnAddSeasonPackSyncManager struct {
+	*seasonPackSyncManager
+	cancel       context.CancelFunc
+	poolStore    *offlineAfterAddInstanceStore
+	watchDir     string
+	entriesAtAdd int
+}
+
+func (s *cancelOnAddSeasonPackSyncManager) AddTorrent(ctx context.Context, instanceID int, data []byte, options map[string]string) (*qbt.TorrentAddResponse, error) {
+	entries, _ := os.ReadDir(s.watchDir)
+	s.entriesAtAdd = len(entries)
+	s.cancel()
+	s.poolStore.offline = true
+	return s.seasonPackSyncManager.AddTorrent(ctx, instanceID, data, options)
+}
+
+// offlineAfterAddInstanceStore serves instance lookups until the run's add
+// fails, then fails every later one. That outage is what makes the threaded
+// planBuild.backend observable: with it, rollback runs on the backend that
+// built the tree; without it, the fallback resolve in the add-failure branch
+// hits the outage and the partial tree survives. The apply path resolves
+// backends sequentially in one goroutine, so the flag needs no mutex.
+type offlineAfterAddInstanceStore struct {
+	instances map[int]*models.Instance
+	offline   bool
+}
+
+func (s *offlineAfterAddInstanceStore) Get(_ context.Context, id int) (*models.Instance, error) {
+	if s.offline {
+		return nil, errors.New("instance store offline")
+	}
+	instance, ok := s.instances[id]
+	if !ok {
+		return nil, models.ErrInstanceNotFound
+	}
+	return instance, nil
+}
+
+func TestApplySeasonPackWebhook_RollsBackPartialTreeWhenAddFailsUnderCancelledContext(t *testing.T) {
+	// TestRollbackSeasonPackTree_RunsUnderCancelledContext already pins the
+	// context.WithoutCancel inside rollbackSeasonPackTree. What this adds is the
+	// call site: a real ApplySeasonPackWebhook run whose add fails reaches that
+	// rollback under a cancelled ctx, on the backend threaded through
+	// planBuild.backend. The instance store goes offline when the add fails, so
+	// the fallback resolve in that branch cannot stand in for the threaded
+	// backend: drop the threading and the rollback is skipped, leaving the tree.
+	fix := newSeasonPackFixture(t)
+	store := &stubSeasonPackRunStore{}
+	sourceDir := t.TempDir()
+	baseDir := t.TempDir()
+
+	inst := &models.Instance{
+		ID:                       1,
+		Name:                     "Test",
+		IsActive:                 true,
+		HasLocalFilesystemAccess: true,
+		UseHardlinks:             true,
+		HardlinkBaseDir:          baseDir,
+	}
+
+	hashes := []string{"e01", "e02", "e03", "e04"}
+	require.Len(t, fix.packFiles, len(hashes))
+	episodeTorrents := make([]qbt.Torrent, 0, len(fix.packFiles))
+	for i, fileName := range fix.packFiles {
+		sourcePath := filepath.Join(sourceDir, fileName)
+		require.NoError(t, os.WriteFile(sourcePath, []byte("source"), 0o600))
+		episodeTorrents = append(episodeTorrents, qbt.Torrent{
+			Hash:        hashes[i],
+			Name:        strings.TrimSuffix(fileName, filepath.Ext(fileName)),
+			ContentPath: sourcePath,
+			Progress:    1.0,
+		})
+	}
+
+	baseSM := newMultiFakeSyncManager(
+		map[int][]qbt.Torrent{inst.ID: episodeTorrents},
+		map[int]*models.Instance{inst.ID: inst},
+	)
+	baseSM.files = seasonPackEpisodeFiles(t, fix.torrentData, hashes...)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	poolStore := &offlineAfterAddInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}}
+	sm := &cancelOnAddSeasonPackSyncManager{
+		seasonPackSyncManager: &seasonPackSyncManager{
+			fakeSyncManager: baseSM,
+			addErr:          errors.New("add failed"),
+		},
+		cancel:    cancel,
+		poolStore: poolStore,
+		watchDir:  baseDir,
+	}
+
+	svc := &Service{
+		instanceStore:            &fakeInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}},
+		syncManager:              sm,
+		releaseCache:             NewReleaseCache(),
+		automationSettingsLoader: defaultSettings(true, 1.0),
+		seasonPackRunStore:       store,
+	}
+
+	svc.SetBackendPool(fsops.NewPool(poolStore, local.NewBackend()))
+	resp, err := svc.ApplySeasonPackWebhook(ctx, &SeasonPackApplyRequest{
+		TorrentName: fix.packName,
+		TorrentData: fix.torrentData,
+		InstanceIDs: []int{inst.ID},
+	})
+
+	require.NoError(t, err)
+	require.False(t, resp.Applied)
+	require.Equal(t, "add_failed", resp.Reason)
+	// One entry: the pack tree root the apply path created under the base dir.
+	require.Equal(t, 1, sm.entriesAtAdd, "the link tree must exist when AddTorrent runs, else the rollback assertion is vacuous")
+
+	_, statErr := os.Stat(filepath.Join(baseDir, fix.packName))
+	require.ErrorIs(t, statErr, os.ErrNotExist, "a cancelled run must still roll back its partial pack tree")
+}
+
+// A seeded two-episode torrent holds the same file as the pack. Both sides read
+// the range file as its first episode, so qui links it instead of downloading it.
+// Plain rls already read the pack file as E01. The cached parser reads it as a
+// pack, so this test fails if the pack side stops taking the first episode.
+func TestSeasonPack_LinksSeededEpisodeRangeFile(t *testing.T) {
+	const (
+		packName  = "Show.S01.1080p.WEB.x264-GRP"
+		rangeName = "Show.S01E01E02.1080p.WEB.x264-GRP"
+	)
+	packRelease := rls.ParseString(packName)
+	packFiles := qbt.TorrentFiles{
+		{Name: packName + "/" + rangeName + ".mkv", Size: 20},
+		{Name: packName + "/Show.S01E03.1080p.WEB.x264-GRP.mkv", Size: 10},
+	}
+	id := episodeIdentity{series: 1, episode: 1}
+
+	m := matcher{releaseCache: NewReleaseCache()}
+	require.Contains(t, m.extractPackEpisodes(packFiles, &packRelease), id)
+
+	localFile, err := m.resolveSeasonPackLocalFileCandidate(fsops.HostPaths, id, episodeMatch{
+		torrentHash: "range",
+		contentPath: "/media/" + rangeName + ".mkv",
+		release:     m.parseReleaseName(rangeName),
+	}, qbt.TorrentFiles{{Name: rangeName + ".mkv", Size: 20}})
+	require.NoError(t, err)
+
+	build, err := m.buildSeasonPackPlan(
+		fsops.HostPaths, packFiles, &packRelease, packName, t.TempDir(),
+		map[episodeIdentity]seasonPackLocalFile{id: localFile},
+		nil, nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, build.plan.Files, 1)
+	require.Contains(t, build.plan.Files[0].TargetPath, "S01E01E02")
+}
+
+// oneReadInstanceStore serves the first instance read and fails every later
+// one, so an apply that resolves its backend twice fails on the second read.
+type oneReadInstanceStore struct {
+	instances map[int]*models.Instance
+	reads     int
+}
+
+func (s *oneReadInstanceStore) Get(_ context.Context, id int) (*models.Instance, error) {
+	s.reads++
+	if s.reads > 1 {
+		return nil, errors.New("instance store offline")
+	}
+	instance, ok := s.instances[id]
+	if !ok {
+		return nil, models.ErrInstanceNotFound
+	}
+	return instance, nil
+}
+
+// Planning and creation share one backend read. A second read could see a
+// different backend, or none, between the plan and the tree it describes.
+func TestApplySeasonPackWebhook_PlansAndCreatesWithOneBackendRead(t *testing.T) {
+	t.Run("webhook", func(t *testing.T) {
+		fix := newSeasonPackFixture(t)
+		sourceDir := t.TempDir()
+		baseDir := t.TempDir()
+		inst := &models.Instance{
+			ID: 1, Name: "Test", IsActive: true,
+			HasLocalFilesystemAccess: true, UseHardlinks: true, HardlinkBaseDir: baseDir,
+		}
+
+		hashes := []string{"e01", "e02", "e03", "e04"}
+		require.Len(t, fix.packFiles, len(hashes))
+		episodeTorrents := make([]qbt.Torrent, 0, len(fix.packFiles))
+		for i, fileName := range fix.packFiles {
+			sourcePath := filepath.Join(sourceDir, fileName)
+			require.NoError(t, os.WriteFile(sourcePath, []byte("source"), 0o600))
+			episodeTorrents = append(episodeTorrents, qbt.Torrent{
+				Hash:        hashes[i],
+				Name:        strings.TrimSuffix(fileName, filepath.Ext(fileName)),
+				ContentPath: sourcePath,
+				Progress:    1.0,
+			})
+		}
+		baseSM := newMultiFakeSyncManager(
+			map[int][]qbt.Torrent{inst.ID: episodeTorrents},
+			map[int]*models.Instance{inst.ID: inst},
+		)
+		baseSM.files = seasonPackEpisodeFiles(t, fix.torrentData, hashes...)
+		poolStore := &oneReadInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}}
+		svc := &Service{
+			instanceStore:            &fakeInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}},
+			syncManager:              &seasonPackSyncManager{fakeSyncManager: baseSM},
+			releaseCache:             NewReleaseCache(),
+			automationSettingsLoader: defaultSettings(true, 1.0),
+			seasonPackRunStore:       &stubSeasonPackRunStore{},
+		}
+		svc.SetBackendPool(fsops.NewPool(poolStore, local.NewBackend()))
+
+		resp, err := svc.ApplySeasonPackWebhook(t.Context(), &SeasonPackApplyRequest{
+			TorrentName: fix.packName,
+			TorrentData: fix.torrentData,
+			InstanceIDs: []int{inst.ID},
+		})
+
+		require.NoError(t, err)
+		require.True(t, resp.Applied, "%+v", resp)
+		require.Equal(t, 1, poolStore.reads)
+	})
+
+	t.Run("manual assemble", func(t *testing.T) {
+		const packName = "Cedar.Harbor.S02.1080p.WEB.x264-PINE"
+		root := t.TempDir()
+		inst := &models.Instance{
+			ID: 1, Name: "local", HasLocalFilesystemAccess: true, UseHardlinks: true,
+			HardlinkBaseDir: filepath.Join(root, "links"),
+		}
+		contents := map[string][]byte{}
+		files := map[string]qbt.TorrentFiles{}
+		var torrents []qbt.Torrent
+		var hashes []string
+		for i := 1; i <= 2; i++ {
+			packFile := fmt.Sprintf("Cedar.Harbor.S02E%02d.1080p.WEB.x264-PINE.mkv", i)
+			data := bytes.Repeat([]byte{byte(i)}, 64)
+			contents[packFile] = data
+			hash := fmt.Sprintf("e%02d", i)
+			hashes = append(hashes, hash)
+			files[hash] = qbt.TorrentFiles{{Name: packFile, Size: int64(len(data))}}
+			source := filepath.Join(root, packFile)
+			require.NoError(t, os.WriteFile(source, data, 0o600))
+			torrents = append(torrents, qbt.Torrent{Hash: hash, Name: strings.TrimSuffix(packFile, ".mkv"), ContentPath: source, Progress: 1})
+		}
+		torrentData := base64.StdEncoding.EncodeToString(buildMultiFileTorrent(t, packName, 64, contents))
+		poolStore := &oneReadInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}}
+		svc := &Service{
+			instanceStore: &fakeInstanceStore{instances: map[int]*models.Instance{inst.ID: inst}},
+			syncManager:   &seasonPackSyncManager{fakeSyncManager: newFakeSyncManager(inst, torrents, files)},
+			releaseCache:  NewReleaseCache(), stringNormalizer: stringutils.DefaultNormalizer,
+			seasonPackRunStore:       &stubSeasonPackRunStore{},
+			automationSettingsLoader: defaultSettings(true, 1.0),
+		}
+		svc.SetBackendPool(fsops.NewPool(poolStore, local.NewBackend()))
+
+		resp, err := svc.ApplyManualAssemble(t.Context(), &ManualAssembleRequest{InstanceID: inst.ID, TorrentData: torrentData, TargetHashes: hashes})
+
+		require.NoError(t, err)
+		require.True(t, resp.Applied, "%+v", resp)
+		require.Equal(t, 1, poolStore.reads)
+	})
 }

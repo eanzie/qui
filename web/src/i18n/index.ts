@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+import { writeRaw } from "@/lib/client-settings"
 import { spreadsheetPostProcessor } from "@/lib/spreadsheet-disguise"
 import i18n, { type ResourceKey, type ResourceLanguage } from "i18next"
 import { initReactI18next } from "react-i18next"
@@ -50,7 +51,7 @@ async function loadLanguageResources(lng: string): Promise<void> {
   loadedLanguages.add(lng)
 }
 
-export const supportedLanguages = ["en", "uk", "zh-CN", "fr", "de", "cs", "it", "ko", "pt-BR"] as const
+export const supportedLanguages = ["en", "uk", "zh-CN", "zh-TW", "fr", "de", "cs", "it", "ko", "pt-BR", "ca"] as const
 export type AppLanguage = (typeof supportedLanguages)[number]
 const LANGUAGE_STORAGE_KEY = "qui.language"
 
@@ -58,12 +59,14 @@ export const languageNames: Record<AppLanguage, string> = {
   en: "English",
   uk: "Українська",
   "zh-CN": "\u7B80\u4F53\u4E2D\u6587",
+  "zh-TW": "\u7E41\u9AD4\u4E2D\u6587",
   fr: "Français",
   de: "Deutsch",
   cs: "Čeština",
   it: "Italiano",
   ko: "한국어",
   "pt-BR": "Português Brasileiro",
+  ca: "Català",
 }
 
 function isAppLanguage(value: string | null): value is AppLanguage {
@@ -75,6 +78,9 @@ function detectBrowserLanguage(): AppLanguage | null {
   for (const lang of browserLanguages) {
     // Exact match (e.g. "fr" → "fr", "zh-CN" → "zh-CN")
     if (isAppLanguage(lang)) return lang
+    // Traditional Chinese tags ("zh-Hant", "zh-Hant-TW", "zh-HK", "zh-MO") have no
+    // exact match, and the prefix match below would hand them zh-CN.
+    if (/^zh-(hant|hk|mo)\b/i.test(lang)) return "zh-TW"
     // Prefix match (e.g. "fr-FR" → "fr", "zh-Hans" → skip if no match)
     const prefix = lang.split("-")[0]
     const match = supportedLanguages.find((s) => s === prefix || s.startsWith(`${prefix}-`))
@@ -94,11 +100,8 @@ function getStoredLanguage(): AppLanguage | null {
 }
 
 function persistLanguage(lng: AppLanguage) {
-  try {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, lng)
-  } catch (error) {
-    console.error("Failed to save language preference to localStorage:", error)
-  }
+  // writeRaw caches locally and queues the server push (issue #2406).
+  writeRaw(LANGUAGE_STORAGE_KEY, lng)
 }
 
 // Monotonic token so that rapid language switches can't apply out of order: a slow

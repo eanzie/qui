@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moistari/rls"
 	"github.com/rs/zerolog"
 
 	"github.com/autobrr/qui/internal/services/jackett"
@@ -117,7 +116,7 @@ type arrSeedSearchQuery struct {
 }
 
 func arrSeedBuildSearchQuery(item *ArrSeedMediaItem) arrSeedSearchQuery {
-	r := rls.ParseString(item.ReleaseName)
+	r := (matcher{}).parseReleaseName(item.ReleaseName)
 
 	query := strings.TrimSpace(item.Title)
 	if query == "" {

@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+import { isStreamUsable } from "@/lib/sync-stream-state"
 import { InstanceErrorDisplay } from "@/components/instances/InstanceErrorDisplay"
 import { InstanceSettingsButton } from "@/components/instances/InstanceSettingsButton"
+import { MigrationHint } from "@/components/instances/MigrationHint"
 import { MagnetHandlerBanner } from "@/components/MagnetHandlerBanner"
 import { PasswordIssuesBanner } from "@/components/instances/PasswordIssuesBanner"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -47,12 +49,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { TrackerIconImage } from "@/components/ui/tracker-icon"
 import { useDelayedVisibility } from "@/hooks/useDelayedVisibility"
-import { useInstancePreferences } from "@/hooks/useInstancePreferences"
+import { useListenPort } from "@/hooks/usePreferenceValues"
 import { useInstances } from "@/hooks/useInstances"
 import { usePersistedTitleBarSpeeds } from "@/hooks/usePersistedTitleBarSpeeds"
 import { useQBittorrentAppInfo } from "@/hooks/useQBittorrentAppInfo"
 import { useTitleBarSpeeds } from "@/hooks/useTitleBarSpeeds"
 import { api } from "@/lib/api"
+import { writeRaw } from "@/lib/client-settings"
 import {
   DASHBOARD_STATS_FALLBACK_ORDER,
   DASHBOARD_STATS_FALLBACK_SORT,
@@ -65,7 +68,7 @@ import {
   resolveDashboardTorrentCounts,
   shouldUseDashboardStatsFallback
 } from "@/lib/dashboard-stream"
-import { copyTextToClipboard, formatBytes, formatDuration, getRatioColor } from "@/lib/utils"
+import { copyTextToClipboard, formatBytes, formatBytesOrFallback, formatDuration, getRatioColor } from "@/lib/utils"
 import type {
   CacheMetadata,
   DashboardSettings,
@@ -96,7 +99,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 import { DashboardSettingsDialog } from "@/components/dashboard-settings-dialog"
-import { createStreamKey, useSyncStreamManager } from "@/contexts/SyncStreamContext"
+import { createStreamKey, useSyncStreamManager, type StreamState } from "@/contexts/SyncStreamContext"
 import { DEFAULT_DASHBOARD_SETTINGS, useDashboardSettings, useUpdateDashboardSettings } from "@/hooks/useDashboardSettings"
 import { useCreateTrackerCustomization, useDeleteTrackerCustomization, useTrackerCustomizations, useUpdateTrackerCustomization } from "@/hooks/useTrackerCustomizations"
 import { useTrackerIcons } from "@/hooks/useTrackerIcons"
@@ -192,10 +195,6 @@ function recordsShallowEqual(
   return true
 }
 
-function hasDashboardInstanceData(data: InstanceStreamData | null | undefined) {
-  return hasDashboardStatsPayload(data)
-}
-
 function instanceStreamDataFromResponse(
   response: TorrentResponse | undefined,
   current?: InstanceStreamData
@@ -238,7 +237,7 @@ function mergeCachedInstanceData(
     torrentCounts: resolveDashboardTorrentCounts(current.torrentCounts, cached.torrentCounts),
     appInfo: current.appInfo ?? cached.appInfo,
     altSpeedEnabled: current.serverState?.use_alt_speed_limits ?? cached.serverState?.use_alt_speed_limits ?? current.altSpeedEnabled,
-    isLoading: current.isLoading && !hasDashboardInstanceData(cached),
+    isLoading: current.isLoading && !hasDashboardStatsPayload(cached),
     error: current.error,
     hasLiveDashboardStatsPayload: current.hasLiveDashboardStatsPayload,
     cacheMetadata: current.cacheMetadata ?? cached.cacheMetadata,
@@ -581,59 +580,41 @@ function useAllInstanceStats(instances: InstanceResponse[], options: { enabled: 
           })
         })
 
-        const unsubscribe = syncStream.subscribe(streamKey, snapshot => {
-          if (cancelRef.current) {
-            return
-          }
-
+        const applyStreamState = (snapshot: StreamState) => {
+          const streamUsable = isStreamUsable(snapshot)
           applyInstanceData(instance.id, current => {
             const next: InstanceStreamData = {
               ...current,
-              streamConnected: snapshot.connected,
-              streamError: snapshot.error ?? (snapshot.connected ? null : current.streamError),
-              hasLiveDashboardStatsPayload: snapshot.connected &&
-                !snapshot.error &&
+              streamConnected: streamUsable,
+              streamError: snapshot.error ?? (streamUsable ? null : current.streamError),
+              hasLiveDashboardStatsPayload: streamUsable &&
                 current.hasLiveDashboardStatsPayload,
             }
 
             if (snapshot.error) {
               next.error = snapshot.error
               next.isLoading = false
-            } else if (snapshot.connected && !current.isLoading) {
+            } else if (streamUsable && !current.isLoading) {
               next.error = null
             }
 
-            if (!snapshot.connected || snapshot.error) {
+            if (!streamUsable) {
               next.instanceMeta = null
             }
 
             return next
           })
+        }
+
+        const unsubscribe = syncStream.subscribe(streamKey, snapshot => {
+          if (!cancelRef.current) {
+            applyStreamState(snapshot)
+          }
         })
 
         const initialSnapshot = syncStream.getState(streamKey)
         if (initialSnapshot) {
-          applyInstanceData(instance.id, current => {
-            const next: InstanceStreamData = {
-              ...current,
-              streamConnected: initialSnapshot.connected,
-              streamError: initialSnapshot.error ?? current.streamError,
-              hasLiveDashboardStatsPayload: initialSnapshot.connected &&
-                !initialSnapshot.error &&
-                current.hasLiveDashboardStatsPayload,
-            }
-
-            if (initialSnapshot.error) {
-              next.error = initialSnapshot.error
-              next.isLoading = false
-            }
-
-            if (!initialSnapshot.connected || initialSnapshot.error) {
-              next.instanceMeta = null
-            }
-
-            return next
-          })
+          applyStreamState(initialSnapshot)
         }
 
         streamConnectionsRef.current.set(instance.id, { key: streamKey, disconnect, unsubscribe, cancelRef })
@@ -768,7 +749,7 @@ function InstanceCard({
     initialData: appInfo ?? undefined,
     fetchIfMissing: !appInfo,
   })
-  const { preferences } = useInstancePreferences(instance.id, { enabled: instance.connected })
+  const listenPort = useListenPort(instance.id, { enabled: instance.connected })
   const [incognitoMode, setIncognitoMode] = useIncognitoMode()
   const [speedUnit] = useSpeedUnits()
   const appVersion = qbittorrentAppInfo?.version || qbittorrentVersionInfo?.appVersion || ""
@@ -796,7 +777,6 @@ function InstanceCard({
   const ConnectionStatusIcon = isConnectable ? Globe : isFirewalled ? BrickWallFire : Ban
   const connectionStatusIconClass = hasConnectionStatus ? isConnectable ? "text-green-500" : isFirewalled ? "text-amber-500" : "text-destructive" : ""
 
-  const listenPort = preferences?.listen_port
   const connectionStatusTooltip = connectionStatusDisplay ? `${isConnectable ? t("instanceCard.connectable") : connectionStatusDisplay}${listenPort ? t("instanceCard.portInfo", { port: listenPort }) : ""}` : ""
 
   const dashboardDataStatusKind = resolveDashboardDataStatusKind({
@@ -845,7 +825,7 @@ function InstanceCard({
   return (
     <>
       <Card className="hover:shadow-lg transition-shadow">
-        <CardHeader className={`${!isFirstLoad ? "gap-1" : ""} overflow-hidden`}>
+        <CardHeader className={`${!isFirstLoad ? "gap-1" : ""} grid-cols-[minmax(0,1fr)] overflow-hidden`}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 w-full">
             <Link
               to={linkTo}
@@ -1053,14 +1033,10 @@ function InstanceCard({
                     to="/instances/$instanceId"
                     params={{ instanceId: instance.id.toString() }}
                     onClick={() => {
-                      try {
-                        localStorage.setItem("qui-filters-global", JSON.stringify({
-                          status: ["unregistered"],
-                          excludeStatus: [],
-                        }))
-                      } catch (error) {
-                        console.error("Failed to set filter state:", error)
-                      }
+                      writeRaw("qui-filters-global", JSON.stringify({
+                        status: ["unregistered"],
+                        excludeStatus: [],
+                      }))
                     }}
                     className="flex items-center gap-2 text-xs w-full rounded px-1 -mx-1 hover:bg-destructive/10 transition-colors"
                   >
@@ -1074,14 +1050,10 @@ function InstanceCard({
                     to="/instances/$instanceId"
                     params={{ instanceId: instance.id.toString() }}
                     onClick={() => {
-                      try {
-                        localStorage.setItem("qui-filters-global", JSON.stringify({
-                          status: ["tracker_down"],
-                          excludeStatus: [],
-                        }))
-                      } catch (error) {
-                        console.error("Failed to set filter state:", error)
-                      }
+                      writeRaw("qui-filters-global", JSON.stringify({
+                        status: ["tracker_down"],
+                        excludeStatus: [],
+                      }))
                     }}
                     className="flex items-center gap-2 text-xs w-full rounded px-1 -mx-1 hover:bg-yellow-500/10 transition-colors"
                   >
@@ -1095,14 +1067,10 @@ function InstanceCard({
                     to="/instances/$instanceId"
                     params={{ instanceId: instance.id.toString() }}
                     onClick={() => {
-                      try {
-                        localStorage.setItem("qui-filters-global", JSON.stringify({
-                          status: ["errored"],
-                          excludeStatus: [],
-                        }))
-                      } catch (error) {
-                        console.error("Failed to set filter state:", error)
-                      }
+                      writeRaw("qui-filters-global", JSON.stringify({
+                        status: ["errored"],
+                        excludeStatus: [],
+                      }))
                     }}
                     className="flex items-center gap-2 text-xs w-full rounded px-1 -mx-1 hover:bg-destructive/10 transition-colors"
                   >
@@ -1144,7 +1112,7 @@ function InstanceCard({
                 <div className="flex items-center gap-2 text-xs mt-1 sm:mt-2">
                   <HardDrive className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                   <span className="text-muted-foreground">{t("instanceCard.freeSpace")}</span>
-                  <span className="ml-auto font-medium truncate">{formatBytes(serverState.free_space_on_disk)}</span>
+                  <span className="ml-auto font-medium truncate">{formatBytesOrFallback(serverState.free_space_on_disk, t("common:status.unknown"))}</span>
                 </div>
               )}
 
@@ -2235,7 +2203,7 @@ function TrackerBreakdownCard({ statsData, settings, onSettingsChange, isCollaps
     } else if (imported > 0 && skipped > 0) {
       toast.success(t("trackerBreakdown.toasts.importedAndSkipped", { imported, skipped }))
     } else if (imported > 0) {
-      toast.success(t(imported !== 1 ? "trackerBreakdown.toasts.importedCount_plural" : "trackerBreakdown.toasts.importedCount", { count: imported }))
+      toast.success(t("trackerBreakdown.toasts.importedCount", { count: imported }))
     } else {
       toast.info(t("trackerBreakdown.toasts.noCustomizationsImported"))
     }
@@ -2982,7 +2950,7 @@ function TrackerBreakdownCard({ statsData, settings, onSettingsChange, isCollaps
                           <div className="text-sm text-muted-foreground">
                             {newEntries.length > 0 && <span>{t("trackerBreakdown.importDialog.newCount", { count: newEntries.length })}</span>}
                             {newEntries.length > 0 && (conflicts.length > 0 || identicalEntries.length > 0) && <span>, </span>}
-                            {conflicts.length > 0 && <span className="text-yellow-600">{t(conflicts.length !== 1 ? "trackerBreakdown.importDialog.conflictCount_plural" : "trackerBreakdown.importDialog.conflictCount", { count: conflicts.length })}</span>}
+                            {conflicts.length > 0 && <span className="text-yellow-600">{t("trackerBreakdown.importDialog.conflictCount", { count: conflicts.length })}</span>}
                             {conflicts.length > 0 && identicalEntries.length > 0 && <span>, </span>}
                             {identicalEntries.length > 0 && <span className="text-muted-foreground">{t("trackerBreakdown.importDialog.unchangedCount", { count: identicalEntries.length })}</span>}
                           </div>
@@ -3328,6 +3296,7 @@ export function Dashboard() {
               </Button>
             </Link>
           </div>
+          <MigrationHint className="mt-10 sm:mt-12" />
         </Card>
       )}
     </div>

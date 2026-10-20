@@ -7,27 +7,39 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"image"
+
+	// Registered for their side effect: image.Decode needs the gif and jpeg
+	// decoders to read icons that are not png.
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"maps"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
+	"code.dny.dev/ssrf"
+	// Same again for .ico, which browsers still serve as a favicon.
 	_ "github.com/mat/besticon/v3/ico"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/image/draw"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
+	"golang.org/x/net/http/httpproxy"
+	"golang.org/x/net/idna"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/text/transform"
 
@@ -36,13 +48,18 @@ import (
 )
 
 const (
-	iconDirName        = "tracker-icons"
-	maxHTMLBytes int64 = 2 << 20 // 2 MiB
-	maxIconBytes int64 = 1 << 20 // 1 MiB
+	iconDirName            = "tracker-icons"
+	failuresFileName       = "fetch-failures.json"
+	maxHTMLBytes     int64 = 2 << 20 // 2 MiB
+	maxIconBytes     int64 = 1 << 20 // 1 MiB
 
-	fetchTimeout    = 15 * time.Second
-	requestTimeout  = 5 * time.Second
-	failureCooldown = 30 * time.Minute
+	fetchTimeout   = 15 * time.Second
+	requestTimeout = 5 * time.Second
+
+	// Consecutive failures double the wait between attempts, starting at
+	// baseFailureCooldown and capped at maxFailureCooldown.
+	baseFailureCooldown = 30 * time.Minute
+	maxFailureCooldown  = 24 * time.Hour
 )
 
 var (
@@ -70,10 +87,17 @@ type Service struct {
 
 	group singleflight.Group
 
-	failureMu   sync.Mutex
-	lastFailure map[string]time.Time
+	failureMu sync.Mutex
+	failures  map[string]failureState
 
 	activityPublisher activity.Publisher
+}
+
+// failureState is the per-host fetch failure record. It is persisted to
+// failuresFileName so a restart does not re-probe every known-dead host.
+type failureState struct {
+	Attempts    int       `json:"attempts"`
+	LastFailure time.Time `json:"lastFailure"`
 }
 
 // Flow overview:
@@ -96,7 +120,7 @@ type Service struct {
 // NewService creates a new tracker icon service rooted in the provided data directory.
 func NewService(dataDir, userAgent string) (*Service, error) {
 	if strings.TrimSpace(dataDir) == "" {
-		return nil, fmt.Errorf("data directory must be provided")
+		return nil, errors.New("data directory must be provided")
 	}
 
 	iconDir := filepath.Join(dataDir, iconDirName)
@@ -106,8 +130,8 @@ func NewService(dataDir, userAgent string) (*Service, error) {
 
 	svc := &Service{
 		iconDir:           iconDir,
-		client:            &http.Client{Timeout: fetchTimeout},
-		lastFailure:       make(map[string]time.Time),
+		client:            &http.Client{Timeout: fetchTimeout, Transport: newPublicOnlyTransport()},
+		failures:          make(map[string]failureState),
 		activityPublisher: activity.NopPublisher{},
 	}
 
@@ -121,7 +145,106 @@ func NewService(dataDir, userAgent string) (*Service, error) {
 		return nil, err
 	}
 
+	if err := svc.loadFailures(); err != nil {
+		log.Warn().Err(err).Msg("Tracker icon fetch failures could not be loaded; starting with a clean slate")
+	}
+
 	return svc, nil
+}
+
+// publicOnly refuses the addresses that IANA reserves for special use. Trackers
+// serve their sites on any port, so it allows every port. It allows NAT64, so
+// IPv6-only hosts with DNS64 can still reach IPv4 trackers, and checkNAT64
+// checks the IPv4 address inside a NAT64 address.
+var publicOnly = ssrf.New(
+	ssrf.WithAnyPort(),
+	ssrf.WithAllowedV6Prefixes(ssrf.IPv6NAT64Prefix),
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// newPublicOnlyTransport returns a transport that connects only to public
+// addresses. The torrent author chooses the tracker host, and the tracker page
+// chooses the icon URLs and redirects, so without this check a torrent could
+// make qui send requests into the local network.
+//
+// A request that goes through HTTP_PROXY or HTTPS_PROXY uses a transport that
+// dials only the proxy, which the operator configured and which is often on
+// the local network. The proxy connects to the target, so qui first resolves
+// the target host and refuses a private address. A DNS server that gives qui
+// and the proxy different answers can still get past this check. Every other
+// request uses the checked dialer, also when it targets the proxy address.
+func newPublicOnlyTransport() http.RoundTripper {
+	proxyFunc := httpproxy.FromEnvironment().ProxyFunc()
+
+	direct := http.DefaultTransport.(*http.Transport).Clone()
+	direct.Proxy = nil
+	direct.DialContext = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: safeDial}).DialContext
+
+	proxied := http.DefaultTransport.(*http.Transport).Clone()
+	proxied.Proxy = func(r *http.Request) (*url.URL, error) { return proxyFunc(r.URL) }
+
+	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		proxyURL, err := proxyFunc(r.URL)
+		if err != nil {
+			return nil, err
+		}
+		if proxyURL == nil {
+			return direct.RoundTrip(r)
+		}
+		if err := checkPublicHost(r.Context(), r.URL.Hostname()); err != nil {
+			return nil, err
+		}
+		return proxied.RoundTrip(r)
+	})
+}
+
+// checkPublicHost resolves host and refuses it if any of its addresses is not
+// public. A host that does not resolve is refused too.
+func checkPublicHost(ctx context.Context, host string) error {
+	// net/http sends the ASCII form of a Unicode host name, and the Go resolver
+	// refuses a Unicode name. Like net/http, keep the host as it is when the
+	// conversion fails, for example for an IPv6 literal.
+	if ascii, err := idna.Lookup.ToASCII(host); err == nil {
+		host = ascii
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return err
+	}
+	for _, ip := range ips {
+		// LookupNetIP returns an IPv4 literal or hosts-file entry as
+		// ::ffff:a.b.c.d, and the guard refuses every IPv4-mapped address.
+		ip = ip.Unmap()
+		if err := publicOnly.SafeAddr(ip); err != nil {
+			return err
+		}
+		if err := checkNAT64(ip); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// safeDial is the dialer Control function for direct requests.
+func safeDial(network, address string, c syscall.RawConn) error {
+	if err := publicOnly.Safe(network, address, c); err != nil {
+		return err
+	}
+	return checkNAT64(netip.MustParseAddrPort(address).Addr())
+}
+
+// checkNAT64 refuses a NAT64 address that carries an IPv4 address that is not
+// public. The NAT64 gateway connects to that IPv4 address, and not every
+// gateway refuses a private one.
+func checkNAT64(ip netip.Addr) error {
+	if !ssrf.IPv6NAT64Prefix.Contains(ip) {
+		return nil
+	}
+	b := ip.As16()
+	return publicOnly.SafeAddr(netip.AddrFrom4([4]byte(b[12:])))
 }
 
 // SetActivityPublisher wires the qui server-event hub so newly cached tracker
@@ -176,9 +299,8 @@ func QueueFetch(host, trackerURL string) {
 	go func(h string, tracker string) {
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
-		if _, err := svc.GetIcon(ctx, h, tracker); err != nil {
-			// Intentionally ignore errors here; they are tracked internally for cooldown.
-		}
+		// Errors are ignored here; GetIcon tracks them internally for cooldown.
+		_, _ = svc.GetIcon(ctx, h, tracker)
 	}(sanitized, trackerURL)
 }
 
@@ -338,6 +460,9 @@ func (s *Service) fetchAndStoreIcon(ctx context.Context, host, trackerURL string
 
 		for _, baseURL := range baseURLs {
 			urls, err := s.discoverIcons(ctx, baseURL)
+			if isHostNotFound(err) {
+				return fmt.Errorf("%w: %w", ErrIconNotFound, err)
+			}
 			if err == nil {
 				for _, iconURL := range urls {
 					if _, ok := attempted[iconURL]; ok {
@@ -509,39 +634,27 @@ func (s *Service) writePNG(img image.Image, path string) error {
 	if err := png.Encode(&buf, img); err != nil {
 		return fmt.Errorf("encode png: %w", err)
 	}
+	return s.writeFileAtomic(path, buf.Bytes())
+}
 
-	// Create temp file for atomic write
-	tmpFile, err := os.CreateTemp(s.iconDir, "tracker-icon-*.png")
+// writeFileAtomic writes data to a temp file in the icon directory and renames
+// it over path, so readers never see a partial file.
+func (s *Service) writeFileAtomic(path string, data []byte) error {
+	tmpFile, err := os.CreateTemp(s.iconDir, "tracker-icon-*.tmp")
 	if err != nil {
 		return err
 	}
 	tmpName := tmpFile.Name()
 	tmpFile.Close()
 
-	// Cleanup on failure
-	var success bool
-	defer func() {
-		if !success {
-			os.Remove(tmpName)
-		}
-	}()
-
-	// Write complete buffer atomically
-	if err := os.WriteFile(tmpName, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(tmpName, data, 0o600); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
-
-	// Ensure final permissions are 0644 regardless of CreateTemp defaults
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
-
-	// Atomic rename to final location
 	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
-
-	success = true
 	return nil
 }
 
@@ -611,12 +724,32 @@ func (s *Service) buildBaseCandidates(host, trackerURL string) []*url.URL {
 	return urls
 }
 
+// isHostNotFound reports whether err is a DNS lookup that found no such host.
+// NXDOMAIN on a root page ends the candidate walk; icon URLs found on a live
+// page are exempt.
+func isHostNotFound(err error) bool {
+	dnsErr, ok := errors.AsType[*net.DNSError](err)
+	return ok && dnsErr.IsNotFound
+}
+
+// failureCooldown returns how long a host waits after its n-th consecutive failure.
+func failureCooldown(attempts int) time.Duration {
+	d := baseFailureCooldown
+	for range max(attempts-1, 0) {
+		if d >= maxFailureCooldown {
+			break
+		}
+		d *= 2
+	}
+	return min(d, maxFailureCooldown)
+}
+
 func (s *Service) canAttempt(host string) bool {
 	s.failureMu.Lock()
 	defer s.failureMu.Unlock()
 
-	if ts, ok := s.lastFailure[host]; ok {
-		if time.Since(ts) < failureCooldown {
+	if f, ok := s.failures[host]; ok {
+		if time.Since(f.LastFailure) < failureCooldown(f.Attempts) {
 			return false
 		}
 	}
@@ -626,14 +759,59 @@ func (s *Service) canAttempt(host string) bool {
 
 func (s *Service) recordFailure(host string) {
 	s.failureMu.Lock()
-	s.lastFailure[host] = time.Now()
-	s.failureMu.Unlock()
+	defer s.failureMu.Unlock()
+
+	f := s.failures[host]
+	f.Attempts++
+	f.LastFailure = time.Now()
+	s.failures[host] = f
+	s.saveFailuresLocked()
 }
 
 func (s *Service) clearFailure(host string) {
 	s.failureMu.Lock()
-	delete(s.lastFailure, host)
-	s.failureMu.Unlock()
+	defer s.failureMu.Unlock()
+
+	if _, ok := s.failures[host]; !ok {
+		return
+	}
+	delete(s.failures, host)
+	s.saveFailuresLocked()
+}
+
+func (s *Service) failuresPath() string {
+	return filepath.Join(s.iconDir, failuresFileName)
+}
+
+// loadFailures runs from NewService before the service escapes, so no lock.
+func (s *Service) loadFailures() error {
+	data, err := os.ReadFile(s.failuresPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	// Decode into a local map so a corrupt or null file leaves s.failures a
+	// usable empty map.
+	var failures map[string]failureState
+	if err := json.Unmarshal(data, &failures); err != nil {
+		return err
+	}
+	maps.Copy(s.failures, failures)
+	return nil
+}
+
+// saveFailuresLocked writes the failure map to disk. Caller holds failureMu.
+func (s *Service) saveFailuresLocked() {
+	data, err := json.Marshal(s.failures)
+	if err == nil {
+		err = s.writeFileAtomic(s.failuresPath(), data)
+	}
+	if err != nil {
+		log.Warn().Err(err).Msg("Tracker icon fetch failures could not be saved")
+	}
 }
 
 func sanitizeHost(host string) string {
@@ -773,7 +951,7 @@ func parseDataURI(dataURI string) ([]byte, string, error) {
 	withoutScheme := strings.TrimPrefix(dataURI, "data:")
 	parts := strings.SplitN(withoutScheme, ",", 2)
 	if len(parts) != 2 {
-		return nil, "", fmt.Errorf("invalid data URI")
+		return nil, "", errors.New("invalid data URI")
 	}
 
 	meta := parts[0]
@@ -789,7 +967,7 @@ func parseDataURI(dataURI string) ([]byte, string, error) {
 	}
 
 	if !strings.Contains(meta, "base64") {
-		return nil, "", fmt.Errorf("unsupported data URI encoding")
+		return nil, "", errors.New("unsupported data URI encoding")
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(payload)
@@ -802,7 +980,7 @@ func parseDataURI(dataURI string) ([]byte, string, error) {
 
 func decodeImage(data []byte, contentType, originalURL string) (image.Image, error) {
 	if strings.Contains(strings.ToLower(contentType), "svg") || strings.HasSuffix(strings.ToLower(originalURL), ".svg") {
-		return nil, fmt.Errorf("svg icons are not supported")
+		return nil, errors.New("svg icons are not supported")
 	}
 
 	const maxDimension = 1024

@@ -68,6 +68,8 @@ type Event struct {
 	DirScanMatchesFound      int
 	DirScanTorrentsAdded     int
 	OrphanScanRunID          int64
+	OrphanScanPartial        bool
+	OrphanScanFilesFound     int
 	OrphanScanFilesDeleted   int
 	OrphanScanFoldersDeleted int
 	ErrorMessage             string
@@ -143,7 +145,15 @@ func (s *Service) SendTest(ctx context.Context, target *models.NotificationTarge
 		return errors.New("notification target required")
 	}
 
-	return s.send(ctx, target, Event{}, title, message)
+	event := Event{}
+	if targetScheme(target.URL) == "notifiarrapi" {
+		if len(target.EventTypes) == 0 {
+			return errors.New("notifiarr api test requires at least one event type")
+		}
+		event.Type = EventType(target.EventTypes[0])
+	}
+
+	return s.send(ctx, target, event, title, message)
 }
 
 func (s *Service) worker(ctx context.Context) {
@@ -373,10 +383,19 @@ func (s *Service) formatEvent(ctx context.Context, event Event, humanReadableMet
 		return title, buildMessage(instanceLabel, lines)
 	case EventOrphanScanCompleted:
 		title := "Orphan scan completed"
+		if event.OrphanScanPartial {
+			title = "Orphan scan partial"
+		}
 		lines := []string{
 			formatLine("Run", strconv.FormatInt(event.OrphanScanRunID, 10)),
 			formatLine("Files deleted", strconv.Itoa(event.OrphanScanFilesDeleted)),
-			formatLine("Folders deleted", strconv.Itoa(event.OrphanScanFoldersDeleted)),
+			formatLine("Directories deleted", strconv.Itoa(event.OrphanScanFoldersDeleted)),
+		}
+		if event.OrphanScanPartial {
+			lines = append(lines, formatLine("Orphans found", strconv.Itoa(event.OrphanScanFilesFound)))
+		}
+		if event.ErrorMessage != "" {
+			lines = append(lines, formatLine("Warning", formatErrorMessage(event.ErrorMessage)))
 		}
 		return title, buildMessage(instanceLabel, lines)
 	case EventOrphanScanFailed:
@@ -405,10 +424,10 @@ func (s *Service) formatEvent(ctx context.Context, event Event, humanReadableMet
 		title := "Cross-seed completion search failed"
 		return formatCustomEvent(instanceLabel, title, event.Title, customMessage)
 	case EventCrossSeedWebhookSucceeded:
-		title := "Cross-seed webhook check completed"
+		title := "Cross-seed webhook torrent added"
 		return formatCustomEvent(instanceLabel, title, event.Title, customMessage)
 	case EventCrossSeedWebhookFailed:
-		title := "Cross-seed webhook check failed"
+		title := "Cross-seed webhook failed"
 		return formatCustomEvent(instanceLabel, title, event.Title, customMessage)
 	case EventAutomationsActionsApplied:
 		title := "Automations actions applied"
@@ -726,6 +745,7 @@ const (
 const (
 	discordColorInfo    = 0x58b9ff
 	discordColorSuccess = 0x57f287
+	discordColorWarning = 0xfee75c
 	discordColorError   = 0xed4245
 )
 
@@ -856,6 +876,9 @@ func buildDiscordPayload(config *shoutrrrdiscord.Config, event Event, title, mes
 		Color:       discordEventColor(event.Type),
 		Fields:      embedFields,
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	}
+	if event.Type == EventOrphanScanCompleted && event.OrphanScanPartial {
+		embed.Color = discordColorWarning
 	}
 
 	payload := discordWebhookPayload{

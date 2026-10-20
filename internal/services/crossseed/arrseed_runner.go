@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moistari/rls"
 	"github.com/rs/zerolog/log"
 
 	"github.com/autobrr/qui/internal/models"
@@ -362,7 +361,7 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 		return
 	}
 
-	// Load shared cross-seed settings (startPaused, sizeTolerance, tags)
+	// Load shared cross-seed settings (tags)
 	csSettings, err := r.svc.GetAutomationSettings(ctx)
 	if err != nil {
 		l.Error().Err(err).Msg("arrseed: failed to load cross-seed settings")
@@ -371,7 +370,7 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 	}
 
 	injOpts := &arrSeedInjectionOptions{
-		StartPaused:                  csSettings.StartPaused,
+		StartPaused:                  true, // cross-seeds always start paused and resume after verification
 		Tags:                         csSettings.ArrSeedTags,
 		EnableSeasonPackUpgrade:      settings.EnableSeasonPackUpgrade,
 		SizeMismatchTolerancePercent: defaultSizeMismatchTolerancePercent,
@@ -683,12 +682,12 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 			Msg("arrseed: search results found, filtering by release match")
 
 		// Filter search results by release match AND size tolerance.
-		sourceRelease := rls.ParseString(dbItem.ReleaseName)
+		sourceRelease := r.svc.matcher().parseReleaseName(dbItem.ReleaseName)
 		var matched []jackett.SearchResult
 		sizeFiltered := 0
 		for _, result := range results {
-			candidateRelease := rls.ParseString(result.Title)
-			if !releasematch.ReleasesMatch(&sourceRelease, &candidateRelease, releasematch.MatchOptions{}) {
+			candidateRelease := r.svc.matcher().parseReleaseName(result.Title)
+			if !releasematch.ReleasesMatch(sourceRelease, candidateRelease, releasematch.MatchOptions{}) {
 				l.Debug().
 					Str("source", dbItem.ReleaseName).
 					Str("candidate", result.Title).
@@ -701,7 +700,7 @@ func (r *ArrSeedRunner) executeScan(ctx context.Context, configID int, runID int
 				mediaItem.CustomFormatScore >= mediaItem.MinFormatScore
 			if !allowPartial &&
 				result.Size > 0 && mediaItem.FileSize > 0 &&
-				!isSizeWithinTolerance(mediaItem.FileSize, result.Size, injOpts.SizeMismatchTolerancePercent) {
+				!(matcher{}).isSizeWithinTolerance(mediaItem.FileSize, result.Size, injOpts.SizeMismatchTolerancePercent) {
 				sizeFiltered++
 				l.Debug().
 					Str("candidate", result.Title).

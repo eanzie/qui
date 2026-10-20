@@ -10,15 +10,14 @@ import { cn } from "@/lib/utils"
 import type { Torrent } from "@/types"
 import {
   flexRender,
-  type ColumnDef,
   type ColumnOrderState,
   type ColumnSizingState,
-  type Row,
-  type VisibilityState
+  type ColumnVisibilityState
 } from "@tanstack/react-table"
 import { memo } from "react"
 import { TorrentContextMenu, type TorrentContextMenuProps } from "../TorrentContextMenu"
 import type { TableViewMode } from "../TorrentTableColumns"
+import type { TorrentRow, TorrentTableColumnDef } from "../tanstackTableFeatures"
 import { CompactRow } from "./CompactRow"
 
 // Everything the per-row context menu needs except the row-specific fields.
@@ -39,7 +38,7 @@ export interface CompactRowSharedProps {
 }
 
 export interface TorrentTableRowProps {
-  row: Row<Torrent>
+  row: TorrentRow
   virtualIndex: number
   virtualStart: number
   virtualSize: number
@@ -52,14 +51,14 @@ export interface TorrentTableRowProps {
   // Comparison tokens: cells read column config lazily through `row`, so these
   // exist only to invalidate the memo when table-level display state changes
   // (column set, resize, visibility, order).
-  columns: ColumnDef<Torrent>[]
+  columns: TorrentTableColumnDef[]
   columnSizing: ColumnSizingState
-  columnVisibility: VisibilityState
+  columnVisibility: ColumnVisibilityState
   columnOrder: ColumnOrderState
   menu: TorrentRowMenuProps
   compact: CompactRowSharedProps
-  onRowClick: (event: React.MouseEvent, row: Row<Torrent>, isSelected: boolean, isRowSelected: boolean) => void
-  onRowContextMenu: (row: Row<Torrent>, isRowSelected: boolean) => void
+  onRowClick: (event: React.MouseEvent, row: TorrentRow, isSelected: boolean, isRowSelected: boolean) => void
+  onRowContextMenu: (row: TorrentRow, isRowSelected: boolean) => void
 }
 
 // TanStack Table rebuilds the Row wrapper whenever the data array changes, so
@@ -157,7 +156,6 @@ export const TorrentTableRow = memo(function TorrentTableRow({
           <div className="ss-row-gutter" aria-hidden="true">{virtualIndex + 1}</div>
         )}
         {row.getVisibleCells().map(cell => {
-          // Compact columns (tracker_icon, status_icon) use px-0 to match header
           const isCompactColumn = cell.column.id === "tracker_icon" || cell.column.id === "status_icon"
           const isSelectColumn = cell.column.id === "select"
           return (
@@ -172,7 +170,7 @@ export const TorrentTableRow = memo(function TorrentTableRow({
                 "flex items-center overflow-hidden min-w-0",
                 // Select and compact columns are centered to match header
                 (isSelectColumn || isCompactColumn) && "justify-center",
-                isCompactColumn? (desktopViewMode === "dense" ? "px-0 py-0.5" : "px-0 py-2"): (desktopViewMode === "dense" ? "px-2 py-0.5" : "px-3 py-2")
+                desktopViewMode === "dense" ? "px-2 py-0.5" : "px-3 py-2"
               )}
             >
               {flexRender(
